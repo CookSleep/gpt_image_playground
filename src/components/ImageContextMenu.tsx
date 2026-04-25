@@ -37,6 +37,9 @@ export default function ImageContextMenu() {
       if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) {
         return
       }
+      if (e.target instanceof Element && e.target.closest('[data-lightbox-root]')) {
+        window.dispatchEvent(new Event('image-context-menu-dismiss-lightbox-click'))
+      }
       setMenuInfo(null)
     }
     window.addEventListener('mousedown', close, { capture: true })

@@ -123,9 +123,11 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
   // 双击检测（触控）
   const tapRef = useRef({ time: 0, x: 0, y: 0 })
   const hadMultiTouchRef = useRef(false)
+  const touchStartedOnImageRef = useRef(false)
 
   // 判断本次 mousedown → mouseup 是否发生了拖拽，用于区分点击和拖拽
   const didDragRef = useRef(false)
+  const suppressNextClickRef = useRef(false)
 
   // 切换图片时重置缩放
   useEffect(() => {
@@ -134,6 +136,15 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
     tyRef.current = 0
     rerender()
   }, [src, rerender])
+
+  useEffect(() => {
+    const suppressClick = () => {
+      suppressNextClickRef.current = true
+    }
+
+    window.addEventListener('image-context-menu-dismiss-lightbox-click', suppressClick)
+    return () => window.removeEventListener('image-context-menu-dismiss-lightbox-click', suppressClick)
+  }, [])
 
   const getCenter = useCallback(() => {
     const rect = containerRef.current?.getBoundingClientRect()
@@ -228,8 +239,13 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
 
   // ====== 单击关闭（仅未缩放且非拖拽） ======
   const onClick = useCallback((e: React.MouseEvent) => {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false
+      e.stopPropagation()
+      return
+    }
     if (didDragRef.current) return
-    if (scaleRef.current > 1) return
+    if (scaleRef.current > 1 && e.target instanceof HTMLImageElement) return
     onClose()
   }, [onClose])
 
@@ -273,6 +289,7 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
         const t = e.touches[0]
         const now = Date.now()
         const prev = tapRef.current
+        touchStartedOnImageRef.current = e.target instanceof HTMLImageElement
 
         // 双击检测
         if (
@@ -294,7 +311,7 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
         }
         tapRef.current = { time: now, x: t.clientX, y: t.clientY }
 
-        if (scaleRef.current > 1) {
+        if (scaleRef.current > 1 && touchStartedOnImageRef.current) {
           e.preventDefault()
           dragRef.current = {
             active: true,
@@ -333,8 +350,8 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
           tapRef.current = { time: 0, x: 0, y: 0 }
           return
         }
-        // 单击关闭（未缩放时）
-        if (scaleRef.current <= 1) {
+        // 单击关闭：未缩放时任意位置关闭；缩放时仅点击图片外关闭。
+        if (scaleRef.current <= 1 || !touchStartedOnImageRef.current) {
           const prev = tapRef.current
           if (prev.time > 0 && Date.now() - prev.time < 300) {
             setTimeout(() => {
@@ -370,6 +387,7 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
   return (
     <div
       ref={containerRef}
+      data-lightbox-root
       className="fixed inset-0 z-[60] flex items-center justify-center select-none"
       style={{ cursor: isZoomed ? (isDragging ? 'grabbing' : 'grab') : 'pointer' }}
       onClick={onClick}
