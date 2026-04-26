@@ -158,3 +158,11 @@ input[type="number"] {
   transform-origin: bottom center;
   animation: dropdown-up 0.15s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+
+@media (max-width: 640px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}

@@ -2,6 +2,9 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import './index.css'
+import { installMobileViewportGuards } from './lib/viewport'
+
+installMobileViewportGuards()
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
