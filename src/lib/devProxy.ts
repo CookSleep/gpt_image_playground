@@ -16,7 +16,8 @@ export function normalizeBaseUrl(baseUrl: string): string {
 
   try {
     const url = new URL(input)
-    return `${url.protocol}//${url.host}`
+    const pathname = url.pathname === '/' ? '' : url.pathname.replace(/\/+$/, '')
+    return `${url.origin}${pathname}`
   } catch {
     return trimmed.replace(/\/+$/, '')
   }

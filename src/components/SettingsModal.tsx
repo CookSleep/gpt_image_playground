@@ -23,8 +23,10 @@ export default function SettingsModal() {
   }, [showSettings, settings])
 
   const commitSettings = (nextDraft: AppSettings) => {
+    const apiMode = nextDraft.apiMode === 'responses' ? 'responses' : DEFAULT_SETTINGS.apiMode
     const normalizedDraft = {
       ...nextDraft,
+      apiMode,
       baseUrl: normalizeBaseUrl(nextDraft.baseUrl.trim() || DEFAULT_SETTINGS.baseUrl),
       apiKey: nextDraft.apiKey,
       model: nextDraft.model.trim() || DEFAULT_SETTINGS.model,
@@ -157,13 +159,31 @@ export default function SettingsModal() {
               </div>
 
               <label className="block">
-                <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">模型 ID</span>
+                <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">API 接口</span>
+                <select
+                  value={draft.apiMode ?? DEFAULT_SETTINGS.apiMode}
+                  onChange={(e) => {
+                    const nextDraft = { ...draft, apiMode: e.target.value as AppSettings['apiMode'] }
+                    setDraft(nextDraft)
+                    commitSettings(nextDraft)
+                  }}
+                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                >
+                  <option value="images">Images API (/v1/images)</option>
+                  <option value="responses">Responses API (/v1/responses)</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                  模型 ID{(draft.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses' ? '（Responses 文本模型）' : ''}
+                </span>
                 <input
                   value={draft.model}
                   onChange={(e) => setDraft((prev) => ({ ...prev, model: e.target.value }))}
                   onBlur={(e) => commitSettings({ ...draft, model: e.target.value })}
                   type="text"
-                  placeholder="gpt-image-2"
+                  placeholder={(draft.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses' ? '支持 image_generation 的文本模型' : DEFAULT_SETTINGS.model}
                   className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
               </label>

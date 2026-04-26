@@ -101,7 +101,16 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       // Settings
       settings: { ...DEFAULT_SETTINGS },
-      setSettings: (s) => set((st) => ({ settings: { ...st.settings, ...s } })),
+      setSettings: (s) => set((st) => ({
+        settings: {
+          ...st.settings,
+          ...s,
+          apiMode:
+            s.apiMode === 'images' || s.apiMode === 'responses'
+              ? s.apiMode
+              : st.settings.apiMode ?? DEFAULT_SETTINGS.apiMode,
+        },
+      })),
 
       // Input
       prompt: '',

@@ -1,6 +1,6 @@
 # GPT Image Playground
 
-基于 OpenAI `gpt-image-2` 接口的图片生成与编辑工具。提供简洁的 Web UI，支持文本生成图片、参考图编辑、可视化参数调节、历史记录管理与本地数据导入导出。
+基于 OpenAI 图像生成接口的图片生成与编辑工具。提供简洁的 Web UI，支持文本生成图片、参考图编辑、可视化参数调节、历史记录管理与本地数据导入导出。
 
 
 > 如有调用非本地的 HTTP API 的需求，请使用 GitHub Pages 版本或自行部署，因为 `.dev` 域名要求页面本身及其加载的资源（的来源）均为 HTTPS。
@@ -39,8 +39,9 @@ https://cooksleep.github.io/gpt_image_playground
 ## ✨ 功能特性
 
 ### 🎨 核心能力
-- **文本生图**：输入提示词，调用 `images/generations` 接口生成图片。
-- **参考图编辑**：支持上传最多 16 张参考图，调用 `images/edits` 接口进行图片编辑。支持文件选择、粘贴和拖拽三种方式。
+- **文本生图**：输入提示词，可调用 `images/generations` 或 Responses API 的 `image_generation` 工具生成图片。
+- **参考图编辑**：支持上传最多 16 张参考图，可调用 `images/edits` 或 Responses API 多模态输入进行图片编辑。支持文件选择、粘贴和拖拽三种方式。
+- **接口模式切换**：支持在设置中选择 Images API (`/v1/images`) 或 Responses API (`/v1/responses`)。
 - **批量生成**：单次可设置生成多张图片。
 
 ### ⚙️ 精细化参数控制
@@ -162,6 +163,8 @@ docker compose up -d
      -> 真实接口 http://127.0.0.1:3000/v1/images/generations
    ```
 
+   选择 Responses API 模式时，同一代理配置会将请求改写为 `/api-proxy/v1/responses`。
+
    这样浏览器看到的是同源请求，实际跨域请求发生在 Vite 开发服务器这一侧，从而绕开浏览器 CORS 限制。
 
    注意：这个代理只在 `npm run dev` 启动的 Vite 开发服务器中生效。它不会打包进静态产物，也不会在 Vercel、GitHub Pages 或普通 Nginx 静态部署中生效。
@@ -188,7 +191,7 @@ docker compose up -d
    - `changeOrigin`：转发时是否把请求头中的 `Host` 改成 `target` 的主机名，通常建议保持 `true`。
    - `secure`：当 `target` 是 HTTPS 时是否校验证书；本地自签名证书可设为 `false`。
 
-   修改配置后需要重新启动开发服务器，并在页面设置中的 `API URL` 填入与 `target` 相同的地址。当前端发现 `API URL` 与 `target` 匹配时，会把请求改写为 `prefix` 开头的同源地址，例如 `/api-proxy/v1/images/generations`。
+   修改配置后需要重新启动开发服务器，并在页面设置中的 `API URL` 填入与 `target` 相同的地址。当前端发现 `API URL` 与 `target` 匹配时，会把请求改写为 `prefix` 开头的同源地址，例如 `/api-proxy/v1/images/generations` 或 `/api-proxy/v1/responses`。
 
    如果需要在线上部署中使用代理，请使用 Vercel Function、Cloudflare Worker、Nginx 反向代理或自建后端等服务端方案。
 
@@ -205,6 +208,10 @@ docker compose up -d
 ## 🛠️ API 配置说明
 
 点击页面右上角的设置图标，你可以随时更改 API 相关的配置。
+
+- **Images API**：调用 `/v1/images/generations` 和 `/v1/images/edits`，模型通常填写 `gpt-image-*`。
+- **Responses API**：调用 `/v1/responses` 并使用 `image_generation` 工具，模型应填写支持该工具的文本模型，而不是 `gpt-image-*`。
+
 应用支持通过 URL 查询参数快速填充配置，非常适合书签或分享给他人使用：
 - `?apiUrl=https://你的代理地址.com`
 - `?apiKey=sk-xxxx`

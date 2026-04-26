@@ -424,6 +424,11 @@ export default function InputBar() {
           className="px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] focus:outline-none text-xs transition-all duration-200 shadow-sm"
         />
       </label>
+      {settings.apiMode === 'responses' && (
+        <div className="col-span-full text-[10px] text-gray-400 dark:text-gray-500 ml-1">
+          Responses 模式会忽略审核参数；数量大于 1 时会发起多次请求。
+        </div>
+      )}
     </div>
   )
 
