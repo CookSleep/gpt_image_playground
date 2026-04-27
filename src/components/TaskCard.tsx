@@ -284,6 +284,11 @@ export default function TaskCard({
                   {task.outputImages.length}
                 </span>
               )}
+              {task.maskImageId && (
+                <span className="absolute bottom-1 left-1 rounded bg-orange-500/90 px-1.5 py-0.5 text-xs font-medium text-white shadow-sm">
+                  Mask
+                </span>
+              )}
             </>
           )}
           {task.status === 'done' && !thumbSrc && (

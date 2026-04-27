@@ -1,4 +1,5 @@
 import type { AppSettings, ImageApiResponse, ResponsesApiResponse, TaskParams } from '../types'
+import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
 import { buildApiUrl, readClientDevProxyConfig } from './devProxy'
 
 const MIME_MAP: Record<string, string> = {
@@ -109,6 +110,8 @@ export interface CallApiOptions {
   params: TaskParams
   /** 输入图片的 data URL 列表 */
   inputImageDataUrls: string[]
+  /** 与第一张输入图片同尺寸的 PNG 遮罩；透明区域会被编辑 */
+  maskDataUrl?: string
 }
 
 export interface CallApiResult {
@@ -179,6 +182,10 @@ function mergeActualParams(...sources: Array<Partial<TaskParams>>): Partial<Task
 }
 
 export async function callImageApi(opts: CallApiOptions): Promise<CallApiResult> {
+  if (opts.maskDataUrl && opts.settings.apiMode === 'responses') {
+    throw new Error('遮罩编辑当前仅支持 Images API，请在设置中切换 API 模式')
+  }
+
   return opts.settings.apiMode === 'responses'
     ? callResponsesImageApi(opts)
     : callImagesApi(opts)
@@ -225,7 +232,7 @@ async function callImagesApiConcurrent(opts: CallApiOptions, n: number): Promise
 }
 
 async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult> {
-  const { settings, prompt: originalPrompt, params, inputImageDataUrls } = opts
+  const { settings, prompt: originalPrompt, params, inputImageDataUrls, maskDataUrl } = opts
   const prompt = settings.codexCli
     ? `Use the following text as the complete prompt. Do not rewrite it:\n${originalPrompt}`
     : originalPrompt
@@ -258,10 +265,14 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
 
       for (let i = 0; i < inputImageDataUrls.length; i++) {
         const dataUrl = inputImageDataUrls[i]
-        const resp = await fetch(dataUrl)
-        const blob = await resp.blob()
+        const blob = maskDataUrl && i === 0
+          ? await imageDataUrlToPngBlob(dataUrl)
+          : await dataUrlToBlob(dataUrl)
         const ext = blob.type.split('/')[1] || 'png'
         formData.append('image[]', blob, `input-${i + 1}.${ext}`)
+      }
+      if (maskDataUrl) {
+        formData.append('mask', await maskDataUrlToPngBlob(maskDataUrl), 'mask.png')
       }
 
       response = await fetch(buildApiUrl(settings.baseUrl, 'images/edits', proxyConfig), {

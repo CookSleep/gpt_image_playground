@@ -112,7 +112,7 @@ function hashDataUrlFallback(dataUrl: string): string {
  * 存储图片，若已存在（按 hash 去重）则跳过。
  * 返回 image id。
  */
-export async function storeImage(dataUrl: string, source: 'upload' | 'generated' = 'upload'): Promise<string> {
+export async function storeImage(dataUrl: string, source: 'upload' | 'mask' | 'generated' = 'upload'): Promise<string> {
   const id = await hashDataUrl(dataUrl)
   const existing = await getImage(id)
   if (!existing) {

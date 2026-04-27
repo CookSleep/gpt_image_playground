@@ -4,6 +4,7 @@ import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyBlobToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
@@ -17,6 +18,7 @@ export default function DetailModal() {
   const [imageSrcs, setImageSrcs] = useState<Record<string, string>>({})
   const [imageRatios, setImageRatios] = useState<Record<string, string>>({})
   const [imageSizes, setImageSizes] = useState<Record<string, string>>({})
+  const [maskPreviewSrc, setMaskPreviewSrc] = useState('')
   const imagePanelRef = useRef<HTMLDivElement>(null)
   const mainImageRef = useRef<HTMLImageElement>(null)
   const [imageLabelLeft, setImageLabelLeft] = useState(8)
@@ -36,7 +38,11 @@ export default function DetailModal() {
   // 加载所有相关图片
   useEffect(() => {
     if (!task) return
-    const ids = [...(task.outputImages || []), ...(task.inputImageIds || [])]
+    const ids = [
+      ...(task.outputImages || []),
+      ...(task.inputImageIds || []),
+      ...(task.maskImageId ? [task.maskImageId] : []),
+    ]
     for (const id of ids) {
       const cached = getCachedImage(id)
       if (cached) {
@@ -51,6 +57,10 @@ export default function DetailModal() {
 
   const currentOutputImageId = task?.outputImages?.[imageIndex] || ''
   const currentOutputImageSrc = currentOutputImageId ? imageSrcs[currentOutputImageId] || '' : ''
+  const maskTargetId = task?.maskTargetImageId || null
+  const maskTargetSrc = maskTargetId ? imageSrcs[maskTargetId] || '' : ''
+  const maskSrc = task?.maskImageId ? imageSrcs[task.maskImageId] || '' : ''
+  const referenceInputImageIds = task?.inputImageIds?.filter((id) => id !== maskTargetId) ?? []
 
   useEffect(() => {
     if (!currentOutputImageId || !currentOutputImageSrc) return
@@ -101,6 +111,26 @@ export default function DetailModal() {
     window.addEventListener('resize', updateImageLabelLeft)
     return () => window.removeEventListener('resize', updateImageLabelLeft)
   }, [currentOutputImageSrc])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!maskTargetSrc || !maskSrc) {
+      setMaskPreviewSrc('')
+      return
+    }
+
+    createMaskPreviewDataUrl(maskTargetSrc, maskSrc)
+      .then((url) => {
+        if (!cancelled) setMaskPreviewSrc(url)
+      })
+      .catch(() => {
+        if (!cancelled) setMaskPreviewSrc('')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [maskTargetSrc, maskSrc])
 
   if (!task) return null
 
@@ -380,12 +410,35 @@ export default function DetailModal() {
               </div>
             )}
 
+            {/* 遮罩 */}
+            {maskTargetSrc && maskSrc && (
+              <div className="mb-4">
+                <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                  遮罩编辑
+                </h3>
+                <div className="flex items-center gap-3 rounded-2xl border border-orange-200/80 bg-orange-50/80 p-3 text-xs text-orange-700 dark:border-orange-500/20 dark:bg-orange-500/10 dark:text-orange-200">
+                  <img
+                    src={maskPreviewSrc || maskTargetSrc}
+                    className="h-20 w-20 rounded-xl border border-orange-200/80 object-cover dark:border-orange-500/20"
+                    onClick={() => setLightboxImageId(maskTargetId || '', task.inputImageIds)}
+                    alt=""
+                  />
+                  <div className="leading-relaxed">
+                    <div className="font-medium">橙色区域将被编辑</div>
+                    <div className="mt-1 opacity-80">
+                      这张图在提交时被固定为第 1 张输入图；其余图片只作为参考图。
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* 参考图 */}
             {task.inputImageIds?.length > 0 && (
               <div className="mb-4">
                 <div className="flex items-center gap-1.5 mb-2">
                   <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
-                    参考图
+                    {task.maskImageId ? '其他参考图' : '参考图'}
                   </h3>
                   <button
                     onClick={handleCopyInputImage}
@@ -398,7 +451,7 @@ export default function DetailModal() {
                   </button>
                 </div>
                 <div className="flex gap-2 flex-wrap">
-                  {task.inputImageIds.map((imgId) => (
+                  {(task.maskImageId ? referenceInputImageIds : task.inputImageIds).map((imgId) => (
                     <img
                       key={imgId}
                       src={imageSrcs[imgId] || ''}
@@ -407,6 +460,9 @@ export default function DetailModal() {
                       alt=""
                     />
                   ))}
+                  {task.maskImageId && referenceInputImageIds.length === 0 && (
+                    <span className="text-xs text-gray-400 dark:text-gray-500">无其他参考图</span>
+                  )}
                 </div>
               </div>
             )}
