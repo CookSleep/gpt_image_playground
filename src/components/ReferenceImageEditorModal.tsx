@@ -43,6 +43,26 @@ function getMaskShapeTypeFromObject(object: FabricObject | null): MaskShapeType 
   return (object as FabricObject & { data?: { shapeType?: MaskShapeType } }).data?.shapeType
 }
 
+function useIsMobileDevice() {
+  const getIsMobileDevice = () => {
+    const ua = navigator.userAgent || ''
+    const platform = navigator.platform || ''
+    const isIpadOS = platform === 'MacIntel' && navigator.maxTouchPoints > 1
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Tablet/i.test(ua) || isIpadOS
+  }
+  const [isMobileDevice, setIsMobileDevice] = useState(getIsMobileDevice)
+  useEffect(() => {
+    const update = () => setIsMobileDevice(getIsMobileDevice())
+    window.addEventListener('resize', update)
+    window.addEventListener('orientationchange', update)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('orientationchange', update)
+    }
+  }, [])
+  return isMobileDevice
+}
+
 export default function ReferenceImageEditorModal({ imageId, src, saveMode, onClose }: ReferenceImageEditorModalProps) {
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const inputImages = useStore((s) => s.inputImages)
@@ -86,6 +106,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false })
   const currentImageList = useMemo(() => lightboxImageList.length ? lightboxImageList : inputImages.map((item) => item.id), [inputImages, lightboxImageList])
   const isOpen = true
+  const isMobileDevice = useIsMobileDevice()
 
   useCloseOnEscape(isOpen, onClose)
 
@@ -194,6 +215,81 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
       imageBoundsRef.current.height,
     )
    }, [])
+
+  const resizeStageToViewport = useCallback((options?: { preserveViewport?: boolean; transformObjects?: boolean }) => {
+    const viewport = canvasViewportRef.current
+    const backgroundElement = backgroundCanvasRef.current
+    const canvas = canvasRef.current
+    const image = sourceImageRef.current
+    if (!viewport || !backgroundElement || !canvas || !image) return
+
+    const stageRect = viewport.getBoundingClientRect()
+    const stageWidth = Math.max(320, Math.floor(stageRect.width))
+    const stageHeight = Math.max(320, Math.floor(stageRect.height))
+    const prevDisplaySize = displaySizeRef.current
+    const prevBounds = imageBoundsRef.current
+
+    if (
+      prevDisplaySize.width === stageWidth &&
+      prevDisplaySize.height === stageHeight &&
+      backgroundElement.width === stageWidth &&
+      backgroundElement.height === stageHeight
+    ) {
+      return
+    }
+
+    const imageScale = Math.min(
+      stageWidth / Math.max(1, image.naturalWidth),
+      stageHeight / Math.max(1, image.naturalHeight),
+      1,
+    )
+    const imageDisplayWidth = Math.max(1, Math.round(image.naturalWidth * imageScale))
+    const imageDisplayHeight = Math.max(1, Math.round(image.naturalHeight * imageScale))
+    const imageLeft = Math.max(0, Math.round((stageWidth - imageDisplayWidth) / 2))
+    const imageTop = Math.max(0, Math.round((stageHeight - imageDisplayHeight) / 2))
+    const nextBounds = {
+      left: imageLeft,
+      top: imageTop,
+      width: imageDisplayWidth,
+      height: imageDisplayHeight,
+    }
+
+    if (options?.transformObjects && prevBounds.width > 0 && prevBounds.height > 0) {
+      const scaleX = nextBounds.width / prevBounds.width
+      const scaleY = nextBounds.height / prevBounds.height
+      canvas.getObjects().forEach((object) => {
+        const left = typeof object.left === 'number' ? object.left : 0
+        const top = typeof object.top === 'number' ? object.top : 0
+        object.set({
+          left: nextBounds.left + (left - prevBounds.left) * scaleX,
+          top: nextBounds.top + (top - prevBounds.top) * scaleY,
+          scaleX: (object.scaleX ?? 1) * scaleX,
+          scaleY: (object.scaleY ?? 1) * scaleY,
+        })
+        object.setCoords()
+      })
+      const current = canvas.getActiveObject() ?? null
+      setActiveObject(current)
+      syncTextStyleFromObject(current)
+    }
+
+    displaySizeRef.current = { width: stageWidth, height: stageHeight }
+    imageBoundsRef.current = nextBounds
+    exportMultiplierRef.current = Math.max(1, image.naturalWidth / Math.max(1, imageDisplayWidth))
+
+    backgroundElement.width = stageWidth
+    backgroundElement.height = stageHeight
+    canvas.setDimensions({ width: stageWidth, height: stageHeight })
+    canvas.calcOffset()
+
+    if (!options?.preserveViewport) {
+      zoomRef.current = 1
+      panRef.current = { x: 0, y: 0 }
+    }
+    canvas.setViewportTransform([zoomRef.current, 0, 0, zoomRef.current, panRef.current.x, panRef.current.y])
+    canvas.requestRenderAll()
+    redrawBackground()
+  }, [redrawBackground, syncTextStyleFromObject])
 
   const syncViewportTransform = useCallback(() => {
     const canvas = canvasRef.current
@@ -387,6 +483,27 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   }, [pushHistory, redrawBackground, src, syncTextStyleFromObject, syncViewportTransform])
 
   useEffect(() => {
+    const viewport = canvasViewportRef.current
+    if (!viewport) return
+
+    let frame = 0
+    const resize = () => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        resizeStageToViewport({ transformObjects: true })
+      })
+    }
+    const observer = new ResizeObserver(resize)
+    observer.observe(viewport)
+    window.addEventListener('orientationchange', resize)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      observer.disconnect()
+      window.removeEventListener('orientationchange', resize)
+    }
+  }, [resizeStageToViewport])
+
+  useEffect(() => {
     refreshBrush()
   }, [refreshBrush])
 
@@ -493,6 +610,15 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
 
     const onKeyDown = async (event: KeyboardEvent) => {
       if ((event.key === 'Delete' || event.key === 'Backspace') && activeObject) {
+        const target = event.target
+        const isTextInput =
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          (target instanceof HTMLElement && target.isContentEditable)
+        const current = canvasRef.current?.getActiveObject()
+        if (isTextInput || (current instanceof IText && current.isEditing)) {
+          return
+        }
         handleDeleteActiveObject()
         return
       }
@@ -587,9 +713,13 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
 
   const buildMaskShape = useCallback((shapeType: MaskShapeType, left: number, top: number, width: number, height: number) => {
     const fill = `rgba(0, 0, 0, ${clamp(maskOpacity, 0.05, 1)})`
+    const centerLeft = left + width / 2
+    const centerTop = top + height / 2
     const shared = {
-      left,
-      top,
+      left: centerLeft,
+      top: centerTop,
+      originX: 'center' as const,
+      originY: 'center' as const,
       fill,
       cornerStyle: 'circle' as const,
       transparentCorners: false,
@@ -668,6 +798,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
       angle,
       fill,
     })
+    replacement.setPositionByOrigin(center, 'center', 'center')
     ;(replacement as FabricObject & { data?: { editorKind: string; shapeType: MaskShapeType } }).data = {
       editorKind: 'mask-region',
       shapeType: nextShapeType,
@@ -814,17 +945,17 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
             <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3 md:rounded-2xl md:p-4">
               <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/45 md:mb-3">工具</div>
               <div className="grid grid-cols-2 gap-2">
-                <div className={activeObject ? 'grid grid-cols-2 gap-2 md:block' : ''}>
+                <div className={activeObject && isMobileDevice ? 'grid grid-cols-2 gap-2' : ''}>
                   <button
                     onClick={() => setToolMode('select')}
                     className={`w-full rounded-lg px-3 py-2 text-sm transition md:rounded-xl ${toolMode === 'select' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
                   >
                     选择
                   </button>
-                  {activeObject && (
+                  {activeObject && isMobileDevice && (
                     <button
                       onClick={handleDeleteActiveObject}
-                      className="w-full rounded-lg bg-red-500/90 px-3 py-2 text-sm text-white transition hover:bg-red-500 md:hidden"
+                      className="w-full rounded-lg bg-red-500/90 px-3 py-2 text-sm text-white transition hover:bg-red-500"
                     >
                       删除
                     </button>

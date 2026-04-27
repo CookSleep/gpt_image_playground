@@ -22,11 +22,21 @@ function ButtonTooltip({ visible, text }: { visible: boolean; text: string }) {
 const API_MAX_IMAGES = 16
 
 function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 640)
+  const getIsMobile = () => {
+    const ua = navigator.userAgent || ''
+    const platform = navigator.platform || ''
+    const isIpadOS = platform === 'MacIntel' && navigator.maxTouchPoints > 1
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Tablet/i.test(ua) || isIpadOS
+  }
+  const [isMobile, setIsMobile] = useState(getIsMobile)
   useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 640)
+    const onResize = () => setIsMobile(getIsMobile())
     window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+    window.addEventListener('orientationchange', onResize)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      window.removeEventListener('orientationchange', onResize)
+    }
   }, [])
   return isMobile
 }
@@ -42,6 +52,7 @@ export default function InputBar() {
   const settings = useStore((s) => s.settings)
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
+  const setLightboxStartEditor = useStore((s) => s.setLightboxStartEditor)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const selectedTaskIds = useStore((s) => s.selectedTaskIds)
   const setSelectedTaskIds = useStore((s) => s.setSelectedTaskIds)
@@ -117,6 +128,7 @@ export default function InputBar() {
   const [moderationHintVisible, setModerationHintVisible] = useState(false)
   const [qualityHintVisible, setQualityHintVisible] = useState(false)
   const [mobileCollapsed, setMobileCollapsed] = useState(false)
+  const [selectedInputImageId, setSelectedInputImageId] = useState<string | null>(null)
   const [showSizePicker, setShowSizePicker] = useState(false)
   const handleRef = useRef<HTMLDivElement>(null)
   const dragTouchRef = useRef({ startY: 0, moved: false })
@@ -132,6 +144,26 @@ export default function InputBar() {
 
   const canSubmit = prompt.trim() && settings.apiKey
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
+
+  useEffect(() => {
+    if (!selectedInputImageId) return
+    if (!inputImages.some((image) => image.id === selectedInputImageId)) {
+      setSelectedInputImageId(null)
+    }
+  }, [inputImages, selectedInputImageId])
+
+  useEffect(() => {
+    if (!isMobile || !selectedInputImageId) return
+
+    const handleOutsidePointer = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Node && imagesRef.current?.contains(target)) return
+      setSelectedInputImageId(null)
+    }
+
+    document.addEventListener('pointerdown', handleOutsidePointer, true)
+    return () => document.removeEventListener('pointerdown', handleOutsidePointer, true)
+  }, [isMobile, selectedInputImageId])
 
   useEffect(() => {
     setOutputCompressionInput(
@@ -445,29 +477,77 @@ export default function InputBar() {
 
   const selectClass = 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] text-xs transition-all duration-200 shadow-sm'
 
+  const handleInputImageClick = (imgId: string) => {
+    if (isMobile) {
+      if (selectedInputImageId === imgId) {
+        setLightboxStartEditor(true)
+        setLightboxImageId(imgId, inputImages.map((image) => image.id))
+      } else {
+        setSelectedInputImageId(imgId)
+      }
+      return
+    }
+    setLightboxImageId(imgId, inputImages.map((image) => image.id))
+  }
+
+  const handleRemoveInputImage = (idx: number, imgId: string) => {
+    removeInputImage(idx)
+    if (selectedInputImageId === imgId) {
+      setSelectedInputImageId(null)
+    }
+  }
+
   const renderImageThumbs = () => (
     <div ref={imagesRef}>
       <div className="grid grid-cols-[repeat(auto-fill,52px)] justify-between gap-x-2 gap-y-3 mb-3">
-        {inputImages.map((img, idx) => (
-          <div key={img.id} className="relative group inline-block">
-            <div className="relative w-[52px] h-[52px] rounded-xl overflow-hidden border border-gray-200 dark:border-white/[0.08] shadow-sm cursor-pointer">
-              <img
-                src={img.dataUrl}
-                className="w-full h-full object-cover hover:opacity-90 transition-opacity"
-                onClick={() => setLightboxImageId(img.id, inputImages.map((i) => i.id))}
-                alt=""
-              />
+        {inputImages.map((img, idx) => {
+          const selected = selectedInputImageId === img.id
+          const deleteButtonClass = isMobile
+            ? selected
+              ? 'h-7 w-7 opacity-100'
+              : 'h-7 w-7 pointer-events-none opacity-0'
+            : 'h-[22px] w-[22px] opacity-0 group-hover:opacity-100'
+          return (
+            <div key={img.id} className="relative group inline-block">
+              <button
+                type="button"
+                className={`relative block w-[52px] h-[52px] rounded-xl overflow-hidden border p-0 shadow-sm cursor-pointer transition-all ${
+                  selected
+                    ? 'border-red-400 ring-2 ring-red-400/45'
+                    : 'border-gray-200 dark:border-white/[0.08]'
+                }`}
+                onClick={() => handleInputImageClick(img.id)}
+                aria-pressed={selected}
+                aria-label={selected ? '取消选择参考图' : '选择参考图'}
+              >
+                <img
+                  src={img.dataUrl}
+                  className="w-full h-full object-cover hover:opacity-90 transition-opacity"
+                  alt=""
+                />
+              </button>
+              <button
+                type="button"
+                className={`absolute -top-2 -right-2 flex items-center justify-center rounded-full bg-red-500 text-white shadow-md transition-opacity hover:bg-red-600 ${deleteButtonClass}`}
+                onPointerDown={(event) => {
+                  event.stopPropagation()
+                }}
+                onTouchStart={(event) => {
+                  event.stopPropagation()
+                }}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  handleRemoveInputImage(idx, img.id)
+                }}
+                aria-label="删除参考图"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
-            <span
-              className="absolute -top-2 -right-2 w-[22px] h-[22px] rounded-full bg-red-500 text-white flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity shadow-md hover:bg-red-600"
-              onClick={() => removeInputImage(idx)}
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </span>
-          </div>
-        ))}
+          )
+        })}
 
         {/* 清空全部按钮 */}
         <button
