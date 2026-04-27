@@ -141,7 +141,25 @@ export default function SettingsModal() {
             </h4>
             <div className="space-y-4">
               <label className="block">
-                <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">API URL</span>
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="block text-xs text-gray-500 dark:text-gray-400">API URL</span>
+                  <div
+                    onClick={(e) => {
+                      e.preventDefault()
+                      const nextDraft = { ...draft, codexCli: !draft.codexCli }
+                      setDraft(nextDraft)
+                      commitSettings(nextDraft)
+                    }}
+                    className="flex cursor-pointer items-center gap-1.5"
+                    role="switch"
+                    aria-checked={draft.codexCli}
+                  >
+                    <span className={`text-[10px] transition-colors ${draft.codexCli ? 'text-blue-500 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'}`}>Codex CLI</span>
+                    <span className={`relative inline-flex h-3.5 w-6 items-center rounded-full transition-colors ${draft.codexCli ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                      <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white shadow transition-transform ${draft.codexCli ? 'translate-x-[11px]' : 'translate-x-[2px]'}`} />
+                    </span>
+                  </div>
+                </div>
                 <input
                   value={draft.baseUrl}
                   onChange={(e) => setDraft((prev) => ({ ...prev, baseUrl: e.target.value }))}
@@ -151,7 +169,7 @@ export default function SettingsModal() {
                   className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
                 <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
-                  支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code>
+                  支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code>，<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">codexCli=true</code>
                 </div>
               </label>
 
@@ -344,7 +362,7 @@ export default function SettingsModal() {
                   className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
                 <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
-                  如果你在使用源于 Codex CLI 的 API，请选择 Responses API。
+                  支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">apiMode=images</code> 或 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">apiMode=responses</code>。
                 </div>
               </label>
 

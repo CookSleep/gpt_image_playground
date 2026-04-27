@@ -81,7 +81,7 @@ export function getParamDisplay(task: TaskRecord, paramKey: ParamKey, actualPara
     displayValue: String(displayValue),
     isMismatch,
     requestedValue: String(requestedValue),
-    isAutoResolved: hasActualValue && requestedValue === 'auto',
+    isAutoResolved: hasActualValue && requestedValue === 'auto' && String(actualValue) !== String(requestedValue),
   }
 }
 

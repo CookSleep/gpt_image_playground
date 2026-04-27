@@ -66,13 +66,16 @@ function createRequestHeaders(settings: AppSettings): Record<string, string> {
   }
 }
 
-function createResponsesImageTool(params: TaskParams, isEdit: boolean): Record<string, unknown> {
+function createResponsesImageTool(params: TaskParams, isEdit: boolean, settings: AppSettings): Record<string, unknown> {
   const tool: Record<string, unknown> = {
     type: 'image_generation',
     action: isEdit ? 'edit' : 'generate',
     size: params.size,
-    quality: params.quality,
     output_format: params.output_format,
+  }
+
+  if (!settings.codexCli) {
+    tool.quality = params.quality
   }
 
   if (params.output_format !== 'png' && params.output_compression != null) {
@@ -182,7 +185,50 @@ export async function callImageApi(opts: CallApiOptions): Promise<CallApiResult>
 }
 
 async function callImagesApi(opts: CallApiOptions): Promise<CallApiResult> {
-  const { settings, prompt, params, inputImageDataUrls } = opts
+  const n = opts.params.n > 0 ? opts.params.n : 1
+  if (opts.settings.codexCli && n > 1) {
+    return callImagesApiConcurrent(opts, n)
+  }
+
+  return callImagesApiSingle(opts)
+}
+
+async function callImagesApiConcurrent(opts: CallApiOptions, n: number): Promise<CallApiResult> {
+  const singleOpts = { ...opts, params: { ...opts.params, n: 1, quality: 'auto' as const } }
+  const results = await Promise.allSettled(
+    Array.from({ length: n }).map(() => callImagesApiSingle(singleOpts)),
+  )
+
+  const successfulResults = results
+    .filter((r): r is PromiseFulfilledResult<CallApiResult> => r.status === 'fulfilled')
+    .map((r) => r.value)
+
+  if (successfulResults.length === 0) {
+    const firstError = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
+    if (firstError) throw firstError.reason
+    throw new Error('所有并发请求均失败')
+  }
+
+  const images = successfulResults.flatMap((r) => r.images)
+  const actualParamsList = successfulResults.flatMap((r) =>
+    r.actualParamsList?.length ? r.actualParamsList : r.images.map(() => r.actualParams),
+  )
+  const revisedPrompts = successfulResults.flatMap((r) =>
+    r.revisedPrompts?.length ? r.revisedPrompts : r.images.map(() => undefined),
+  )
+  const actualParams = mergeActualParams(
+    successfulResults[0]?.actualParams ?? {},
+    { quality: 'auto', n: images.length },
+  )
+
+  return { images, actualParams, actualParamsList, revisedPrompts }
+}
+
+async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult> {
+  const { settings, prompt: originalPrompt, params, inputImageDataUrls } = opts
+  const prompt = settings.codexCli
+    ? `Use the following text as the complete prompt. Do not rewrite it:\n${originalPrompt}`
+    : originalPrompt
   const isEdit = inputImageDataUrls.length > 0
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
@@ -199,9 +245,12 @@ async function callImagesApi(opts: CallApiOptions): Promise<CallApiResult> {
       formData.append('model', settings.model)
       formData.append('prompt', prompt)
       formData.append('size', params.size)
-      formData.append('quality', params.quality)
       formData.append('output_format', params.output_format)
       formData.append('moderation', params.moderation)
+
+      if (!settings.codexCli) {
+        formData.append('quality', params.quality)
+      }
 
       if (params.output_format !== 'png' && params.output_compression != null) {
         formData.append('output_compression', String(params.output_compression))
@@ -227,9 +276,12 @@ async function callImagesApi(opts: CallApiOptions): Promise<CallApiResult> {
         model: settings.model,
         prompt,
         size: params.size,
-        quality: params.quality,
         output_format: params.output_format,
         moderation: params.moderation,
+      }
+
+      if (!settings.codexCli) {
+        body.quality = params.quality
       }
 
       if (params.output_format !== 'png' && params.output_compression != null) {
@@ -281,7 +333,10 @@ async function callImagesApi(opts: CallApiOptions): Promise<CallApiResult> {
       throw new Error('接口未返回可用图片数据')
     }
 
-    const actualParams = mergeActualParams(pickActualParams(payload))
+    const actualParams = mergeActualParams(
+      pickActualParams(payload),
+      settings.codexCli ? { quality: 'auto' } : {},
+    )
     return {
       images,
       actualParams,
@@ -339,7 +394,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions): Promise<CallAp
     const body = {
       model: settings.model,
       input: createResponsesInput(prompt, inputImageDataUrls),
-      tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0)],
+      tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, settings)],
       tool_choice: 'required',
     }
 
@@ -360,10 +415,16 @@ async function callResponsesImageApiSingle(opts: CallApiOptions): Promise<CallAp
 
     const payload = await response.json() as ResponsesApiResponse
     const imageResults = parseResponsesImageResults(payload, mime)
+    const actualParams = mergeActualParams(
+      imageResults[0]?.actualParams ?? {},
+      settings.codexCli ? { quality: 'auto' } : {},
+    )
     return {
       images: imageResults.map((result) => result.image),
-      actualParams: imageResults[0]?.actualParams,
-      actualParamsList: imageResults.map((result) => result.actualParams),
+      actualParams,
+      actualParamsList: imageResults.map((result) =>
+        mergeActualParams(result.actualParams ?? {}, settings.codexCli ? { quality: 'auto' } : {}),
+      ),
       revisedPrompts: imageResults.map((result) => result.revisedPrompt),
     }
   } finally {

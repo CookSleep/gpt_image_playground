@@ -18,6 +18,7 @@ export interface AppSettings {
   apiMode: ApiMode
   storageMode: StorageMode
   webdav: WebDavSettings
+  codexCli: boolean
   updatedAt?: number
 }
 
@@ -38,6 +39,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     password: '',
     syncOnStartup: true,
   },
+  codexCli: false,
 }
 
 // ===== 任务参数 =====

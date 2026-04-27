@@ -115,6 +115,9 @@ export function formatImageRatio(width: number, height: number) {
   }
 
   const actualRatio = roundedWidth / roundedHeight
+  const squareDelta = Math.abs(actualRatio - 1)
+  if (squareDelta <= 0.18) return '≈1:1'
+
   const nearest = commonRatios
     .map(([commonWidth, commonHeight]) => {
       const ratio = commonWidth / commonHeight
@@ -125,7 +128,25 @@ export function formatImageRatio(width: number, height: number) {
     })
     .sort((a, b) => a.delta - b.delta)[0]
 
-  return nearest && nearest.delta <= 0.01 ? `≈${nearest.label}` : simplified
+  if (nearest && nearest.delta <= 0.01) return `≈${nearest.label}`
+
+  const friendlyNearest = Array.from({ length: 12 }, (_, widthIndex) => widthIndex + 1)
+    .flatMap((friendlyWidth) =>
+      Array.from({ length: 12 }, (_, heightIndex) => heightIndex + 1).map((friendlyHeight) => {
+        const ratio = friendlyWidth / friendlyHeight
+        const delta = Math.abs(actualRatio - ratio) / ratio
+        return {
+          label: `${friendlyWidth}:${friendlyHeight}`,
+          delta,
+          // 在误差接近时偏向更短、更好读的比例，例如 7:6 优于 8:7。
+          score: delta + (friendlyWidth + friendlyHeight) * 0.002,
+        }
+      }),
+    )
+    .filter((item) => item.label !== simplified)
+    .sort((a, b) => a.score - b.score)[0]
+
+  return friendlyNearest && friendlyNearest.delta <= 0.04 ? `≈${friendlyNearest.label}` : simplified
 }
 
 export function calculateImageSize(tier: SizeTier, ratio: string) {

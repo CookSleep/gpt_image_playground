@@ -65,6 +65,9 @@ interface AppState {
   // 设置
   settings: AppSettings
   setSettings: (s: Partial<AppSettings> & { webdav?: Partial<WebDavSettings> }) => void
+  dismissedCodexCliPrompts: string[]
+  dismissCodexCliPrompt: (key: string) => void
+  clearDismissedCodexCliPrompt: (key: string) => void
 
   // 输入
   prompt: string
@@ -115,7 +118,9 @@ interface AppState {
     title: string
     message: string
     confirmText?: string
+    messageAlign?: 'left' | 'center'
     action: () => void
+    cancelAction?: () => void
   } | null
   setConfirmDialog: (d: AppState['confirmDialog']) => void
 }
@@ -137,12 +142,22 @@ export const useStore = create<AppState>()(
             s.apiMode === 'images' || s.apiMode === 'responses'
               ? s.apiMode
               : st.settings.apiMode ?? DEFAULT_SETTINGS.apiMode,
+          codexCli: s.codexCli ?? st.settings.codexCli ?? DEFAULT_SETTINGS.codexCli,
           storageMode:
             s.storageMode === 'local' || s.storageMode === 'webdav'
               ? s.storageMode
               : st.settings.storageMode ?? DEFAULT_SETTINGS.storageMode,
           updatedAt: Date.now(),
         },
+      })),
+      dismissedCodexCliPrompts: [],
+      dismissCodexCliPrompt: (key) => set((st) => ({
+        dismissedCodexCliPrompts: st.dismissedCodexCliPrompts.includes(key)
+          ? st.dismissedCodexCliPrompts
+          : [...st.dismissedCodexCliPrompts, key],
+      })),
+      clearDismissedCodexCliPrompt: (key) => set((st) => ({
+        dismissedCodexCliPrompts: st.dismissedCodexCliPrompts.filter((item) => item !== key),
       })),
 
       // Input
@@ -226,6 +241,7 @@ export const useStore = create<AppState>()(
       partialize: (state) => ({
         settings: state.settings,
         params: state.params,
+        dismissedCodexCliPrompts: state.dismissedCodexCliPrompts,
       }),
     },
   ),
@@ -236,6 +252,29 @@ export const useStore = create<AppState>()(
 let uid = 0
 function genId(): string {
   return Date.now().toString(36) + (++uid).toString(36) + Math.random().toString(36).slice(2, 6)
+}
+
+function getCodexCliPromptKey(settings: AppSettings): string {
+  return `${settings.baseUrl}\n${settings.apiKey}`
+}
+
+export function showCodexCliPrompt(force = false, reason = '接口返回的提示词已被改写') {
+  const state = useStore.getState()
+  const settings = state.settings
+  const promptKey = getCodexCliPromptKey(settings)
+  if (!force && (settings.codexCli || state.dismissedCodexCliPrompts.includes(promptKey))) return
+
+  state.setConfirmDialog({
+    title: '检测到 Codex CLI API',
+    message: `${reason}，当前 API 来源很可能是 Codex CLI。\n\n是否开启 Codex CLI 兼容模式？开启后会禁用在此处无效的质量参数，并在 Images API 多图生成时使用并发请求，解决该 API 数量参数无效的问题。同时，提示词文本开头会加入简短的不改写要求，避免模型重写提示词，偏离原意。`,
+    confirmText: '开启',
+    action: () => {
+      const state = useStore.getState()
+      state.clearDismissedCodexCliPrompt(promptKey)
+      state.setSettings({ codexCli: true })
+    },
+    cancelAction: () => useStore.getState().dismissCodexCliPrompt(promptKey),
+  })
 }
 
 /** 初始化：从 IndexedDB 加载任务和图片缓存，清理孤立图片 */
@@ -285,9 +324,10 @@ export async function submitTask() {
   const normalizedParams = {
     ...params,
     size: normalizeImageSize(params.size) || DEFAULT_PARAMS.size,
+    quality: settings.codexCli ? DEFAULT_PARAMS.quality : params.quality,
   }
-  if (normalizedParams.size !== params.size) {
-    useStore.getState().setParams({ size: normalizedParams.size })
+  if (normalizedParams.size !== params.size || normalizedParams.quality !== params.quality) {
+    useStore.getState().setParams({ size: normalizedParams.size, quality: normalizedParams.quality })
   }
 
   const taskId = genId()
@@ -350,6 +390,17 @@ async function executeTask(taskId: string) {
       if (imgId && revisedPrompt && revisedPrompt.trim()) acc[imgId] = revisedPrompt
       return acc
     }, {})
+    const promptWasRevised = result.revisedPrompts?.some(
+      (revisedPrompt) => revisedPrompt?.trim() && revisedPrompt.trim() !== task.prompt.trim(),
+    )
+    const hasRevisedPromptValue = result.revisedPrompts?.some((revisedPrompt) => revisedPrompt?.trim())
+    if (!settings.codexCli) {
+      if (promptWasRevised) {
+        showCodexCliPrompt()
+      } else if (!hasRevisedPromptValue) {
+        showCodexCliPrompt(false, '接口没有返回官方 API 会返回的部分信息')
+      }
+    }
 
     // 更新任务
     updateTaskInStore(taskId, {
@@ -519,6 +570,7 @@ export async function clearAllData() {
   const { setTasks, clearInputImages, setSettings, setParams, showToast } = useStore.getState()
   setTasks([])
   clearInputImages()
+  useStore.setState({ dismissedCodexCliPrompts: [] })
   setSettings({ ...DEFAULT_SETTINGS })
   setParams({ ...DEFAULT_PARAMS })
   showToast('所有数据已清空', 'success')

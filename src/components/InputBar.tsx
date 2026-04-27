@@ -115,12 +115,14 @@ export default function InputBar() {
   const [attachHover, setAttachHover] = useState(false)
   const [compressionHintVisible, setCompressionHintVisible] = useState(false)
   const [moderationHintVisible, setModerationHintVisible] = useState(false)
+  const [qualityHintVisible, setQualityHintVisible] = useState(false)
   const [mobileCollapsed, setMobileCollapsed] = useState(false)
   const [showSizePicker, setShowSizePicker] = useState(false)
   const handleRef = useRef<HTMLDivElement>(null)
   const dragTouchRef = useRef({ startY: 0, moved: false })
   const compressionHintTimerRef = useRef<number | null>(null)
   const moderationHintTimerRef = useRef<number | null>(null)
+  const qualityHintTimerRef = useRef<number | null>(null)
   const [outputCompressionInput, setOutputCompressionInput] = useState(
     params.output_compression == null ? '' : String(params.output_compression),
   )
@@ -147,12 +149,21 @@ export default function InputBar() {
     }
   }, [params.moderation, settings.apiMode, setParams])
 
+  useEffect(() => {
+    if (settings.codexCli && params.quality !== 'auto') {
+      setParams({ quality: 'auto' })
+    }
+  }, [params.quality, settings.codexCli, setParams])
+
   useEffect(() => () => {
     if (compressionHintTimerRef.current != null) {
       window.clearTimeout(compressionHintTimerRef.current)
     }
     if (moderationHintTimerRef.current != null) {
       window.clearTimeout(moderationHintTimerRef.current)
+    }
+    if (qualityHintTimerRef.current != null) {
+      window.clearTimeout(qualityHintTimerRef.current)
     }
   }, [])
 
@@ -215,6 +226,26 @@ export default function InputBar() {
     compressionHintTimerRef.current = window.setTimeout(() => {
       setCompressionHintVisible(true)
       compressionHintTimerRef.current = null
+    }, 450)
+  }
+
+  const showQualityHint = () => {
+    if (settings.codexCli) setQualityHintVisible(true)
+  }
+
+  const hideQualityHint = () => {
+    setQualityHintVisible(false)
+    if (qualityHintTimerRef.current != null) {
+      window.clearTimeout(qualityHintTimerRef.current)
+      qualityHintTimerRef.current = null
+    }
+  }
+
+  const startQualityHintTouch = () => {
+    if (!settings.codexCli) return
+    qualityHintTimerRef.current = window.setTimeout(() => {
+      setQualityHintVisible(true)
+      qualityHintTimerRef.current = null
     }, 450)
   }
 
@@ -471,18 +502,34 @@ export default function InputBar() {
           {normalizeImageSize(params.size) || DEFAULT_PARAMS.size}
         </button>
       </label>
-      <label className="flex flex-col gap-0.5">
+      <label
+        className="relative flex flex-col gap-0.5"
+        onMouseEnter={showQualityHint}
+        onMouseLeave={hideQualityHint}
+        onTouchStart={startQualityHintTouch}
+        onTouchEnd={hideQualityHint}
+        onTouchCancel={hideQualityHint}
+      >
         <span className="text-gray-400 dark:text-gray-500 ml-1">质量</span>
         <Select
-          value={params.quality}
-          onChange={(val) => setParams({ quality: val as any })}
+          value={settings.codexCli ? 'auto' : params.quality}
+          onChange={(val) => {
+            if (!settings.codexCli) setParams({ quality: val as any })
+          }}
           options={[
             { label: 'auto', value: 'auto' },
             { label: 'low', value: 'low' },
             { label: 'medium', value: 'medium' },
             { label: 'high', value: 'high' },
           ]}
-          className={selectClass}
+          disabled={settings.codexCli}
+          className={settings.codexCli
+            ? 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-gray-100/50 dark:bg-white/[0.05] opacity-50 cursor-not-allowed text-xs transition-all duration-200 shadow-sm'
+            : selectClass}
+        />
+        <ButtonTooltip
+          visible={settings.codexCli && qualityHintVisible}
+          text="Codex CLI 不支持质量参数"
         />
       </label>
       <label className="flex flex-col gap-0.5">

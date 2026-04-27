@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore } from '../store'
+import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
@@ -17,12 +17,8 @@ export default function DetailModal() {
   const [imageSrcs, setImageSrcs] = useState<Record<string, string>>({})
   const [imageRatios, setImageRatios] = useState<Record<string, string>>({})
   const [imageSizes, setImageSizes] = useState<Record<string, string>>({})
-  const [promptWarningVisible, setPromptWarningVisible] = useState(false)
   const imagePanelRef = useRef<HTMLDivElement>(null)
   const mainImageRef = useRef<HTMLImageElement>(null)
-  const promptWarningTimerRef = useRef<number | null>(null)
-  const promptWarningTouchHandledRef = useRef(false)
-  const promptWarningLongPressRef = useRef(false)
   const [imageLabelLeft, setImageLabelLeft] = useState(8)
 
   const task = useMemo(
@@ -36,10 +32,6 @@ export default function DetailModal() {
   useEffect(() => {
     setImageIndex(0)
   }, [detailTaskId])
-
-  useEffect(() => () => {
-    if (promptWarningTimerRef.current != null) window.clearTimeout(promptWarningTimerRef.current)
-  }, [])
 
   // 加载所有相关图片
   useEffect(() => {
@@ -118,6 +110,7 @@ export default function DetailModal() {
   const currentActualParams = currentOutputImageId ? task.actualParamsByImage?.[currentOutputImageId] : undefined
   const currentRevisedPrompt = currentOutputImageId ? task.revisedPromptByImage?.[currentOutputImageId]?.trim() : ''
   const showRevisedPrompt = Boolean(currentRevisedPrompt && currentRevisedPrompt !== task.prompt.trim())
+  const showPromptWarning = Boolean(currentOutputImageId && (!currentRevisedPrompt || showRevisedPrompt))
   const aggregateActualParams = outputLen > 0 ? { ...task.actualParams, n: outputLen } : task.actualParams
 
   const formatTime = (ts: number | null) => {
@@ -176,30 +169,11 @@ export default function DetailModal() {
     }
   }
 
-  const clearPromptWarningTimer = () => {
-    if (promptWarningTimerRef.current != null) {
-      window.clearTimeout(promptWarningTimerRef.current)
-      promptWarningTimerRef.current = null
-    }
-  }
-
-  const startPromptWarningTouch = () => {
-    clearPromptWarningTimer()
-    promptWarningTouchHandledRef.current = false
-    promptWarningLongPressRef.current = false
-    promptWarningTimerRef.current = window.setTimeout(() => {
-      setPromptWarningVisible(true)
-      promptWarningLongPressRef.current = true
-      promptWarningTimerRef.current = null
-    }, 450)
-  }
-
-  const endPromptWarningTouch = () => {
-    clearPromptWarningTimer()
-    promptWarningTouchHandledRef.current = true
-    if (!promptWarningLongPressRef.current) {
-      setPromptWarningVisible((visible) => !visible)
-    }
+  const handleShowPromptWarning = () => {
+    showCodexCliPrompt(
+      true,
+      currentRevisedPrompt ? '接口返回的提示词已被改写' : '接口没有返回官方 API 会返回的部分信息',
+    )
   }
 
   const handleCopyInputImage = async () => {
@@ -379,37 +353,18 @@ export default function DetailModal() {
                   </svg>
                 </button>
               )}
-              {showRevisedPrompt && (
-                <span
-                  className="relative inline-flex"
-                  onMouseEnter={() => setPromptWarningVisible(true)}
-                  onMouseLeave={() => setPromptWarningVisible(false)}
-                  onTouchStart={startPromptWarningTouch}
-                  onTouchEnd={endPromptWarningTouch}
-                  onTouchCancel={clearPromptWarningTimer}
-                >
+              {showPromptWarning && (
+                <span className="relative inline-flex">
                   <button
                     type="button"
                     className="p-1 rounded text-amber-500 hover:bg-amber-50 dark:text-yellow-300 dark:hover:bg-yellow-500/10 transition"
-                    onClick={() => {
-                      if (promptWarningTouchHandledRef.current) {
-                        promptWarningTouchHandledRef.current = false
-                        return
-                      }
-                      setPromptWarningVisible((visible) => !visible)
-                    }}
+                    onClick={handleShowPromptWarning}
                     aria-label="提示词已被改写"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
                     </svg>
                   </button>
-                  {promptWarningVisible && (
-                    <span className="absolute -left-10 sm:left-0 top-full z-50 mt-2 w-60 sm:w-64 rounded-lg bg-gray-800 px-3 py-2 text-xs font-normal leading-relaxed text-white shadow-lg pointer-events-none">
-                      由于请求中的提示词已被改写，你当前接入的 API 来源很可能是 Codex CLI，建议在设置中切换 API 接口为 Response API
-                      <span className="absolute left-[3rem] sm:left-3 bottom-full border-4 border-transparent border-b-gray-800" />
-                    </span>
-                  )}
                 </span>
               )}
             </div>
