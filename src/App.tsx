@@ -12,6 +12,7 @@ import SettingsModal from './components/SettingsModal'
 import ConfirmDialog from './components/ConfirmDialog'
 import Toast from './components/Toast'
 import ImageContextMenu from './components/ImageContextMenu'
+import { syncWebDavOnLaunch } from './lib/webdavSync'
 
 export default function App() {
   const setSettings = useStore((s) => s.setSettings)
@@ -41,7 +42,10 @@ export default function App() {
       window.history.replaceState(null, '', nextUrl)
     }
 
-    initStore()
+    void (async () => {
+      await initStore()
+      await syncWebDavOnLaunch()
+    })()
   }, [setSettings])
 
   useEffect(() => {

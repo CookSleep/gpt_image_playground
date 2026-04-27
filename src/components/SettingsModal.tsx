@@ -3,6 +3,7 @@ import { normalizeBaseUrl } from '../lib/api'
 import { useStore, exportData, importData, clearAllData } from '../store'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, type AppSettings } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
+import { syncWithWebDav, testWebDavDirectory } from '../lib/webdavSync'
 import Select from './Select'
 
 export default function SettingsModal() {
@@ -28,14 +29,20 @@ export default function SettingsModal() {
 
   const commitSettings = (nextDraft: AppSettings) => {
     const apiMode = nextDraft.apiMode === 'responses' ? 'responses' : DEFAULT_SETTINGS.apiMode
+    const storageMode = nextDraft.storageMode === 'webdav' ? 'webdav' : DEFAULT_SETTINGS.storageMode
     const defaultModel = getDefaultModelForMode(apiMode)
     const normalizedDraft = {
       ...nextDraft,
       apiMode,
+      storageMode,
       baseUrl: normalizeBaseUrl(nextDraft.baseUrl.trim() || DEFAULT_SETTINGS.baseUrl),
       apiKey: nextDraft.apiKey,
       model: nextDraft.model.trim() || defaultModel,
       timeout: Number(nextDraft.timeout) || DEFAULT_SETTINGS.timeout,
+      webdav: {
+        ...DEFAULT_SETTINGS.webdav,
+        ...nextDraft.webdav,
+      },
     }
     setDraft(normalizedDraft)
     setSettings(normalizedDraft)
@@ -69,6 +76,28 @@ export default function SettingsModal() {
     const file = e.target.files?.[0]
     if (file) importData(file)
     e.target.value = ''
+  }
+
+  const handleSyncNow = async () => {
+    try {
+      await syncWithWebDav()
+    } catch (err) {
+      useStore.getState().showToast(
+        `WebDAV 同步失败：${err instanceof Error ? err.message : String(err)}`,
+        'error',
+      )
+    }
+  }
+
+  const handleTestDirectory = async () => {
+    try {
+      await testWebDavDirectory()
+    } catch (err) {
+      useStore.getState().showToast(
+        `WebDAV 目录测试失败：${err instanceof Error ? err.message : String(err)}`,
+        'error',
+      )
+    }
   }
 
   return (
@@ -162,6 +191,137 @@ export default function SettingsModal() {
                   支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiKey=</code>
                 </div>
               </div>
+
+              <label className="block">
+                <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">存储模式</span>
+                <Select
+                  value={draft.storageMode ?? DEFAULT_SETTINGS.storageMode}
+                  onChange={(value) => {
+                    const storageMode: AppSettings['storageMode'] = value === 'webdav' ? 'webdav' : 'local'
+                    const nextDraft: AppSettings = { ...draft, storageMode }
+                    setDraft(nextDraft)
+                    commitSettings(nextDraft)
+                  }}
+                  options={[
+                    { label: '本地存储（IndexedDB）', value: 'local' },
+                    { label: '远端同步（WebDAV）', value: 'webdav' },
+                  ]}
+                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                />
+                <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                  选择 WebDAV 后，设置和图片快照会按远端地址同步；本地仍保留一份缓存。
+                </div>
+              </label>
+
+              {draft.storageMode === 'webdav' && (
+                <div className="space-y-4 rounded-2xl border border-dashed border-blue-200/70 bg-blue-50/40 p-4 dark:border-blue-500/20 dark:bg-blue-500/10">
+                  <label className="block">
+                    <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">WebDAV 快照地址</span>
+                    <input
+                      value={draft.webdav.url}
+                      onChange={(e) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          webdav: { ...prev.webdav, url: e.target.value },
+                        }))
+                      }
+                      onBlur={(e) =>
+                        commitSettings({
+                          ...draft,
+                          webdav: { ...draft.webdav, url: e.target.value },
+                        })
+                      }
+                      type="text"
+                      placeholder="https://dav.example.com/path/gptimage/"
+                      className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                    />
+                    <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                      这里填写 WebDAV 目录地址，程序会在其下读写 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">manifest.json</code> 和图片文件。
+                    </div>
+                  </label>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="block">
+                      <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">用户名</span>
+                      <input
+                        value={draft.webdav.username}
+                        onChange={(e) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            webdav: { ...prev.webdav, username: e.target.value },
+                          }))
+                        }
+                        onBlur={(e) =>
+                          commitSettings({
+                            ...draft,
+                            webdav: { ...draft.webdav, username: e.target.value },
+                          })
+                        }
+                        type="text"
+                        placeholder="username"
+                        className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">密码</span>
+                      <input
+                        value={draft.webdav.password}
+                        onChange={(e) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            webdav: { ...prev.webdav, password: e.target.value },
+                          }))
+                        }
+                        onBlur={(e) =>
+                          commitSettings({
+                            ...draft,
+                            webdav: { ...draft.webdav, password: e.target.value },
+                          })
+                        }
+                        type="password"
+                        placeholder="password"
+                        className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={draft.webdav.syncOnStartup}
+                      onChange={(e) => {
+                        const nextDraft = {
+                          ...draft,
+                          webdav: { ...draft.webdav, syncOnStartup: e.target.checked },
+                        }
+                        setDraft(nextDraft)
+                        commitSettings(nextDraft)
+                      }}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500 dark:border-white/[0.12]"
+                    />
+                    启动时自动同步
+                  </label>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleTestDirectory}
+                      className="flex-1 rounded-xl bg-gray-100/80 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-200 dark:bg-white/[0.06] dark:text-gray-200 dark:hover:bg-white/[0.1]"
+                      disabled={!draft.webdav.url.trim()}
+                    >
+                      测试目录
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSyncNow}
+                      className="flex-1 rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-600 disabled:opacity-50"
+                      disabled={!draft.webdav.url.trim()}
+                    >
+                      立即同步
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <label className="block">
                 <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">API 接口</span>
