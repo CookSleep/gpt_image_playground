@@ -74,7 +74,7 @@ export default function App() {
   return (
     <>
       <Header />
-      <main className="max-w-7xl mx-auto px-4 pb-48">
+      <main className="safe-area-x max-w-7xl mx-auto pb-48">
         <SearchBar />
         <TaskGrid />
       </main>
