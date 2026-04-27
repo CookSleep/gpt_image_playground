@@ -451,15 +451,23 @@ export default function DetailModal() {
                   </button>
                 </div>
                 <div className="flex gap-2 flex-wrap">
-                  {(task.maskImageId ? referenceInputImageIds : task.inputImageIds).map((imgId) => (
-                    <img
-                      key={imgId}
-                      src={imageSrcs[imgId] || ''}
-                      className="w-16 h-16 rounded-lg object-cover border border-gray-200 dark:border-white/[0.08] cursor-pointer hover:opacity-80 transition"
-                      onClick={() => setLightboxImageId(imgId, task.inputImageIds)}
-                      alt=""
-                    />
-                  ))}
+                  {(task.maskImageId ? referenceInputImageIds : task.inputImageIds).map((imgId) => {
+                    const src = imageSrcs[imgId]
+                    return src ? (
+                      <img
+                        key={imgId}
+                        src={src}
+                        className="w-16 h-16 rounded-lg object-cover border border-gray-200 dark:border-white/[0.08] cursor-pointer hover:opacity-80 transition"
+                        onClick={() => setLightboxImageId(imgId, task.inputImageIds)}
+                        alt=""
+                      />
+                    ) : (
+                      <div
+                        key={imgId}
+                        className="w-16 h-16 rounded-lg border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04]"
+                      />
+                    )
+                  })}
                   {task.maskImageId && referenceInputImageIds.length === 0 && (
                     <span className="text-xs text-gray-400 dark:text-gray-500">无其他参考图</span>
                   )}
