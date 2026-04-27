@@ -55,7 +55,6 @@ interface AppState {
   setSettings: (s: Partial<AppSettings>) => void
   dismissedCodexCliPrompts: string[]
   dismissCodexCliPrompt: (key: string) => void
-  clearDismissedCodexCliPrompt: (key: string) => void
 
   // 输入
   prompt: string
@@ -140,9 +139,6 @@ export const useStore = create<AppState>()(
         dismissedCodexCliPrompts: st.dismissedCodexCliPrompts.includes(key)
           ? st.dismissedCodexCliPrompts
           : [...st.dismissedCodexCliPrompts, key],
-      })),
-      clearDismissedCodexCliPrompt: (key) => set((st) => ({
-        dismissedCodexCliPrompts: st.dismissedCodexCliPrompts.filter((item) => item !== key),
       })),
 
       // Input
@@ -257,7 +253,7 @@ function genId(): string {
   return Date.now().toString(36) + (++uid).toString(36) + Math.random().toString(36).slice(2, 6)
 }
 
-function getCodexCliPromptKey(settings: AppSettings): string {
+export function getCodexCliPromptKey(settings: AppSettings): string {
   return `${settings.baseUrl}\n${settings.apiKey}`
 }
 
@@ -273,7 +269,7 @@ export function showCodexCliPrompt(force = false, reason = '接口返回的提�
     confirmText: '开启',
     action: () => {
       const state = useStore.getState()
-      state.clearDismissedCodexCliPrompt(promptKey)
+      state.dismissCodexCliPrompt(promptKey)
       state.setSettings({ codexCli: true })
     },
     cancelAction: () => useStore.getState().dismissCodexCliPrompt(promptKey),
