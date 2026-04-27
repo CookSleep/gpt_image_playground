@@ -187,7 +187,9 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     const canvas = canvasRef.current
     if (!canvas || suppressHistoryRef.current) return
 
-    const serialized = JSON.stringify(canvas.toJSON(['data']))
+    const serialized = JSON.stringify(
+      (canvas as Canvas & { toJSON: (propertiesToInclude?: string[]) => unknown }).toJSON(['data']),
+    )
     if (historyRef.current[historyIndexRef.current] === serialized) {
       updateHistoryFlags()
       return
