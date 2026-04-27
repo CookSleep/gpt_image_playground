@@ -10,6 +10,7 @@ export default function DetailModal() {
   const detailTaskId = useStore((s) => s.detailTaskId)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
+  const setLightboxStartEditor = useStore((s) => s.setLightboxStartEditor)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const showToast = useStore((s) => s.showToast)
 
@@ -134,6 +135,13 @@ export default function DetailModal() {
   const handleEdit = () => {
     editOutputs(task)
     setDetailTaskId(null)
+  }
+
+  const handleQuickEditOutput = () => {
+    if (!currentOutputImageId) return
+    setDetailTaskId(null)
+    setLightboxStartEditor(true)
+    setLightboxImageId(currentOutputImageId, task.outputImages)
   }
 
   const handleDelete = () => {
@@ -286,6 +294,15 @@ export default function DetailModal() {
                   </span>
                 </>
               )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleQuickEditOutput()
+                }}
+                className="absolute bottom-3 right-3 rounded-full bg-black/55 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition hover:bg-black/70"
+              >
+                快速编辑
+              </button>
             </>
           )}
           {task.status === 'running' && (

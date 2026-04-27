@@ -1,0 +1,946 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Canvas, Ellipse, FabricImage, IText, PencilBrush, Rect, Triangle, type FabricObject } from 'fabric'
+import { addInputImageWithDataUrl, replaceInputImageWithDataUrl, useStore } from '../store'
+import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
+
+interface ReferenceImageEditorModalProps {
+  imageId: string
+  src: string
+  saveMode: 'replace-input' | 'append-input'
+  onClose: () => void
+}
+
+type ToolMode = 'select' | 'mask'
+type MaskShapeType = 'rect' | 'ellipse' | 'triangle'
+
+interface TextStyleState {
+  text: string
+  fill: string
+  fontSize: number
+  fontWeight: 'normal' | 'bold'
+  fontStyle: 'normal' | 'italic'
+}
+
+const DEFAULT_TEXT_STYLE: TextStyleState = {
+  text: '输入文字',
+  fill: '#ffffff',
+  fontSize: 48,
+  fontWeight: 'bold',
+  fontStyle: 'normal',
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function getEditorKind(object: FabricObject | null): string | undefined {
+  if (!object || typeof object !== 'object') return undefined
+  return (object as FabricObject & { data?: { editorKind?: string } }).data?.editorKind
+}
+
+function getMaskShapeTypeFromObject(object: FabricObject | null): MaskShapeType | undefined {
+  if (!object || typeof object !== 'object') return undefined
+  return (object as FabricObject & { data?: { shapeType?: MaskShapeType } }).data?.shapeType
+}
+
+export default function ReferenceImageEditorModal({ imageId, src, saveMode, onClose }: ReferenceImageEditorModalProps) {
+  const setLightboxImageId = useStore((s) => s.setLightboxImageId)
+  const inputImages = useStore((s) => s.inputImages)
+  const lightboxImageList = useStore((s) => s.lightboxImageList)
+  const showToast = useStore((s) => s.showToast)
+  const backgroundCanvasRef = useRef<HTMLCanvasElement>(null)
+  const canvasElementRef = useRef<HTMLCanvasElement>(null)
+  const canvasViewportRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const canvasRef = useRef<Canvas | null>(null)
+  const sourceImageRef = useRef<HTMLImageElement | null>(null)
+  const historyRef = useRef<string[]>([])
+  const historyIndexRef = useRef(-1)
+  const suppressHistoryRef = useRef(false)
+  const displaySizeRef = useRef({ width: 0, height: 0 })
+  const sourceSizeRef = useRef({ width: 0, height: 0 })
+  const imageBoundsRef = useRef({ left: 0, top: 0, width: 0, height: 0 })
+  const exportMultiplierRef = useRef(1)
+  const zoomRef = useRef(1)
+  const panRef = useRef({ x: 0, y: 0 })
+  const panningRef = useRef(false)
+  const lastPointerRef = useRef({ x: 0, y: 0 })
+  const spacePressedRef = useRef(false)
+  const toolModeRef = useRef<ToolMode>('select')
+  const [ready, setReady] = useState(false)
+  const [toolMode, setToolMode] = useState<ToolMode>('select')
+  const [maskOpacity, setMaskOpacity] = useState(0.55)
+  const [maskWidth, setMaskWidth] = useState(34)
+  const [maskShapeType, setMaskShapeType] = useState<MaskShapeType>('rect')
+  const [activeObject, setActiveObject] = useState<FabricObject | null>(null)
+  const [textStyle, setTextStyle] = useState<TextStyleState>(DEFAULT_TEXT_STYLE)
+  const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false })
+  const currentImageList = useMemo(() => lightboxImageList.length ? lightboxImageList : inputImages.map((item) => item.id), [inputImages, lightboxImageList])
+  const isOpen = true
+
+  useCloseOnEscape(isOpen, onClose)
+
+  useEffect(() => {
+    toolModeRef.current = toolMode
+  }, [toolMode])
+
+  useEffect(() => {
+    document.body.dataset.referenceEditorActive = '1'
+    return () => {
+      delete document.body.dataset.referenceEditorActive
+    }
+  }, [])
+
+  const updateHistoryFlags = useCallback(() => {
+    setHistoryState({
+      canUndo: historyIndexRef.current > 0,
+      canRedo: historyIndexRef.current < historyRef.current.length - 1,
+    })
+  }, [])
+
+  const syncTextStyleFromObject = useCallback((object: FabricObject | null) => {
+    if (!(object instanceof IText)) {
+      setTextStyle((prev) => ({ ...prev }))
+      return
+    }
+
+    setTextStyle({
+      text: object.text ?? DEFAULT_TEXT_STYLE.text,
+      fill: typeof object.fill === 'string' ? object.fill : DEFAULT_TEXT_STYLE.fill,
+      fontSize: typeof object.fontSize === 'number' ? object.fontSize : DEFAULT_TEXT_STYLE.fontSize,
+      fontWeight: object.fontWeight === 'bold' ? 'bold' : 'normal',
+      fontStyle: object.fontStyle === 'italic' ? 'italic' : 'normal',
+    })
+  }, [])
+
+  const pushHistory = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas || suppressHistoryRef.current) return
+
+    const serialized = JSON.stringify(canvas.toJSON())
+    if (historyRef.current[historyIndexRef.current] === serialized) {
+      updateHistoryFlags()
+      return
+    }
+
+    historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1)
+    historyRef.current.push(serialized)
+    historyIndexRef.current = historyRef.current.length - 1
+    updateHistoryFlags()
+  }, [updateHistoryFlags])
+
+  const restoreHistory = useCallback(async (nextIndex: number) => {
+    const canvas = canvasRef.current
+    const snapshot = historyRef.current[nextIndex]
+    if (!canvas || !snapshot) return
+
+    suppressHistoryRef.current = true
+    await canvas.loadFromJSON(JSON.parse(snapshot))
+    canvas.renderAll()
+    suppressHistoryRef.current = false
+    historyIndexRef.current = nextIndex
+    const currentActive = canvas.getActiveObject() ?? null
+    setActiveObject(currentActive)
+    syncTextStyleFromObject(currentActive)
+    updateHistoryFlags()
+  }, [syncTextStyleFromObject, updateHistoryFlags])
+
+  const refreshBrush = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const alpha = clamp(maskOpacity, 0.05, 1)
+    const width = clamp(maskWidth, 4, 160)
+    const brush = new PencilBrush(canvas)
+    brush.color = `rgba(0, 0, 0, ${alpha})`
+    brush.width = width
+    canvas.freeDrawingBrush = brush
+    canvas.isDrawingMode = toolMode === 'mask'
+    canvas.defaultCursor = toolMode === 'mask' ? 'crosshair' : 'default'
+  }, [maskOpacity, maskWidth, toolMode])
+
+  const redrawBackground = useCallback(() => {
+    const canvas = backgroundCanvasRef.current
+    const image = sourceImageRef.current
+    if (!canvas || !image) return
+
+    const context = canvas.getContext('2d')
+    if (!context) return
+
+    context.setTransform(1, 0, 0, 1, 0, 0)
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    context.fillStyle = '#11161d'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.setTransform(zoomRef.current, 0, 0, zoomRef.current, panRef.current.x, panRef.current.y)
+    context.drawImage(
+      image,
+      imageBoundsRef.current.left,
+      imageBoundsRef.current.top,
+      imageBoundsRef.current.width,
+      imageBoundsRef.current.height,
+    )
+   }, [])
+
+  const syncViewportTransform = useCallback(() => {
+    const canvas = canvasRef.current
+    if (canvas) {
+      canvas.setViewportTransform([zoomRef.current, 0, 0, zoomRef.current, panRef.current.x, panRef.current.y])
+      canvas.requestRenderAll()
+    }
+    redrawBackground()
+  }, [redrawBackground])
+
+  const addImageLayer = useCallback(async (dataUrl: string) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const htmlImage = await loadHtmlImage(dataUrl)
+    const image = new FabricImage(htmlImage, {
+      width: htmlImage.naturalWidth,
+      height: htmlImage.naturalHeight,
+      left: canvas.getWidth() / 2,
+      top: canvas.getHeight() / 2,
+      originX: 'center',
+      originY: 'center',
+      cornerStyle: 'circle',
+      transparentCorners: false,
+      borderColor: '#3b82f6',
+      cornerColor: '#ffffff',
+      cornerStrokeColor: '#3b82f6',
+    })
+
+    const width = displaySizeRef.current.width || canvas.getWidth()
+    const height = displaySizeRef.current.height || canvas.getHeight()
+    const fitScale = Math.min(
+      1,
+      (width * 0.55) / Math.max(1, htmlImage.naturalWidth),
+      (height * 0.55) / Math.max(1, htmlImage.naturalHeight),
+    )
+    image.scale(Math.max(0.08, fitScale))
+    image.setControlsVisibility({ mtr: true })
+    canvas.add(image)
+    canvas.setActiveObject(image)
+    canvas.renderAll()
+    pushHistory()
+  }, [pushHistory])
+
+  useEffect(() => {
+    let disposed = false
+
+    const mountCanvas = async () => {
+      const element = canvasElementRef.current
+      const backgroundElement = backgroundCanvasRef.current
+      const viewport = canvasViewportRef.current
+      if (!element || !backgroundElement || !viewport) return
+
+      const htmlImage = await loadHtmlImage(src)
+      if (disposed) return
+      sourceImageRef.current = htmlImage
+
+      const stageRect = viewport.getBoundingClientRect()
+      const stageWidth = Math.max(320, Math.floor(stageRect.width))
+      const stageHeight = Math.max(320, Math.floor(stageRect.height))
+      const imageScale = Math.min(
+        stageWidth / Math.max(1, htmlImage.naturalWidth),
+        stageHeight / Math.max(1, htmlImage.naturalHeight),
+        1,
+      )
+      const imageDisplayWidth = Math.max(1, Math.round(htmlImage.naturalWidth * imageScale))
+      const imageDisplayHeight = Math.max(1, Math.round(htmlImage.naturalHeight * imageScale))
+      const imageLeft = Math.max(0, Math.round((stageWidth - imageDisplayWidth) / 2))
+      const imageTop = Math.max(0, Math.round((stageHeight - imageDisplayHeight) / 2))
+
+      displaySizeRef.current = { width: stageWidth, height: stageHeight }
+      sourceSizeRef.current = {
+        width: htmlImage.naturalWidth,
+        height: htmlImage.naturalHeight,
+      }
+      imageBoundsRef.current = {
+        left: imageLeft,
+        top: imageTop,
+        width: imageDisplayWidth,
+        height: imageDisplayHeight,
+      }
+      exportMultiplierRef.current = Math.max(1, htmlImage.naturalWidth / Math.max(1, imageDisplayWidth))
+      zoomRef.current = 1
+      panRef.current = { x: 0, y: 0 }
+
+      backgroundElement.width = stageWidth
+      backgroundElement.height = stageHeight
+
+      const canvas = new Canvas(element, {
+        selection: true,
+        preserveObjectStacking: true,
+        enableRetinaScaling: false,
+      })
+      canvasRef.current = canvas
+
+      canvas.setDimensions({
+        width: stageWidth,
+        height: stageHeight,
+      })
+      canvas.calcOffset()
+      redrawBackground()
+
+      canvas.on('mouse:wheel', (event) => {
+        const wheelEvent = event.e as WheelEvent
+        wheelEvent.preventDefault()
+        wheelEvent.stopPropagation()
+        const nextZoom = clamp(zoomRef.current * Math.pow(0.999, wheelEvent.deltaY), 0.35, 6)
+        const factor = nextZoom / zoomRef.current
+        panRef.current = {
+          x: wheelEvent.offsetX - factor * (wheelEvent.offsetX - panRef.current.x),
+          y: wheelEvent.offsetY - factor * (wheelEvent.offsetY - panRef.current.y),
+        }
+        zoomRef.current = nextZoom
+        syncViewportTransform()
+      })
+
+      canvas.on('mouse:down', (event) => {
+        const rawEvent = event.e as MouseEvent
+        if (rawEvent.button === 1 || (spacePressedRef.current && toolModeRef.current === 'select')) {
+          panningRef.current = true
+          lastPointerRef.current = { x: rawEvent.clientX, y: rawEvent.clientY }
+          canvas.selection = false
+          canvas.defaultCursor = 'grab'
+        }
+      })
+
+      canvas.on('mouse:move', (event) => {
+        if (!panningRef.current) return
+        const rawEvent = event.e as MouseEvent
+        const deltaX = rawEvent.clientX - lastPointerRef.current.x
+        const deltaY = rawEvent.clientY - lastPointerRef.current.y
+        panRef.current = {
+          x: panRef.current.x + deltaX,
+          y: panRef.current.y + deltaY,
+        }
+        syncViewportTransform()
+        lastPointerRef.current = { x: rawEvent.clientX, y: rawEvent.clientY }
+      })
+
+      canvas.on('mouse:up', () => {
+        panningRef.current = false
+        canvas.selection = toolModeRef.current === 'select'
+        canvas.defaultCursor = toolModeRef.current === 'mask' ? 'crosshair' : 'default'
+      })
+
+      const handleSelection = () => {
+        const current = canvas.getActiveObject() ?? null
+        setActiveObject(current)
+        syncTextStyleFromObject(current)
+        const selectedShapeType = getMaskShapeTypeFromObject(current)
+        if (selectedShapeType) {
+          setMaskShapeType(selectedShapeType)
+        }
+      }
+
+      canvas.on('selection:created', handleSelection)
+      canvas.on('selection:updated', handleSelection)
+      canvas.on('selection:cleared', () => {
+        setActiveObject(null)
+      })
+
+      const recordChange = () => pushHistory()
+      canvas.on('object:added', recordChange)
+      canvas.on('object:modified', recordChange)
+      canvas.on('object:removed', recordChange)
+      canvas.on('path:created', (event) => {
+        const path = event.path
+        if (path) {
+          ;(path as FabricObject & { data?: { editorKind: string } }).data = { editorKind: 'mask-brush' }
+        }
+        pushHistory()
+      })
+
+      refreshBrush()
+      suppressHistoryRef.current = true
+      historyRef.current = []
+      historyIndexRef.current = -1
+      suppressHistoryRef.current = false
+      pushHistory()
+      setReady(true)
+    }
+
+    void mountCanvas()
+
+    return () => {
+      disposed = true
+      setReady(false)
+      canvasRef.current?.dispose()
+      canvasRef.current = null
+    }
+  }, [pushHistory, redrawBackground, src, syncTextStyleFromObject, syncViewportTransform])
+
+  useEffect(() => {
+    refreshBrush()
+  }, [refreshBrush])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const current = activeObject
+    if (!canvas || !current || getEditorKind(current) !== 'mask-region') return
+    current.set({
+      fill: `rgba(0, 0, 0, ${clamp(maskOpacity, 0.05, 1)})`,
+    })
+    current.setCoords()
+    canvas.renderAll()
+  }, [activeObject, maskOpacity])
+
+  useEffect(() => {
+    const onPaste = async (event: ClipboardEvent) => {
+      const items = Array.from(event.clipboardData?.items ?? [])
+      const imageItem = items.find((item) => item.type.startsWith('image/'))
+      if (!imageItem) return
+      const file = imageItem.getAsFile()
+      if (!file) return
+      event.preventDefault()
+      await addImageLayer(await readFileAsDataUrl(file))
+    }
+
+    const onKeyDown = async (event: KeyboardEvent) => {
+      if ((event.key === 'Delete' || event.key === 'Backspace') && activeObject) {
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const current = canvas.getActiveObject()
+        if (!current) return
+        canvas.remove(current)
+        canvas.discardActiveObject()
+        canvas.renderAll()
+        pushHistory()
+        return
+      }
+
+      const mod = event.ctrlKey || event.metaKey
+      if (mod && event.key.toLowerCase() === 'z' && !event.shiftKey) {
+        event.preventDefault()
+        if (historyIndexRef.current > 0) {
+          await restoreHistory(historyIndexRef.current - 1)
+        }
+      }
+
+      if (mod && (event.key.toLowerCase() === 'y' || (event.shiftKey && event.key.toLowerCase() === 'z'))) {
+        event.preventDefault()
+        if (historyIndexRef.current < historyRef.current.length - 1) {
+          await restoreHistory(historyIndexRef.current + 1)
+        }
+      }
+    }
+
+    const onKeyPressState = (event: KeyboardEvent, pressed: boolean) => {
+      if (event.code === 'Space') {
+        spacePressedRef.current = pressed
+        if (pressed) {
+          event.preventDefault()
+        }
+      }
+    }
+
+    const onKeyDownState = (event: KeyboardEvent) => onKeyPressState(event, true)
+    const onKeyUpState = (event: KeyboardEvent) => onKeyPressState(event, false)
+
+    window.addEventListener('paste', onPaste)
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDownState)
+    window.addEventListener('keyup', onKeyUpState)
+    return () => {
+      window.removeEventListener('paste', onPaste)
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keydown', onKeyDownState)
+      window.removeEventListener('keyup', onKeyUpState)
+    }
+  }, [activeObject, addImageLayer, pushHistory, restoreHistory])
+
+  const handleAddText = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const text = new IText(textStyle.text || DEFAULT_TEXT_STYLE.text, {
+      left: canvas.getWidth() / 2,
+      top: canvas.getHeight() / 2,
+      originX: 'center',
+      originY: 'center',
+      fill: textStyle.fill,
+      fontSize: textStyle.fontSize,
+      fontWeight: textStyle.fontWeight,
+      fontStyle: textStyle.fontStyle,
+      cornerStyle: 'circle',
+      transparentCorners: false,
+      borderColor: '#3b82f6',
+      cornerColor: '#ffffff',
+      cornerStrokeColor: '#3b82f6',
+    })
+
+    canvas.add(text)
+    canvas.setActiveObject(text)
+    canvas.renderAll()
+    text.enterEditing()
+    text.selectAll()
+    pushHistory()
+  }
+
+  const handleObjectStyleChange = (patch: Partial<TextStyleState>) => {
+    const canvas = canvasRef.current
+    const current = canvas?.getActiveObject()
+    const next = { ...textStyle, ...patch }
+    setTextStyle(next)
+
+    if (!(current instanceof IText) || !canvas) return
+
+    current.set({
+      text: next.text,
+      fill: next.fill,
+      fontSize: next.fontSize,
+      fontWeight: next.fontWeight,
+      fontStyle: next.fontStyle,
+    })
+    current.setCoords()
+    canvas.renderAll()
+    pushHistory()
+  }
+
+  const buildMaskShape = useCallback((shapeType: MaskShapeType, left: number, top: number, width: number, height: number) => {
+    const fill = `rgba(0, 0, 0, ${clamp(maskOpacity, 0.05, 1)})`
+    const shared = {
+      left,
+      top,
+      fill,
+      cornerStyle: 'circle' as const,
+      transparentCorners: false,
+      borderColor: '#3b82f6',
+      cornerColor: '#ffffff',
+      cornerStrokeColor: '#3b82f6',
+    }
+
+    if (shapeType === 'ellipse') {
+      return new Ellipse({
+        ...shared,
+        rx: width / 2,
+        ry: height / 2,
+      })
+    }
+
+    if (shapeType === 'triangle') {
+      return new Triangle({
+        ...shared,
+        width,
+        height,
+      })
+    }
+
+    return new Rect({
+      ...shared,
+      width,
+      height,
+    })
+  }, [maskOpacity])
+
+  const handleAddMaskRegion = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const mask = buildMaskShape(
+      maskShapeType,
+      canvas.getWidth() / 2 - 140,
+      canvas.getHeight() / 2 - 70,
+      280,
+      140,
+    )
+    ;(mask as FabricObject & { data?: { editorKind: string; shapeType: MaskShapeType } }).data = {
+      editorKind: 'mask-region',
+      shapeType: maskShapeType,
+    }
+    canvas.add(mask)
+    canvas.setActiveObject(mask)
+    canvas.renderAll()
+    pushHistory()
+  }
+
+  const handleChangeMaskShapeType = (nextShapeType: MaskShapeType) => {
+    setMaskShapeType(nextShapeType)
+    const canvas = canvasRef.current
+    if (!canvas || getEditorKind(activeObject) !== 'mask-region' || !activeObject) return
+
+    const center = activeObject.getCenterPoint()
+    const scaledWidth = activeObject.getScaledWidth()
+    const scaledHeight = activeObject.getScaledHeight()
+    const angle = activeObject.angle ?? 0
+    const fill = typeof activeObject.fill === 'string'
+      ? activeObject.fill
+      : `rgba(0, 0, 0, ${clamp(maskOpacity, 0.05, 1)})`
+
+    suppressHistoryRef.current = true
+    canvas.remove(activeObject)
+    const replacement = buildMaskShape(
+      nextShapeType,
+      center.x - scaledWidth / 2,
+      center.y - scaledHeight / 2,
+      scaledWidth,
+      scaledHeight,
+    )
+    replacement.set({
+      angle,
+      fill,
+    })
+    ;(replacement as FabricObject & { data?: { editorKind: string; shapeType: MaskShapeType } }).data = {
+      editorKind: 'mask-region',
+      shapeType: nextShapeType,
+    }
+    canvas.add(replacement)
+    canvas.setActiveObject(replacement)
+    canvas.renderAll()
+    suppressHistoryRef.current = false
+    setActiveObject(replacement)
+    pushHistory()
+  }
+
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    event.target.value = ''
+    await addImageLayer(await readFileAsDataUrl(file))
+  }
+
+  const handleUndo = async () => {
+    if (historyIndexRef.current <= 0) return
+    await restoreHistory(historyIndexRef.current - 1)
+  }
+
+  const handleRedo = async () => {
+    if (historyIndexRef.current >= historyRef.current.length - 1) return
+    await restoreHistory(historyIndexRef.current + 1)
+  }
+
+  const handleSave = async () => {
+    const canvas = canvasRef.current
+    const sourceImage = sourceImageRef.current
+    if (!canvas || !sourceImage) return
+
+    const previousViewport = canvas.viewportTransform ? [...canvas.viewportTransform] : null
+    canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
+    canvas.renderAll()
+    const overlayDataUrl = canvas.toDataURL({
+      format: 'png',
+      left: imageBoundsRef.current.left,
+      top: imageBoundsRef.current.top,
+      width: imageBoundsRef.current.width,
+      height: imageBoundsRef.current.height,
+      multiplier: exportMultiplierRef.current,
+    })
+    if (previousViewport) {
+      canvas.setViewportTransform(previousViewport as [number, number, number, number, number, number])
+      canvas.renderAll()
+    }
+
+    const overlayImage = await loadHtmlImage(overlayDataUrl)
+    const exportCanvas = document.createElement('canvas')
+    exportCanvas.width = sourceSizeRef.current.width
+    exportCanvas.height = sourceSizeRef.current.height
+    const exportContext = exportCanvas.getContext('2d')
+    if (!exportContext) return
+    exportContext.imageSmoothingEnabled = true
+    exportContext.imageSmoothingQuality = 'high'
+    exportContext.drawImage(sourceImage, 0, 0, exportCanvas.width, exportCanvas.height)
+    exportContext.drawImage(overlayImage, 0, 0, exportCanvas.width, exportCanvas.height)
+    const editedDataUrl = exportCanvas.toDataURL('image/png')
+
+    if (saveMode === 'replace-input') {
+      const nextId = await replaceInputImageWithDataUrl(imageId, editedDataUrl)
+      setLightboxImageId(nextId, currentImageList.map((id) => (id === imageId ? nextId : id)))
+      showToast('参考图已更新', 'success')
+    } else {
+      const nextId = await addInputImageWithDataUrl(editedDataUrl)
+      const nextList = currentImageList.includes(nextId) ? currentImageList : [...currentImageList, nextId]
+      setLightboxImageId(nextId, nextList)
+      showToast('编辑结果已加入参考图', 'success')
+    }
+    onClose()
+  }
+
+  const isTextSelected = activeObject instanceof IText
+  const activeEditorKind = getEditorKind(activeObject)
+  const showMaskSettings = toolMode === 'mask' || activeEditorKind === 'mask-region' || activeEditorKind === 'mask-brush'
+  const showTextSettings = isTextSelected
+  const showShapeSelector = activeEditorKind === 'mask-region'
+
+  return (
+    <div className="fixed inset-0 z-[75] overflow-hidden bg-black/70 backdrop-blur-md">
+      <div className="absolute inset-0 bg-[#0b0e12]">
+        <div
+          ref={canvasViewportRef}
+          className="absolute inset-4 right-[392px] overflow-hidden rounded-3xl border border-white/10 bg-[#11161d] shadow-2xl"
+        >
+          {!ready && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center text-sm text-white/65">
+              正在加载编辑器...
+            </div>
+          )}
+          <canvas
+            ref={backgroundCanvasRef}
+            className="absolute inset-0 block h-full w-full"
+          />
+          <canvas
+            ref={canvasElementRef}
+            className="absolute inset-0 block"
+          />
+        </div>
+        <aside className="absolute bottom-4 right-4 top-4 z-20 w-[360px] overflow-y-auto rounded-3xl border border-white/10 bg-[#12161d]/96 p-5 text-white shadow-2xl backdrop-blur-xl">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold">快速编辑</h3>
+              <p className="mt-1 text-xs text-white/45">
+                文字、涂抹遮罩、贴图。
+                {saveMode === 'replace-input' ? ' 保存后替换当前参考图。' : ' 保存后加入参考图。'}
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              className="rounded-full p-2 text-white/45 transition hover:bg-white/10 hover:text-white"
+              aria-label="关闭编辑器"
+            >
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="space-y-5">
+            <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-white/45">历史</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => void handleUndo()}
+                  disabled={!historyState.canUndo}
+                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  撤销
+                </button>
+                <button
+                  onClick={() => void handleRedo()}
+                  disabled={!historyState.canRedo}
+                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  重做
+                </button>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-white/45">工具</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setToolMode('select')}
+                  className={`rounded-xl px-3 py-2 text-sm transition ${toolMode === 'select' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
+                >
+                  选择
+                </button>
+                <button
+                  onClick={() => setToolMode('mask')}
+                  className={`rounded-xl px-3 py-2 text-sm transition ${toolMode === 'mask' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
+                >
+                  涂抹遮罩
+                </button>
+                <button
+                  onClick={handleAddMaskRegion}
+                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12"
+                >
+                  区域遮罩
+                </button>
+                <button
+                  onClick={handleAddText}
+                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12"
+                >
+                  添加文字
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12"
+                >
+                  从文件贴图
+                </button>
+                <button
+                  onClick={() => showToast('直接粘贴图片即可加入画布', 'info')}
+                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12"
+                >
+                  从剪贴板贴图
+                </button>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(event) => void handleFileSelect(event)}
+              />
+            </section>
+
+            {showMaskSettings && (
+              <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-white/45">遮罩</div>
+              <div className="space-y-3">
+                <label className="block">
+                  <span className="mb-1 block text-xs text-white/55">模式</span>
+                  <div className="text-sm text-white/75">
+                    {activeEditorKind === 'mask-region'
+                      ? '当前选中了区域遮罩，可以切换形状并继续调透明度。'
+                      : toolMode === 'mask'
+                        ? '当前为涂抹遮罩，直接在图片上拖动即可。'
+                        : '切到“涂抹遮罩”后即可开始绘制。'}
+                  </div>
+                </label>
+                {showShapeSelector && (
+                  <div>
+                    <span className="mb-2 block text-xs text-white/55">图形</span>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([
+                        ['rect', '矩形'],
+                        ['ellipse', '圆形'],
+                        ['triangle', '三角'],
+                      ] as const).map(([shape, label]) => (
+                        <button
+                          key={shape}
+                          onClick={() => handleChangeMaskShapeType(shape)}
+                          className={`rounded-xl px-3 py-2 text-sm transition ${maskShapeType === shape ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <label className="block">
+                  <span className="mb-1 block text-xs text-white/55">透明度</span>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1"
+                    step="0.05"
+                    value={maskOpacity}
+                    onChange={(e) => setMaskOpacity(Number(e.target.value))}
+                    className="w-full"
+                  />
+                  <div className="mt-1 text-xs text-white/45">{Math.round(maskOpacity * 100)}%</div>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-white/55">笔刷大小</span>
+                  <input
+                    type="range"
+                    min="6"
+                    max="140"
+                    step="2"
+                    value={maskWidth}
+                    onChange={(e) => setMaskWidth(Number(e.target.value))}
+                    className="w-full"
+                  />
+                  <div className="mt-1 text-xs text-white/45">{maskWidth}px</div>
+                </label>
+              </div>
+              </section>
+            )}
+
+            {showTextSettings && (
+              <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-white/45">文字样式</div>
+              <div className="space-y-3">
+                <label className="block">
+                  <span className="mb-1 block text-xs text-white/55">文字内容</span>
+                  <textarea
+                    value={textStyle.text}
+                    onChange={(e) => handleObjectStyleChange({ text: e.target.value })}
+                    rows={3}
+                    className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
+                    placeholder="输入要添加到画布的文字"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-white/55">颜色</span>
+                    <input
+                      type="color"
+                      value={normalizeColorValue(textStyle.fill)}
+                      onChange={(e) => handleObjectStyleChange({ fill: e.target.value })}
+                      className="h-10 w-full rounded-xl border border-white/10 bg-black/25 p-1"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-white/55">字号</span>
+                    <input
+                      type="number"
+                      min={12}
+                      max={240}
+                      value={textStyle.fontSize}
+                      onChange={(e) => handleObjectStyleChange({ fontSize: clamp(Number(e.target.value) || 12, 12, 240) })}
+                      className="h-10 w-full rounded-xl border border-white/10 bg-black/25 px-3 text-sm text-white outline-none focus:border-blue-400"
+                    />
+                  </label>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => handleObjectStyleChange({ fontWeight: textStyle.fontWeight === 'bold' ? 'normal' : 'bold' })}
+                    className={`rounded-xl px-3 py-2 text-sm transition ${textStyle.fontWeight === 'bold' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
+                  >
+                    粗体
+                  </button>
+                  <button
+                    onClick={() => handleObjectStyleChange({ fontStyle: textStyle.fontStyle === 'italic' ? 'normal' : 'italic' })}
+                    className={`rounded-xl px-3 py-2 text-sm transition ${textStyle.fontStyle === 'italic' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
+                  >
+                    斜体
+                  </button>
+                </div>
+                {!isTextSelected && (
+                  <div className="text-xs text-white/45">当前没有选中文字对象，样式会用于下一个新建文字。</div>
+                )}
+              </div>
+              </section>
+            )}
+
+            <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-white/45">完成</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={onClose}
+                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12"
+                >
+                  放弃修改
+                </button>
+                <button
+                  onClick={() => void handleSave()}
+                  className="rounded-xl bg-blue-500 px-3 py-2 text-sm text-white transition hover:bg-blue-600"
+                >
+                  {saveMode === 'replace-input' ? '保存替换' : '保存并加入'}
+                </button>
+              </div>
+            </section>
+          </div>
+        </aside>
+      </div>
+    </div>
+  )
+}
+
+async function loadHtmlImage(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('图片加载失败'))
+    image.src = src
+  })
+}
+
+async function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error ?? new Error('文件读取失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function normalizeColorValue(value: string) {
+  if (/^#[0-9a-f]{6}$/i.test(value)) return value
+  if (/^#[0-9a-f]{3}$/i.test(value)) return value
+  return '#ffffff'
+}

@@ -77,6 +77,7 @@ interface AppState {
   removeInputImage: (idx: number) => void
   clearInputImages: () => void
   setInputImages: (imgs: InputImage[]) => void
+  replaceInputImage: (currentId: string, nextImage: InputImage) => void
 
   // 参数
   params: TaskParams
@@ -105,7 +106,9 @@ interface AppState {
   setDetailTaskId: (id: string | null) => void
   lightboxImageId: string | null
   lightboxImageList: string[]
+  lightboxStartEditor: boolean
   setLightboxImageId: (id: string | null, list?: string[]) => void
+  setLightboxStartEditor: (v: boolean) => void
   showSettings: boolean
   setShowSettings: (v: boolean) => void
 
@@ -179,6 +182,10 @@ export const useStore = create<AppState>()(
           return { inputImages: [] }
         }),
       setInputImages: (imgs) => set({ inputImages: imgs }),
+      replaceInputImage: (currentId, nextImage) =>
+        set((s) => ({
+          inputImages: s.inputImages.map((img) => (img.id === currentId ? nextImage : img)),
+        })),
 
       // Params
       params: { ...DEFAULT_PARAMS },
@@ -218,8 +225,10 @@ export const useStore = create<AppState>()(
       setDetailTaskId: (detailTaskId) => set({ detailTaskId }),
       lightboxImageId: null,
       lightboxImageList: [],
+      lightboxStartEditor: false,
       setLightboxImageId: (lightboxImageId, list) =>
         set({ lightboxImageId, lightboxImageList: list ?? (lightboxImageId ? [lightboxImageId] : []) }),
+      setLightboxStartEditor: (lightboxStartEditor) => set({ lightboxStartEditor }),
       showSettings: false,
       setShowSettings: (showSettings) => set({ showSettings }),
 
@@ -632,6 +641,23 @@ export async function addImageFromFile(file: File): Promise<void> {
   const id = await hashDataUrl(dataUrl)
   imageCache.set(id, dataUrl)
   useStore.getState().addInputImage({ id, dataUrl })
+}
+
+export async function replaceInputImageWithDataUrl(currentId: string, dataUrl: string): Promise<string> {
+  const id = await hashDataUrl(dataUrl)
+  imageCache.set(id, dataUrl)
+  useStore.getState().replaceInputImage(currentId, { id, dataUrl })
+  return id
+}
+
+export async function addInputImageWithDataUrl(dataUrl: string): Promise<string> {
+  const id = await hashDataUrl(dataUrl)
+  imageCache.set(id, dataUrl)
+  const state = useStore.getState()
+  if (!state.inputImages.some((image) => image.id === id)) {
+    state.addInputImage({ id, dataUrl })
+  }
+  return id
 }
 
 function fileToDataUrl(file: File): Promise<string> {

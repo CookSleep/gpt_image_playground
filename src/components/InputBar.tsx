@@ -301,6 +301,7 @@ export default function InputBar() {
   // 粘贴图片
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
+      if (document.body.dataset.referenceEditorActive === '1') return
       const items = e.clipboardData?.items
       if (!items) return
       const imageFiles: File[] = []

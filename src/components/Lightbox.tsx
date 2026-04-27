@@ -1,6 +1,8 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { Suspense, lazy, useEffect, useState, useRef, useCallback } from 'react'
 import { useStore, getCachedImage, ensureImageCached } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
+
+const ReferenceImageEditorModal = lazy(() => import('./ReferenceImageEditorModal'))
 
 const MIN_SCALE = 1
 const MAX_SCALE = 10
@@ -12,8 +14,12 @@ function clamp(v: number, min: number, max: number) {
 export default function Lightbox() {
   const lightboxImageId = useStore((s) => s.lightboxImageId)
   const lightboxImageList = useStore((s) => s.lightboxImageList)
+  const lightboxStartEditor = useStore((s) => s.lightboxStartEditor)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
+  const setLightboxStartEditor = useStore((s) => s.setLightboxStartEditor)
+  const inputImages = useStore((s) => s.inputImages)
   const [src, setSrc] = useState('')
+  const [showEditor, setShowEditor] = useState(false)
 
   const close = useCallback(() => setLightboxImageId(null), [setLightboxImageId])
   useCloseOnEscape(Boolean(lightboxImageId), close)
@@ -22,6 +28,8 @@ export default function Lightbox() {
   useEffect(() => {
     if (!lightboxImageId) {
       setSrc('')
+      setShowEditor(false)
+      setLightboxStartEditor(false)
       return
     }
     const cached = getCachedImage(lightboxImageId)
@@ -32,7 +40,15 @@ export default function Lightbox() {
         if (url) setSrc(url)
       })
     }
-  }, [lightboxImageId])
+  }, [lightboxImageId, setLightboxStartEditor])
+
+  const isReferenceImage = Boolean(lightboxImageId && inputImages.some((image) => image.id === lightboxImageId))
+
+  useEffect(() => {
+    if (!lightboxImageId || !src || !lightboxStartEditor) return
+    setShowEditor(true)
+    setLightboxStartEditor(false)
+  }, [lightboxImageId, lightboxStartEditor, setLightboxStartEditor, src])
 
   // 导航
   const currentIndex = lightboxImageId ? lightboxImageList.indexOf(lightboxImageId) : -1
@@ -62,15 +78,35 @@ export default function Lightbox() {
   if (!lightboxImageId || !src) return null
 
   return (
-    <LightboxInner
-      src={src}
-      onClose={close}
-      showNav={showNav}
-      currentIndex={currentIndex}
-      total={total}
-      onPrev={goPrev}
-      onNext={goNext}
-    />
+    <>
+      <LightboxInner
+        src={src}
+        onClose={close}
+        showNav={showNav}
+        currentIndex={currentIndex}
+        total={total}
+        onPrev={goPrev}
+        onNext={goNext}
+        isReferenceImage={isReferenceImage}
+        onEdit={() => setShowEditor(true)}
+      />
+      {showEditor && lightboxImageId && src ? (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/55 backdrop-blur-md text-sm text-white/70">
+              正在加载编辑器...
+            </div>
+          }
+        >
+          <ReferenceImageEditorModal
+            imageId={lightboxImageId}
+            src={src}
+            saveMode={isReferenceImage ? 'replace-input' : 'append-input'}
+            onClose={() => setShowEditor(false)}
+          />
+        </Suspense>
+      ) : null}
+    </>
   )
 }
 
@@ -82,10 +118,12 @@ interface LightboxInnerProps {
   total: number
   onPrev: () => void
   onNext: () => void
+  isReferenceImage: boolean
+  onEdit: () => void
 }
 
 /** 内部组件：保证挂载时 DOM 已经存在，所有 ref / effect 都可靠 */
-function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onNext }: LightboxInnerProps) {
+function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onNext, isReferenceImage, onEdit }: LightboxInnerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   // 用 ref 追踪最新变换，避免闭包过期
@@ -394,6 +432,15 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
       onDoubleClick={onDoubleClick}
     >
       <div className="absolute inset-0 bg-black/70 backdrop-blur-md animate-fade-in" />
+      <button
+        className="absolute right-5 top-5 z-20 rounded-full bg-black/45 px-4 py-2 text-sm text-white backdrop-blur-sm transition hover:bg-black/65"
+        onClick={(e) => {
+          e.stopPropagation()
+          onEdit()
+        }}
+      >
+        {isReferenceImage ? '编辑参考图' : '编辑并加入参考图'}
+      </button>
       <div className="relative animate-zoom-in">
         <img
           src={src}
