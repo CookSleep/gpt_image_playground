@@ -227,6 +227,32 @@ export default function SettingsModal() {
                 </div>
               </label>
 
+              {(draft.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses' && (
+                <div className="flex items-start justify-between gap-3 rounded-xl border border-gray-200/70 bg-white/40 px-3 py-2.5 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                  <div>
+                    <div className="text-xs font-medium text-gray-600 dark:text-gray-300">流式生图响应</div>
+                    <div className="mt-1 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
+                      可缓解部分中转/反代的长时间无响应超时；如果接口不支持流式响应，可关闭。
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextDraft = { ...draft, responsesStream: !draft.responsesStream }
+                      setDraft(nextDraft)
+                      commitSettings(nextDraft)
+                    }}
+                    className="mt-0.5 flex shrink-0 items-center"
+                    role="switch"
+                    aria-checked={draft.responsesStream ?? DEFAULT_SETTINGS.responsesStream}
+                  >
+                    <span className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${draft.responsesStream ?? DEFAULT_SETTINGS.responsesStream ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${draft.responsesStream ?? DEFAULT_SETTINGS.responsesStream ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                    </span>
+                  </button>
+                </div>
+              )}
+
               <label className="block">
                 <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">请求超时 (秒)</span>
                 <input

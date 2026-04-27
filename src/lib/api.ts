@@ -1,5 +1,6 @@
 import type { AppSettings, ImageApiResponse, ResponsesApiResponse, TaskParams } from '../types'
 import { buildApiUrl, readClientDevProxyConfig } from './devProxy'
+import { extractGeneratedImageBase64, findGeneratedImagePayload, readResponsesStreamPayload } from './responsesStream'
 
 const MIME_MAP: Record<string, string> = {
   png: 'image/png',
@@ -152,6 +153,31 @@ function parseResponsesImageResults(payload: ResponsesApiResponse, fallbackMime:
   }
 
   return results
+}
+
+function parseResponsesImageResultsFromUnknown(payload: unknown, fallbackMime: string): Array<{
+  image: string
+  actualParams?: Partial<TaskParams>
+  revisedPrompt?: string
+}> {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('接口未返回图片数据')
+  }
+
+  const imagePayload = findGeneratedImagePayload(payload)
+  const image = extractGeneratedImageBase64(imagePayload)
+  if (image) {
+    return [{
+      image: normalizeBase64Image(image, fallbackMime),
+      actualParams: mergeActualParams(pickActualParams(imagePayload)),
+      revisedPrompt:
+        imagePayload && typeof imagePayload.revised_prompt === 'string'
+          ? imagePayload.revised_prompt
+          : undefined,
+    }]
+  }
+
+  return parseResponsesImageResults(payload as ResponsesApiResponse, fallbackMime)
 }
 
 function pickActualParams(source: unknown): Partial<TaskParams> {
@@ -396,6 +422,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions): Promise<CallAp
       input: createResponsesInput(prompt, inputImageDataUrls),
       tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, settings)],
       tool_choice: 'required',
+      stream: settings.responsesStream,
     }
 
     const response = await fetch(buildApiUrl(settings.baseUrl, 'responses', proxyConfig), {
@@ -413,8 +440,10 @@ async function callResponsesImageApiSingle(opts: CallApiOptions): Promise<CallAp
       throw new Error(await getApiErrorMessage(response))
     }
 
-    const payload = await response.json() as ResponsesApiResponse
-    const imageResults = parseResponsesImageResults(payload, mime)
+    const payload = settings.responsesStream
+      ? (await readResponsesStreamPayload(response)).payload
+      : await response.json() as ResponsesApiResponse
+    const imageResults = parseResponsesImageResultsFromUnknown(payload, mime)
     const actualParams = mergeActualParams(
       imageResults[0]?.actualParams ?? {},
       settings.codexCli ? { quality: 'auto' } : {},

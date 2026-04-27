@@ -124,6 +124,7 @@ export const useStore = create<AppState>()(
               ? s.apiMode
               : st.settings.apiMode ?? DEFAULT_SETTINGS.apiMode,
           codexCli: s.codexCli ?? st.settings.codexCli ?? DEFAULT_SETTINGS.codexCli,
+          responsesStream: s.responsesStream ?? st.settings.responsesStream ?? DEFAULT_SETTINGS.responsesStream,
         },
       })),
       dismissedCodexCliPrompts: [],
