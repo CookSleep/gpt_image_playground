@@ -21,6 +21,12 @@ interface TextStyleState {
   fontStyle: 'normal' | 'italic'
 }
 
+type BaseImageData = {
+  editorKind: 'base-image'
+  flipX: boolean
+  flipY: boolean
+}
+
 const DEFAULT_TEXT_STYLE: TextStyleState = {
   text: '输入文字',
   fill: '#ffffff',
@@ -36,6 +42,11 @@ function clamp(value: number, min: number, max: number) {
 function getEditorKind(object: FabricObject | null): string | undefined {
   if (!object || typeof object !== 'object') return undefined
   return (object as FabricObject & { data?: { editorKind?: string } }).data?.editorKind
+}
+
+function getBaseImageData(object: FabricObject | null): BaseImageData | undefined {
+  if (getEditorKind(object) !== 'base-image') return undefined
+  return (object as FabricObject & { data?: BaseImageData }).data
 }
 
 function getMaskShapeTypeFromObject(object: FabricObject | null): MaskShapeType | undefined {
@@ -81,6 +92,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   const sourceSizeRef = useRef({ width: 0, height: 0 })
   const imageBoundsRef = useRef({ left: 0, top: 0, width: 0, height: 0 })
   const exportMultiplierRef = useRef(1)
+  const baseFlipRef = useRef({ x: false, y: false })
   const zoomRef = useRef(1)
   const panRef = useRef({ x: 0, y: 0 })
   const panningRef = useRef(false)
@@ -109,6 +121,31 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   const isMobileDevice = useIsMobileDevice()
 
   useCloseOnEscape(isOpen, onClose)
+
+  function redrawBackgroundNow() {
+    const canvas = backgroundCanvasRef.current
+    const image = sourceImageRef.current
+    if (!canvas || !image) return
+
+    const context = canvas.getContext('2d')
+    if (!context) return
+
+    context.setTransform(1, 0, 0, 1, 0, 0)
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    context.fillStyle = '#11161d'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.setTransform(zoomRef.current, 0, 0, zoomRef.current, panRef.current.x, panRef.current.y)
+    const bounds = imageBoundsRef.current
+    if (baseFlipRef.current.x || baseFlipRef.current.y) {
+      context.translate(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2)
+      context.scale(baseFlipRef.current.x ? -1 : 1, baseFlipRef.current.y ? -1 : 1)
+      context.drawImage(image, -bounds.width / 2, -bounds.height / 2, bounds.width, bounds.height)
+      return
+    }
+    context.drawImage(image, bounds.left, bounds.top, bounds.width, bounds.height)
+  }
 
   useEffect(() => {
     toolModeRef.current = toolMode
@@ -150,7 +187,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     const canvas = canvasRef.current
     if (!canvas || suppressHistoryRef.current) return
 
-    const serialized = JSON.stringify(canvas.toJSON())
+    const serialized = JSON.stringify(canvas.toJSON(['data']))
     if (historyRef.current[historyIndexRef.current] === serialized) {
       updateHistoryFlags()
       return
@@ -173,6 +210,10 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     suppressHistoryRef.current = false
     historyIndexRef.current = nextIndex
     const currentActive = canvas.getActiveObject() ?? null
+    const baseProxy = canvas.getObjects().find((object) => getEditorKind(object) === 'base-image') ?? null
+    const baseData = getBaseImageData(baseProxy)
+    baseFlipRef.current = { x: Boolean(baseData?.flipX), y: Boolean(baseData?.flipY) }
+    redrawBackgroundNow()
     setActiveObject(currentActive)
     syncTextStyleFromObject(currentActive)
     updateHistoryFlags()
@@ -193,27 +234,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   }, [maskOpacity, maskWidth, toolMode])
 
   const redrawBackground = useCallback(() => {
-    const canvas = backgroundCanvasRef.current
-    const image = sourceImageRef.current
-    if (!canvas || !image) return
-
-    const context = canvas.getContext('2d')
-    if (!context) return
-
-    context.setTransform(1, 0, 0, 1, 0, 0)
-    context.clearRect(0, 0, canvas.width, canvas.height)
-    context.fillStyle = '#11161d'
-    context.fillRect(0, 0, canvas.width, canvas.height)
-    context.imageSmoothingEnabled = true
-    context.imageSmoothingQuality = 'high'
-    context.setTransform(zoomRef.current, 0, 0, zoomRef.current, panRef.current.x, panRef.current.y)
-    context.drawImage(
-      image,
-      imageBoundsRef.current.left,
-      imageBoundsRef.current.top,
-      imageBoundsRef.current.width,
-      imageBoundsRef.current.height,
-    )
+    redrawBackgroundNow()
    }, [])
 
   const resizeStageToViewport = useCallback((options?: { preserveViewport?: boolean; transformObjects?: boolean }) => {
@@ -299,6 +320,48 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     }
     redrawBackground()
   }, [redrawBackground])
+
+  const createBaseImageProxy = useCallback(() => {
+    const bounds = imageBoundsRef.current
+    const proxy = new Rect({
+      left: bounds.left + bounds.width / 2,
+      top: bounds.top + bounds.height / 2,
+      width: bounds.width,
+      height: bounds.height,
+      originX: 'center',
+      originY: 'center',
+      fill: 'rgba(59, 130, 246, 0.001)',
+      stroke: 'rgba(59, 130, 246, 0)',
+      strokeWidth: 0,
+      selectable: true,
+      evented: true,
+      hasControls: false,
+      lockMovementX: true,
+      lockMovementY: true,
+      lockRotation: true,
+      lockScalingX: true,
+      lockScalingY: true,
+      hoverCursor: 'pointer',
+    })
+    ;(proxy as FabricObject & { data?: BaseImageData }).data = {
+      editorKind: 'base-image',
+      flipX: baseFlipRef.current.x,
+      flipY: baseFlipRef.current.y,
+    }
+    return proxy
+  }, [])
+
+  const syncBaseProxyData = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const proxy = canvas.getObjects().find((object) => getEditorKind(object) === 'base-image') as FabricObject | undefined
+    if (!proxy) return
+    ;(proxy as FabricObject & { data?: BaseImageData }).data = {
+      editorKind: 'base-image',
+      flipX: baseFlipRef.current.x,
+      flipY: baseFlipRef.current.y,
+    }
+  }, [])
 
   const addImageLayer = useCallback(async (dataUrl: string) => {
     const canvas = canvasRef.current
@@ -390,6 +453,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
         height: stageHeight,
       })
       canvas.calcOffset()
+      canvas.add(createBaseImageProxy())
       redrawBackground()
 
       canvas.on('mouse:wheel', (event) => {
@@ -480,7 +544,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
       canvasRef.current?.dispose()
       canvasRef.current = null
     }
-  }, [pushHistory, redrawBackground, src, syncTextStyleFromObject, syncViewportTransform])
+  }, [createBaseImageProxy, pushHistory, redrawBackground, src, syncTextStyleFromObject, syncViewportTransform])
 
   useEffect(() => {
     const viewport = canvasViewportRef.current
@@ -587,7 +651,13 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
 
     const selection = current as FabricObject & { getObjects?: () => FabricObject[] }
     if (typeof selection.getObjects === 'function') {
-      selection.getObjects().forEach((object) => canvas.remove(object))
+      selection.getObjects().forEach((object) => {
+        if (getEditorKind(object) !== 'base-image') {
+          canvas.remove(object)
+        }
+      })
+    } else if (getEditorKind(current) === 'base-image') {
+      return
     } else {
       canvas.remove(current)
     }
@@ -811,6 +881,30 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     pushHistory()
   }
 
+  const handleFlipActiveObject = (axis: 'x' | 'y') => {
+    const canvas = canvasRef.current
+    const current = canvas?.getActiveObject()
+    if (!canvas || !current) return
+
+    if (getEditorKind(current) === 'base-image') {
+      if (axis === 'x') {
+        baseFlipRef.current = { ...baseFlipRef.current, x: !baseFlipRef.current.x }
+      } else {
+        baseFlipRef.current = { ...baseFlipRef.current, y: !baseFlipRef.current.y }
+      }
+      syncBaseProxyData()
+      redrawBackground()
+      canvas.requestRenderAll()
+      pushHistory()
+      return
+    }
+
+    current.set(axis === 'x' ? { flipX: !current.flipX } : { flipY: !current.flipY })
+    current.setCoords()
+    canvas.requestRenderAll()
+    pushHistory()
+  }
+
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -834,6 +928,11 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     if (!canvas || !sourceImage) return
 
     const previousViewport = canvas.viewportTransform ? [...canvas.viewportTransform] : null
+    const baseProxy = canvas.getObjects().find((object) => getEditorKind(object) === 'base-image')
+    const previousBaseVisible = baseProxy?.visible
+    if (baseProxy) {
+      baseProxy.set({ visible: false })
+    }
     canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
     canvas.renderAll()
     const overlayDataUrl = canvas.toDataURL({
@@ -844,6 +943,9 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
       height: imageBoundsRef.current.height,
       multiplier: exportMultiplierRef.current,
     })
+    if (baseProxy) {
+      baseProxy.set({ visible: previousBaseVisible ?? true })
+    }
     if (previousViewport) {
       canvas.setViewportTransform(previousViewport as [number, number, number, number, number, number])
       canvas.renderAll()
@@ -857,7 +959,14 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     if (!exportContext) return
     exportContext.imageSmoothingEnabled = true
     exportContext.imageSmoothingQuality = 'high'
-    exportContext.drawImage(sourceImage, 0, 0, exportCanvas.width, exportCanvas.height)
+    if (baseFlipRef.current.x || baseFlipRef.current.y) {
+      exportContext.translate(exportCanvas.width / 2, exportCanvas.height / 2)
+      exportContext.scale(baseFlipRef.current.x ? -1 : 1, baseFlipRef.current.y ? -1 : 1)
+      exportContext.drawImage(sourceImage, -exportCanvas.width / 2, -exportCanvas.height / 2, exportCanvas.width, exportCanvas.height)
+      exportContext.setTransform(1, 0, 0, 1, 0, 0)
+    } else {
+      exportContext.drawImage(sourceImage, 0, 0, exportCanvas.width, exportCanvas.height)
+    }
     exportContext.drawImage(overlayImage, 0, 0, exportCanvas.width, exportCanvas.height)
     const editedDataUrl = exportCanvas.toDataURL('image/png')
 
@@ -876,6 +985,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
 
   const isTextSelected = activeObject instanceof IText
   const activeEditorKind = getEditorKind(activeObject)
+  const canDeleteActiveObject = Boolean(activeObject && activeEditorKind !== 'base-image')
   const showMaskSettings = toolMode === 'mask' || activeEditorKind === 'mask-region' || activeEditorKind === 'mask-brush'
   const showTextSettings = isTextSelected
   const showShapeSelector = activeEditorKind === 'mask-region'
@@ -945,14 +1055,14 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
             <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3 md:rounded-2xl md:p-4">
               <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/45 md:mb-3">工具</div>
               <div className="grid grid-cols-2 gap-2">
-                <div className={activeObject && isMobileDevice ? 'grid grid-cols-2 gap-2' : ''}>
+                <div className={canDeleteActiveObject && isMobileDevice ? 'grid grid-cols-2 gap-2' : ''}>
                   <button
                     onClick={() => setToolMode('select')}
                     className={`w-full rounded-lg px-3 py-2 text-sm transition md:rounded-xl ${toolMode === 'select' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
                   >
                     选择
                   </button>
-                  {activeObject && isMobileDevice && (
+                  {canDeleteActiveObject && isMobileDevice && (
                     <button
                       onClick={handleDeleteActiveObject}
                       className="w-full rounded-lg bg-red-500/90 px-3 py-2 text-sm text-white transition hover:bg-red-500"
@@ -966,6 +1076,20 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
                   className={`rounded-lg px-3 py-2 text-sm transition md:rounded-xl ${toolMode === 'mask' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
                 >
                   涂抹遮罩
+                </button>
+                <button
+                  onClick={() => handleFlipActiveObject('x')}
+                  disabled={!activeObject}
+                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-40 md:rounded-xl"
+                >
+                  水平翻转
+                </button>
+                <button
+                  onClick={() => handleFlipActiveObject('y')}
+                  disabled={!activeObject}
+                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-40 md:rounded-xl"
+                >
+                  垂直翻转
                 </button>
                 <button
                   onClick={handleAddMaskRegion}
