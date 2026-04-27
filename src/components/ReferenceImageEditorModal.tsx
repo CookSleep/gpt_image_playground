@@ -64,6 +64,15 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   const zoomRef = useRef(1)
   const panRef = useRef({ x: 0, y: 0 })
   const panningRef = useRef(false)
+  const touchGestureRef = useRef({
+    active: false,
+    distance: 0,
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    centerX: 0,
+    centerY: 0,
+  })
   const lastPointerRef = useRef({ x: 0, y: 0 })
   const spacePressedRef = useRef(false)
   const toolModeRef = useRef<ToolMode>('select')
@@ -85,8 +94,11 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   }, [toolMode])
 
   useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
     document.body.dataset.referenceEditorActive = '1'
     return () => {
+      document.body.style.overflow = previousOverflow
       delete document.body.dataset.referenceEditorActive
     }
   }, [])
@@ -379,6 +391,68 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   }, [refreshBrush])
 
   useEffect(() => {
+    const viewport = canvasViewportRef.current
+    if (!viewport) return
+
+    const getTouchMetrics = (event: TouchEvent) => {
+      const [first, second] = [event.touches[0], event.touches[1]]
+      const rect = viewport.getBoundingClientRect()
+      return {
+        distance: Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY),
+        centerX: (first.clientX + second.clientX) / 2 - rect.left,
+        centerY: (first.clientY + second.clientY) / 2 - rect.top,
+      }
+    }
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 2) return
+      event.preventDefault()
+      const metrics = getTouchMetrics(event)
+      touchGestureRef.current = {
+        active: true,
+        distance: metrics.distance,
+        zoom: zoomRef.current,
+        panX: panRef.current.x,
+        panY: panRef.current.y,
+        centerX: metrics.centerX,
+        centerY: metrics.centerY,
+      }
+    }
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (!touchGestureRef.current.active || event.touches.length !== 2) return
+      event.preventDefault()
+      const metrics = getTouchMetrics(event)
+      const start = touchGestureRef.current
+      const nextZoom = clamp(start.zoom * (metrics.distance / Math.max(1, start.distance)), 0.35, 6)
+      const factor = nextZoom / Math.max(0.01, start.zoom)
+      zoomRef.current = nextZoom
+      panRef.current = {
+        x: metrics.centerX - factor * (start.centerX - start.panX),
+        y: metrics.centerY - factor * (start.centerY - start.panY),
+      }
+      syncViewportTransform()
+    }
+
+    const onTouchEnd = (event: TouchEvent) => {
+      if (event.touches.length < 2) {
+        touchGestureRef.current.active = false
+      }
+    }
+
+    viewport.addEventListener('touchstart', onTouchStart, { passive: false })
+    viewport.addEventListener('touchmove', onTouchMove, { passive: false })
+    viewport.addEventListener('touchend', onTouchEnd)
+    viewport.addEventListener('touchcancel', onTouchEnd)
+    return () => {
+      viewport.removeEventListener('touchstart', onTouchStart)
+      viewport.removeEventListener('touchmove', onTouchMove)
+      viewport.removeEventListener('touchend', onTouchEnd)
+      viewport.removeEventListener('touchcancel', onTouchEnd)
+    }
+  }, [syncViewportTransform])
+
+  useEffect(() => {
     const canvas = canvasRef.current
     const current = activeObject
     if (!canvas || !current || getEditorKind(current) !== 'mask-region') return
@@ -388,6 +462,23 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     current.setCoords()
     canvas.renderAll()
   }, [activeObject, maskOpacity])
+
+  const handleDeleteActiveObject = useCallback(() => {
+    const canvas = canvasRef.current
+    const current = canvas?.getActiveObject()
+    if (!canvas || !current) return
+
+    const selection = current as FabricObject & { getObjects?: () => FabricObject[] }
+    if (typeof selection.getObjects === 'function') {
+      selection.getObjects().forEach((object) => canvas.remove(object))
+    } else {
+      canvas.remove(current)
+    }
+    canvas.discardActiveObject()
+    canvas.renderAll()
+    setActiveObject(null)
+    pushHistory()
+  }, [pushHistory])
 
   useEffect(() => {
     const onPaste = async (event: ClipboardEvent) => {
@@ -402,14 +493,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
 
     const onKeyDown = async (event: KeyboardEvent) => {
       if ((event.key === 'Delete' || event.key === 'Backspace') && activeObject) {
-        const canvas = canvasRef.current
-        if (!canvas) return
-        const current = canvas.getActiveObject()
-        if (!current) return
-        canvas.remove(current)
-        canvas.discardActiveObject()
-        canvas.renderAll()
-        pushHistory()
+        handleDeleteActiveObject()
         return
       }
 
@@ -451,7 +535,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
       window.removeEventListener('keydown', onKeyDownState)
       window.removeEventListener('keyup', onKeyUpState)
     }
-  }, [activeObject, addImageLayer, pushHistory, restoreHistory])
+  }, [activeObject, addImageLayer, handleDeleteActiveObject, restoreHistory])
 
   const handleAddText = () => {
     const canvas = canvasRef.current
@@ -666,11 +750,11 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   const showShapeSelector = activeEditorKind === 'mask-region'
 
   return (
-    <div className="fixed inset-0 z-[75] overflow-hidden bg-black/70 backdrop-blur-md">
+    <div className="fixed inset-0 z-[75] h-[100dvh] overflow-hidden bg-black/70 backdrop-blur-md">
       <div className="absolute inset-0 bg-[#0b0e12]">
         <div
           ref={canvasViewportRef}
-          className="absolute inset-4 right-[392px] overflow-hidden rounded-3xl border border-white/10 bg-[#11161d] shadow-2xl"
+          className="absolute inset-x-2 top-2 bottom-[292px] overflow-hidden rounded-2xl border border-white/10 bg-[#11161d] shadow-2xl touch-none sm:inset-x-3 sm:top-3 sm:bottom-[320px] md:inset-4 md:right-[392px] md:bottom-4 md:rounded-3xl"
         >
           {!ready && (
             <div className="absolute inset-0 z-10 flex items-center justify-center text-sm text-white/65">
@@ -679,18 +763,18 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
           )}
           <canvas
             ref={backgroundCanvasRef}
-            className="absolute inset-0 block h-full w-full"
+            className="absolute inset-0 block h-full w-full touch-none"
           />
           <canvas
             ref={canvasElementRef}
-            className="absolute inset-0 block"
+            className="absolute inset-0 block touch-none"
           />
         </div>
-        <aside className="absolute bottom-4 right-4 top-4 z-20 w-[360px] overflow-y-auto rounded-3xl border border-white/10 bg-[#12161d]/96 p-5 text-white shadow-2xl backdrop-blur-xl">
-          <div className="mb-5 flex items-center justify-between">
+        <aside className="absolute inset-x-2 bottom-2 z-20 max-h-[282px] overflow-y-auto rounded-2xl border border-white/10 bg-[#12161d]/96 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-white shadow-2xl backdrop-blur-xl sm:inset-x-3 sm:bottom-3 sm:max-h-[306px] sm:p-4 md:bottom-4 md:left-auto md:right-4 md:top-4 md:max-h-none md:w-[360px] md:p-5">
+          <div className="mb-3 flex items-center justify-between md:mb-5">
             <div>
-              <h3 className="text-lg font-semibold">快速编辑</h3>
-              <p className="mt-1 text-xs text-white/45">
+              <h3 className="text-base font-semibold md:text-lg">快速编辑</h3>
+              <p className="mt-1 hidden text-xs text-white/45 sm:block">
                 文字、涂抹遮罩、贴图。
                 {saveMode === 'replace-input' ? ' 保存后替换当前参考图。' : ' 保存后加入参考图。'}
               </p>
@@ -706,63 +790,73 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
             </button>
           </div>
 
-          <div className="space-y-5">
-            <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-              <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-white/45">历史</div>
+          <div className="space-y-3 md:space-y-5">
+            <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3 md:rounded-2xl md:p-4">
+              <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/45 md:mb-3">历史</div>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => void handleUndo()}
                   disabled={!historyState.canUndo}
-                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-40 md:rounded-xl"
                 >
                   撤销
                 </button>
                 <button
                   onClick={() => void handleRedo()}
                   disabled={!historyState.canRedo}
-                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-40 md:rounded-xl"
                 >
                   重做
                 </button>
               </div>
             </section>
 
-            <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-              <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-white/45">工具</div>
+            <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3 md:rounded-2xl md:p-4">
+              <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/45 md:mb-3">工具</div>
               <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => setToolMode('select')}
-                  className={`rounded-xl px-3 py-2 text-sm transition ${toolMode === 'select' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
-                >
-                  选择
-                </button>
+                <div className={activeObject ? 'grid grid-cols-2 gap-2 md:block' : ''}>
+                  <button
+                    onClick={() => setToolMode('select')}
+                    className={`w-full rounded-lg px-3 py-2 text-sm transition md:rounded-xl ${toolMode === 'select' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
+                  >
+                    选择
+                  </button>
+                  {activeObject && (
+                    <button
+                      onClick={handleDeleteActiveObject}
+                      className="w-full rounded-lg bg-red-500/90 px-3 py-2 text-sm text-white transition hover:bg-red-500 md:hidden"
+                    >
+                      删除
+                    </button>
+                  )}
+                </div>
                 <button
                   onClick={() => setToolMode('mask')}
-                  className={`rounded-xl px-3 py-2 text-sm transition ${toolMode === 'mask' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
+                  className={`rounded-lg px-3 py-2 text-sm transition md:rounded-xl ${toolMode === 'mask' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
                 >
                   涂抹遮罩
                 </button>
                 <button
                   onClick={handleAddMaskRegion}
-                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12"
+                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 md:rounded-xl"
                 >
                   区域遮罩
                 </button>
                 <button
                   onClick={handleAddText}
-                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12"
+                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 md:rounded-xl"
                 >
                   添加文字
                 </button>
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12"
+                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 md:rounded-xl"
                 >
                   从文件贴图
                 </button>
                 <button
                   onClick={() => showToast('直接粘贴图片即可加入画布', 'info')}
-                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12"
+                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 md:rounded-xl"
                 >
                   从剪贴板贴图
                 </button>
@@ -777,8 +871,8 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
             </section>
 
             {showMaskSettings && (
-              <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-              <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-white/45">遮罩</div>
+              <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3 md:rounded-2xl md:p-4">
+              <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/45 md:mb-3">遮罩</div>
               <div className="space-y-3">
                 <label className="block">
                   <span className="mb-1 block text-xs text-white/55">模式</span>
@@ -802,7 +896,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
                         <button
                           key={shape}
                           onClick={() => handleChangeMaskShapeType(shape)}
-                          className={`rounded-xl px-3 py-2 text-sm transition ${maskShapeType === shape ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
+                          className={`rounded-lg px-2 py-2 text-sm transition md:rounded-xl md:px-3 ${maskShapeType === shape ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
                         >
                           {label}
                         </button>
@@ -841,16 +935,16 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
             )}
 
             {showTextSettings && (
-              <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-              <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-white/45">文字样式</div>
+              <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3 md:rounded-2xl md:p-4">
+              <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/45 md:mb-3">文字样式</div>
               <div className="space-y-3">
                 <label className="block">
                   <span className="mb-1 block text-xs text-white/55">文字内容</span>
                   <textarea
                     value={textStyle.text}
                     onChange={(e) => handleObjectStyleChange({ text: e.target.value })}
-                    rows={3}
-                    className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
+                    rows={2}
+                    className="w-full rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none focus:border-blue-400 md:rounded-xl"
                     placeholder="输入要添加到画布的文字"
                   />
                 </label>
@@ -861,7 +955,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
                       type="color"
                       value={normalizeColorValue(textStyle.fill)}
                       onChange={(e) => handleObjectStyleChange({ fill: e.target.value })}
-                      className="h-10 w-full rounded-xl border border-white/10 bg-black/25 p-1"
+                      className="h-10 w-full rounded-lg border border-white/10 bg-black/25 p-1 md:rounded-xl"
                     />
                   </label>
                   <label className="block">
@@ -872,20 +966,20 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
                       max={240}
                       value={textStyle.fontSize}
                       onChange={(e) => handleObjectStyleChange({ fontSize: clamp(Number(e.target.value) || 12, 12, 240) })}
-                      className="h-10 w-full rounded-xl border border-white/10 bg-black/25 px-3 text-sm text-white outline-none focus:border-blue-400"
+                      className="h-10 w-full rounded-lg border border-white/10 bg-black/25 px-3 text-sm text-white outline-none focus:border-blue-400 md:rounded-xl"
                     />
                   </label>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={() => handleObjectStyleChange({ fontWeight: textStyle.fontWeight === 'bold' ? 'normal' : 'bold' })}
-                    className={`rounded-xl px-3 py-2 text-sm transition ${textStyle.fontWeight === 'bold' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
+                    className={`rounded-lg px-3 py-2 text-sm transition md:rounded-xl ${textStyle.fontWeight === 'bold' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
                   >
                     粗体
                   </button>
                   <button
                     onClick={() => handleObjectStyleChange({ fontStyle: textStyle.fontStyle === 'italic' ? 'normal' : 'italic' })}
-                    className={`rounded-xl px-3 py-2 text-sm transition ${textStyle.fontStyle === 'italic' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
+                    className={`rounded-lg px-3 py-2 text-sm transition md:rounded-xl ${textStyle.fontStyle === 'italic' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
                   >
                     斜体
                   </button>
@@ -897,18 +991,18 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
               </section>
             )}
 
-            <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-              <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-white/45">完成</div>
+            <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3 md:rounded-2xl md:p-4">
+              <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/45 md:mb-3">完成</div>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={onClose}
-                  className="rounded-xl bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12"
+                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 md:rounded-xl"
                 >
                   放弃修改
                 </button>
                 <button
                   onClick={() => void handleSave()}
-                  className="rounded-xl bg-blue-500 px-3 py-2 text-sm text-white transition hover:bg-blue-600"
+                  className="rounded-lg bg-blue-500 px-3 py-2 text-sm text-white transition hover:bg-blue-600 md:rounded-xl"
                 >
                   {saveMode === 'replace-input' ? '保存替换' : '保存并加入'}
                 </button>

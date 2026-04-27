@@ -11,6 +11,10 @@ function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v))
 }
 
+function isLightboxControl(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest('[data-lightbox-control]'))
+}
+
 export default function Lightbox() {
   const lightboxImageId = useStore((s) => s.lightboxImageId)
   const lightboxImageList = useStore((s) => s.lightboxImageList)
@@ -277,6 +281,7 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
 
   // ====== 单击关闭（仅未缩放且非拖拽） ======
   const onClick = useCallback((e: React.MouseEvent) => {
+    if (isLightboxControl(e.target)) return
     if (suppressNextClickRef.current) {
       suppressNextClickRef.current = false
       e.stopPropagation()
@@ -306,6 +311,12 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
     if (!el) return
 
     const onTouchStart = (e: TouchEvent) => {
+      if (isLightboxControl(e.target)) {
+        tapRef.current = { time: 0, x: 0, y: 0 }
+        touchStartedOnImageRef.current = false
+        return
+      }
+
       if (e.touches.length === 2) {
         e.preventDefault()
         hadMultiTouchRef.current = true
@@ -380,6 +391,11 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
     }
 
     const onTouchEnd = (e: TouchEvent) => {
+      if (isLightboxControl(e.target)) {
+        tapRef.current = { time: 0, x: 0, y: 0 }
+        return
+      }
+
       if (e.touches.length < 2) pinchRef.current.active = false
       if (e.touches.length === 0) {
         dragRef.current.active = false
@@ -433,7 +449,11 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
     >
       <div className="absolute inset-0 bg-black/70 backdrop-blur-md animate-fade-in" />
       <button
+        data-lightbox-control
         className="absolute right-5 top-5 z-20 rounded-full bg-black/45 px-4 py-2 text-sm text-white backdrop-blur-sm transition hover:bg-black/65"
+        onPointerDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation()
           onEdit()
@@ -459,7 +479,11 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
       {showNav && !isZoomed && (
         <>
           <button
+            data-lightbox-control
             className={`${navBtnClass} left-3 sm:left-5`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); goPrev() }}
           >
             <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -467,7 +491,11 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
             </svg>
           </button>
           <button
+            data-lightbox-control
             className={`${navBtnClass} right-3 sm:right-5`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); goNext() }}
           >
             <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
