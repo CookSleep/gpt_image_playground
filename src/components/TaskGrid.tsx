@@ -13,9 +13,10 @@ export default function TaskGrid() {
   const setSelectedTaskIds = useStore((s) => s.setSelectedTaskIds)
   const clearSelection = useStore((s) => s.clearSelection)
   const hasOverlayOpen = useStore((s) =>
-    Boolean(s.detailTaskId || s.lightboxImageId || s.showSettings || s.confirmDialog),
+    Boolean(s.detailTaskId || s.lightboxImageId || s.maskEditorImageId || s.showSettings || s.confirmDialog),
   )
 
+  const rootRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const [selectionBox, setSelectionBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const isDragging = useRef(false)
@@ -110,6 +111,7 @@ export default function TaskGrid() {
       if (e.button !== 0) return
       const target = e.target as HTMLElement | null
       if (!target) return
+      if (!target.closest('[data-home-main]')) return
       if (target.closest('[data-input-bar]')) return
       if (target.closest('[data-no-drag-select]')) return
       if (target.closest('button, a, input, textarea, select')) return
@@ -191,6 +193,7 @@ export default function TaskGrid() {
 
   return (
     <div 
+      ref={rootRef}
       data-task-grid-root
       className="relative min-h-[50vh]"
     >

@@ -17,14 +17,20 @@ export default function ConfirmDialog() {
   useCloseOnEscape(Boolean(confirmDialog), handleClose)
 
   if (!confirmDialog) return null
-
   const isDestructive = confirmDialog.title.includes('删除') || confirmDialog.title.includes('清空')
+  const confirmTone = confirmDialog.tone ?? (isDestructive ? 'danger' : undefined)
+  const confirmClassName =
+    confirmTone === 'warning'
+      ? 'bg-orange-500 hover:bg-orange-600'
+      : confirmTone === 'danger'
+      ? 'bg-red-500 hover:bg-red-600'
+      : 'bg-blue-500 hover:bg-blue-600'
   const confirmText = confirmDialog.confirmText ?? (isDestructive ? '确认删除' : '确认')
 
   return (
     <div
       data-no-drag-select
-      className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[110] flex items-center justify-center p-4"
       onClick={handleClose}
     >
       <div className="absolute inset-0 bg-black/20 dark:bg-black/40 backdrop-blur-md animate-overlay-in" />
@@ -50,11 +56,7 @@ export default function ConfirmDialog() {
               confirmDialog.action()
               setConfirmDialog(null)
             }}
-            className={`flex-1 py-2 rounded-lg text-white text-sm font-medium transition ${
-              isDestructive
-                ? 'bg-red-500 hover:bg-red-600'
-                : 'bg-blue-500 hover:bg-blue-600'
-            }`}
+            className={`flex-1 py-2 rounded-lg text-white text-sm font-medium transition ${confirmClassName}`}
           >
             {confirmText}
           </button>

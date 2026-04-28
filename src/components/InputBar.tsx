@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback, useState, useMemo } from 'react'
 import { useStore, submitTask, addImageFromFile, updateTaskInStore, removeMultipleTasks } from '../store'
 import { DEFAULT_PARAMS } from '../types'
 import { normalizeImageSize } from '../lib/size'
+import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
 
@@ -114,6 +115,9 @@ export default function InputBar() {
       },
     })
   }, [selectedTaskIds, setConfirmDialog])
+  const maskDraft = useStore((s) => s.maskDraft)
+  const clearMaskDraft = useStore((s) => s.clearMaskDraft)
+  const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -130,6 +134,7 @@ export default function InputBar() {
   const [mobileCollapsed, setMobileCollapsed] = useState(false)
   const [selectedInputImageId, setSelectedInputImageId] = useState<string | null>(null)
   const [showSizePicker, setShowSizePicker] = useState(false)
+  const [maskPreviewUrl, setMaskPreviewUrl] = useState('')
   const handleRef = useRef<HTMLDivElement>(null)
   const dragTouchRef = useRef({ startY: 0, moved: false })
   const compressionHintTimerRef = useRef<number | null>(null)
@@ -144,6 +149,12 @@ export default function InputBar() {
 
   const canSubmit = prompt.trim() && settings.apiKey
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
+  const maskTargetImage = maskDraft
+    ? inputImages.find((img) => img.id === maskDraft.targetImageId) ?? null
+    : null
+  const referenceImages = maskTargetImage
+    ? inputImages.filter((img) => img.id !== maskTargetImage.id)
+    : inputImages
 
   useEffect(() => {
     if (!selectedInputImageId) return
@@ -199,6 +210,26 @@ export default function InputBar() {
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    if (!maskDraft || !maskTargetImage) {
+      setMaskPreviewUrl('')
+      return
+    }
+
+    createMaskPreviewDataUrl(maskTargetImage.dataUrl, maskDraft.maskDataUrl)
+      .then((url) => {
+        if (!cancelled) setMaskPreviewUrl(url)
+      })
+      .catch(() => {
+        if (!cancelled) setMaskPreviewUrl('')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [maskDraft, maskTargetImage?.id, maskTargetImage?.dataUrl])
+
   const commitOutputCompression = useCallback(() => {
     if (outputCompressionInput.trim() === '') {
       setOutputCompressionInput('')
@@ -230,6 +261,10 @@ export default function InputBar() {
 
   const hideModerationHint = () => {
     setModerationHintVisible(false)
+    clearModerationHintTimer()
+  }
+
+  const clearModerationHintTimer = () => {
     if (moderationHintTimerRef.current != null) {
       window.clearTimeout(moderationHintTimerRef.current)
       moderationHintTimerRef.current = null
@@ -248,6 +283,10 @@ export default function InputBar() {
 
   const hideCompressionHint = () => {
     setCompressionHintVisible(false)
+    clearCompressionHintTimer()
+  }
+
+  const clearCompressionHintTimer = () => {
     if (compressionHintTimerRef.current != null) {
       window.clearTimeout(compressionHintTimerRef.current)
       compressionHintTimerRef.current = null
@@ -267,6 +306,10 @@ export default function InputBar() {
 
   const hideQualityHint = () => {
     setQualityHintVisible(false)
+    clearQualityHintTimer()
+  }
+
+  const clearQualityHintTimer = () => {
     if (qualityHintTimerRef.current != null) {
       window.clearTimeout(qualityHintTimerRef.current)
       qualityHintTimerRef.current = null
@@ -440,7 +483,7 @@ export default function InputBar() {
   // 图片队列变化时也重新计算
   useEffect(() => {
     adjustTextareaHeight()
-  }, [inputImages.length, adjustTextareaHeight])
+  }, [inputImages.length, Boolean(maskDraft), maskPreviewUrl, adjustTextareaHeight])
 
   useEffect(() => {
     window.addEventListener('resize', adjustTextareaHeight)
@@ -496,79 +539,113 @@ export default function InputBar() {
       setSelectedInputImageId(null)
     }
   }
+  const renderImageThumb = (img: (typeof inputImages)[number]) => {
+    const originalIndex = inputImages.findIndex((i) => i.id === img.id)
+    const isMaskTarget = maskDraft?.targetImageId === img.id
+    const canEdit = !maskTargetImage || isMaskTarget
+    const displaySrc = isMaskTarget && maskPreviewUrl ? maskPreviewUrl : img.dataUrl
+    const selected = selectedInputImageId === img.id
+    const deleteButtonClass = isMobile
+      ? selected
+        ? 'h-7 w-7 opacity-100'
+        : 'h-7 w-7 pointer-events-none opacity-0'
+      : 'h-[22px] w-[22px] opacity-0 group-hover:opacity-100'
 
-  const renderImageThumbs = () => (
-    <div ref={imagesRef}>
-      <div className="grid grid-cols-[repeat(auto-fill,52px)] justify-between gap-x-2 gap-y-3 mb-3">
-        {inputImages.map((img, idx) => {
-          const selected = selectedInputImageId === img.id
-          const deleteButtonClass = isMobile
-            ? selected
-              ? 'h-7 w-7 opacity-100'
-              : 'h-7 w-7 pointer-events-none opacity-0'
-            : 'h-[22px] w-[22px] opacity-0 group-hover:opacity-100'
-          return (
-            <div key={img.id} className="relative group inline-block">
-              <button
-                type="button"
-                className={`relative block w-[52px] h-[52px] rounded-xl overflow-hidden border p-0 shadow-sm cursor-pointer transition-all ${
-                  selected
-                    ? 'border-red-400 ring-2 ring-red-400/45'
-                    : 'border-gray-200 dark:border-white/[0.08]'
-                }`}
-                onClick={() => handleInputImageClick(img.id)}
-                aria-pressed={selected}
-                aria-label={selected ? '取消选择参考图' : '选择参考图'}
-              >
-                <img
-                  src={img.dataUrl}
-                  className="w-full h-full object-cover hover:opacity-90 transition-opacity"
-                  alt=""
-                />
-              </button>
-              <button
-                type="button"
-                className={`absolute -top-2 -right-2 flex items-center justify-center rounded-full bg-red-500 text-white shadow-md transition-opacity hover:bg-red-600 ${deleteButtonClass}`}
-                onPointerDown={(event) => {
-                  event.stopPropagation()
-                }}
-                onTouchStart={(event) => {
-                  event.stopPropagation()
-                }}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  handleRemoveInputImage(idx, img.id)
-                }}
-                aria-label="删除参考图"
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          )
-        })}
-
-        {/* 清空全部按钮 */}
+    return (
+      <div key={img.id} className="relative group inline-block">
         <button
-          onClick={() =>
-            setConfirmDialog({
-              title: '清空参考图',
-              message: `确定要清空全部 ${inputImages.length} 张参考图吗？`,
-              action: () => clearInputImages(),
-            })
-          }
-          className="w-[52px] h-[52px] rounded-xl border border-dashed border-gray-300 dark:border-white/[0.08] flex flex-col items-center justify-center gap-0.5 text-gray-400 dark:text-gray-500 hover:text-red-500 hover:border-red-300 hover:bg-red-50/50 dark:hover:bg-red-950/30 transition-all cursor-pointer flex-shrink-0"
-          title="清空全部参考图"
+          type="button"
+          className={`relative block h-[52px] w-[52px] overflow-hidden rounded-xl border p-0 shadow-sm transition-all ${
+            selected
+              ? 'border-red-400 ring-2 ring-red-400/45'
+              : isMaskTarget
+                ? 'border-blue-500 border-2'
+                : 'border-gray-200 dark:border-white/[0.08]'
+          }`}
+          onClick={() => handleInputImageClick(img.id)}
+          aria-pressed={selected}
+          aria-label={selected ? '取消选择参考图' : '选择参考图'}
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          <img
+            src={displaySrc}
+            className="w-full h-full object-cover hover:opacity-90 transition-opacity"
+            alt=""
+          />
+          {isMaskTarget && (
+            <span className="absolute left-1 top-1 rounded bg-blue-500/90 px-1.5 py-0.5 text-[8px] leading-none text-white font-bold tracking-wider backdrop-blur-sm z-10 pointer-events-none">
+              MASK
+            </span>
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              className="absolute inset-0 w-full h-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus:outline-none border-none"
+              onClick={(e) => {
+                e.stopPropagation()
+                setMaskEditorImageId(img.id)
+              }}
+              title={isMaskTarget ? '编辑遮罩' : '添加遮罩'}
+            >
+              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+            </button>
+          )}
+        </button>
+        <button
+          type="button"
+          className={`absolute -top-2 -right-2 flex items-center justify-center rounded-full bg-red-500 text-white shadow-md transition-opacity hover:bg-red-600 z-30 ${deleteButtonClass}`}
+          onPointerDown={(e) => {
+            e.stopPropagation()
+          }}
+          onTouchStart={(e) => {
+            e.stopPropagation()
+          }}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (originalIndex >= 0) handleRemoveInputImage(originalIndex, img.id)
+          }}
+          aria-label="删除参考图"
+        >
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
           </svg>
-          <span className="text-[9px] leading-none">清空</span>
         </button>
       </div>
-    </div>
+    )
+  }
+
+  const renderClearAllButton = () => (
+    <button
+      onClick={() =>
+        setConfirmDialog({
+          title: maskTargetImage ? '清空全部输入图' : '清空参考图',
+          message: maskTargetImage
+            ? `确定要清空遮罩主图、${referenceImages.length} 张参考图和当前遮罩吗？`
+            : `确定要清空全部 ${inputImages.length} 张参考图吗？`,
+          action: () => clearInputImages(),
+        })
+      }
+      className="w-[52px] h-[52px] rounded-xl border border-dashed border-gray-300 dark:border-white/[0.08] flex flex-col items-center justify-center gap-0.5 text-gray-400 dark:text-gray-500 hover:text-red-500 hover:border-red-300 hover:bg-red-50/50 dark:hover:bg-red-950/30 transition-all cursor-pointer flex-shrink-0"
+      title={maskTargetImage ? '清空遮罩主图、参考图和遮罩' : '清空全部参考图'}
+    >
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+      </svg>
+      <span className="text-[8px] leading-none">{maskTargetImage ? '清空全部' : '清空'}</span>
+    </button>
   )
+
+  const renderImageThumbs = () => {
+    return (
+      <div ref={imagesRef}>
+        <div className="grid grid-cols-[repeat(auto-fill,52px)] justify-between gap-x-2 gap-y-3 mb-3">
+          {inputImages.map((img) => renderImageThumb(img))}
+          {renderClearAllButton()}
+        </div>
+      </div>
+    )
+  }
 
   const renderParams = (cols: string) => (
     <div className={`grid ${cols} gap-2 text-xs flex-1`}>
@@ -588,8 +665,9 @@ export default function InputBar() {
         onMouseEnter={showQualityHint}
         onMouseLeave={hideQualityHint}
         onTouchStart={startQualityHintTouch}
-        onTouchEnd={hideQualityHint}
+        onTouchEnd={clearQualityHintTimer}
         onTouchCancel={hideQualityHint}
+        onClick={showQualityHint}
       >
         <span className="text-gray-400 dark:text-gray-500 ml-1">质量</span>
         <Select
@@ -631,8 +709,9 @@ export default function InputBar() {
         onMouseEnter={showCompressionHint}
         onMouseLeave={hideCompressionHint}
         onTouchStart={startCompressionHintTouch}
-        onTouchEnd={hideCompressionHint}
+        onTouchEnd={clearCompressionHintTimer}
         onTouchCancel={hideCompressionHint}
+        onClick={showCompressionHint}
       >
         <span className="text-gray-400 dark:text-gray-500 ml-1">压缩率</span>
         <input
@@ -660,8 +739,9 @@ export default function InputBar() {
         onMouseEnter={showModerationHint}
         onMouseLeave={hideModerationHint}
         onTouchStart={startModerationHintTouch}
-        onTouchEnd={hideModerationHint}
+        onTouchEnd={clearModerationHintTimer}
         onTouchCancel={hideModerationHint}
+        onClick={showModerationHint}
       >
         <span className="text-gray-400 dark:text-gray-500 ml-1">审核</span>
         <Select
@@ -821,7 +901,9 @@ export default function InputBar() {
                   </div>
                 </div>
                 {mobileCollapsed && (
-                  <div className="text-xs text-gray-400 dark:text-gray-500 mb-2 ml-1">{inputImages.length} 张参考图</div>
+                  <div className="text-xs text-gray-400 dark:text-gray-500 mb-2 ml-1">
+                    {maskDraft ? `1 张遮罩主图 · ${referenceImages.length} 张参考图` : `${inputImages.length} 张参考图`}
+                  </div>
                 )}
               </>
             ) : (
@@ -881,7 +963,7 @@ export default function InputBar() {
                         ? 'bg-gray-300 dark:bg-white/[0.06] text-white cursor-pointer'
                         : 'bg-blue-500 text-white hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-white/[0.04] disabled:opacity-50 disabled:cursor-not-allowed'
                     }`}
-                    title={settings.apiKey ? '生成 (Ctrl+Enter)' : '请先配置 API'}
+                    title={settings.apiKey ? (maskDraft ? '遮罩编辑 (Ctrl+Enter)' : '生成 (Ctrl+Enter)') : '请先配置 API'}
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
@@ -939,7 +1021,7 @@ export default function InputBar() {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                     </svg>
-                    生成图像
+                    {maskDraft ? '遮罩编辑' : '生成图像'}
                   </button>
                 </div>
               </div>

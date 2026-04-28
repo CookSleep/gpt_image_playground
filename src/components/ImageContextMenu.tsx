@@ -1,10 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { useStore } from '../store'
+import { useStore, addImageFromUrl } from '../store'
 import { copyBlobToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 
 export default function ImageContextMenu() {
   const [menuInfo, setMenuInfo] = useState<{ src: string; x: number; y: number } | null>(null)
   const showToast = useStore((s) => s.showToast)
+  const inputImages = useStore((s) => s.inputImages)
+  const setDetailTaskId = useStore((s) => s.setDetailTaskId)
+  const setLightboxImageId = useStore((s) => s.setLightboxImageId)
+  const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -100,11 +104,31 @@ export default function ImageContextMenu() {
     }
   }
 
+  const handleEdit = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setMenuInfo(null)
+    if (inputImages.length >= 16) {
+      showToast('参考图数量已达上限（16 张），无法继续添加', 'error')
+      return
+    }
+
+    try {
+      await addImageFromUrl(menuInfo.src)
+      setDetailTaskId(null)
+      setLightboxImageId(null)
+      setMaskEditorImageId(null)
+      showToast('已加入参考图', 'success')
+    } catch (err) {
+      console.error(err)
+      showToast(`加入参考图失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+    }
+  }
+
   // 保证菜单在视口内
   let left = menuInfo.x
   let top = menuInfo.y
   const MENU_WIDTH = 120
-  const MENU_HEIGHT = 88 // 两个按钮高度加 padding
+  const MENU_HEIGHT = 128 // 三个按钮高度加 padding
 
   if (left + MENU_WIDTH > window.innerWidth) {
     left -= MENU_WIDTH
@@ -137,6 +161,15 @@ export default function ImageContextMenu() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
         </svg>
         下载
+      </button>
+      <button
+        onClick={handleEdit}
+        className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2 transition-colors"
+      >
+        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        </svg>
+        编辑
       </button>
     </div>
   )

@@ -1,9 +1,10 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt } from '../store'
+import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyBlobToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
@@ -11,13 +12,18 @@ export default function DetailModal() {
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const setLightboxStartEditor = useStore((s) => s.setLightboxStartEditor)
+  const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const showToast = useStore((s) => s.showToast)
+  const settings = useStore((s) => s.settings)
+  const dismissedCodexCliPrompts = useStore((s) => s.dismissedCodexCliPrompts)
 
   const [imageIndex, setImageIndex] = useState(0)
   const [imageSrcs, setImageSrcs] = useState<Record<string, string>>({})
   const [imageRatios, setImageRatios] = useState<Record<string, string>>({})
   const [imageSizes, setImageSizes] = useState<Record<string, string>>({})
+  const [maskPreviewSrc, setMaskPreviewSrc] = useState('')
+  const [now, setNow] = useState(Date.now())
   const imagePanelRef = useRef<HTMLDivElement>(null)
   const mainImageRef = useRef<HTMLImageElement>(null)
   const [imageLabelLeft, setImageLabelLeft] = useState(8)
@@ -34,24 +40,49 @@ export default function DetailModal() {
     setImageIndex(0)
   }, [detailTaskId])
 
+  useEffect(() => {
+    if (task?.status !== 'running') return
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [task?.status])
+
   // 加载所有相关图片
   useEffect(() => {
-    if (!task) return
-    const ids = [...(task.outputImages || []), ...(task.inputImageIds || [])]
+    if (!task) {
+      setImageSrcs({})
+      return
+    }
+
+    let cancelled = false
+    const ids = [...new Set([
+      ...(task.outputImages || []),
+      ...(task.inputImageIds || []),
+      ...(task.maskImageId ? [task.maskImageId] : []),
+    ])]
+    const initial: Record<string, string> = {}
     for (const id of ids) {
       const cached = getCachedImage(id)
-      if (cached) {
-        setImageSrcs((prev) => ({ ...prev, [id]: cached }))
-      } else {
-        ensureImageCached(id).then((url) => {
-          if (url) setImageSrcs((prev) => ({ ...prev, [id]: url }))
-        })
-      }
+      if (cached) initial[id] = cached
+    }
+    setImageSrcs(initial)
+    for (const id of ids) {
+      if (initial[id]) continue
+      ensureImageCached(id).then((url) => {
+        if (!cancelled && url) setImageSrcs((prev) => ({ ...prev, [id]: url }))
+      })
+    }
+
+    return () => {
+      cancelled = true
     }
   }, [task])
 
   const currentOutputImageId = task?.outputImages?.[imageIndex] || ''
   const currentOutputImageSrc = currentOutputImageId ? imageSrcs[currentOutputImageId] || '' : ''
+  const maskTargetId = task?.maskTargetImageId || null
+  const maskTargetSrc = maskTargetId ? imageSrcs[maskTargetId] || '' : ''
+  const maskSrc = task?.maskImageId ? imageSrcs[task.maskImageId] || '' : ''
+  const allInputImageIds = task?.inputImageIds ?? []
 
   useEffect(() => {
     if (!currentOutputImageId || !currentOutputImageSrc) return
@@ -103,6 +134,24 @@ export default function DetailModal() {
     return () => window.removeEventListener('resize', updateImageLabelLeft)
   }, [currentOutputImageSrc])
 
+  useEffect(() => {
+    let cancelled = false
+    setMaskPreviewSrc('')
+    if (!maskTargetSrc || !maskSrc) return
+
+    createMaskPreviewDataUrl(maskTargetSrc, maskSrc)
+      .then((url) => {
+        if (!cancelled) setMaskPreviewSrc(url)
+      })
+      .catch(() => {
+        if (!cancelled) setMaskPreviewSrc('')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [maskTargetSrc, maskSrc])
+
   if (!task) return null
 
   const outputLen = task.outputImages?.length || 0
@@ -111,7 +160,9 @@ export default function DetailModal() {
   const currentActualParams = currentOutputImageId ? task.actualParamsByImage?.[currentOutputImageId] : undefined
   const currentRevisedPrompt = currentOutputImageId ? task.revisedPromptByImage?.[currentOutputImageId]?.trim() : ''
   const showRevisedPrompt = Boolean(currentRevisedPrompt && currentRevisedPrompt !== task.prompt.trim())
-  const showPromptWarning = Boolean(currentOutputImageId && (!currentRevisedPrompt || showRevisedPrompt))
+  const codexCliPromptKey = getCodexCliPromptKey(settings)
+  const hasHandledPromptWarning = settings.codexCli || dismissedCodexCliPrompts.includes(codexCliPromptKey)
+  const showPromptWarning = Boolean(currentOutputImageId && (!currentRevisedPrompt || showRevisedPrompt) && !hasHandledPromptWarning)
   const aggregateActualParams = outputLen > 0 ? { ...task.actualParams, n: outputLen } : task.actualParams
 
   const formatTime = (ts: number | null) => {
@@ -120,6 +171,12 @@ export default function DetailModal() {
   }
 
   const formatDuration = () => {
+    if (task.status === 'running') {
+      const seconds = Math.max(0, Math.floor((now - task.createdAt) / 1000))
+      const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
+      const ss = String(seconds % 60).padStart(2, '0')
+      return `${mm}:${ss}`
+    }
     if (task.elapsed == null) return null
     const seconds = Math.floor(task.elapsed / 1000)
     const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
@@ -142,6 +199,13 @@ export default function DetailModal() {
     setDetailTaskId(null)
     setLightboxStartEditor(true)
     setLightboxImageId(currentOutputImageId, task.outputImages)
+  }
+
+  const handleMaskEditCurrentOutput = () => {
+    const imgId = task.outputImages?.[imageIndex]
+    if (!imgId) return
+    setMaskEditorImageId(imgId)
+    setDetailTaskId(null)
   }
 
   const handleDelete = () => {
@@ -185,7 +249,7 @@ export default function DetailModal() {
   }
 
   const handleCopyInputImage = async () => {
-    const imgId = task.inputImageIds?.[0]
+    const imgId = allInputImageIds[0]
     const src = imgId ? imageSrcs[imgId] : ''
     if (!src) return
     try {
@@ -294,22 +358,41 @@ export default function DetailModal() {
                   </span>
                 </>
               )}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleQuickEditOutput()
-                }}
-                className="absolute bottom-3 right-3 rounded-full bg-black/55 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition hover:bg-black/70"
-              >
-                快速编辑
-              </button>
+              <div className="absolute bottom-3 right-3 flex items-center gap-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleMaskEditCurrentOutput()
+                  }}
+                  className="rounded-full bg-blue-500/75 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition hover:bg-blue-500"
+                >
+                  遮罩编辑
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleQuickEditOutput()
+                  }}
+                  className="rounded-full bg-black/55 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition hover:bg-black/70"
+                >
+                  快速编辑
+                </button>
+              </div>
             </>
           )}
           {task.status === 'running' && (
-            <svg className="w-10 h-10 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
+            <>
+              <div className="absolute left-4 top-4 flex items-center gap-1 bg-black/50 text-white text-xs px-2 py-0.5 rounded backdrop-blur-sm font-mono">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {formatDuration()}
+              </div>
+              <svg className="w-10 h-10 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            </>
           )}
           {task.status === 'error' && (
             <div className="w-full max-w-md px-4 text-center">
@@ -398,7 +481,7 @@ export default function DetailModal() {
             )}
 
             {/* 参考图 */}
-            {task.inputImageIds?.length > 0 && (
+            {allInputImageIds.length > 0 && (
               <div className="mb-4">
                 <div className="flex items-center gap-1.5 mb-2">
                   <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
@@ -415,15 +498,31 @@ export default function DetailModal() {
                   </button>
                 </div>
                 <div className="flex gap-2 flex-wrap">
-                  {task.inputImageIds.map((imgId) => (
-                    <img
-                      key={imgId}
-                      src={imageSrcs[imgId] || ''}
-                      className="w-16 h-16 rounded-lg object-cover border border-gray-200 dark:border-white/[0.08] cursor-pointer hover:opacity-80 transition"
-                      onClick={() => setLightboxImageId(imgId, task.inputImageIds)}
-                      alt=""
-                    />
-                  ))}
+                  {allInputImageIds.map((imgId) => {
+                    const isMaskTarget = imgId === maskTargetId
+                    const displaySrc = (isMaskTarget && maskPreviewSrc) ? maskPreviewSrc : (imageSrcs[imgId] || '')
+                    return (
+                      <div key={imgId} className="relative group inline-block">
+                        <div
+                          className={`relative w-16 h-16 rounded-lg overflow-hidden border cursor-pointer hover:opacity-80 transition ${
+                            isMaskTarget ? 'border-blue-500 border-2 shadow-sm' : 'border-gray-200 dark:border-white/[0.08]'
+                          }`}
+                          onClick={() => setLightboxImageId(imgId, allInputImageIds)}
+                        >
+                          <img
+                            src={displaySrc}
+                            className="w-full h-full object-cover"
+                            alt=""
+                          />
+                          {isMaskTarget && (
+                            <span className="absolute left-1 top-1 rounded bg-blue-500/90 px-1.5 py-0.5 text-[8px] leading-none text-white font-bold tracking-wider backdrop-blur-sm z-10 pointer-events-none">
+                              MASK
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             )}

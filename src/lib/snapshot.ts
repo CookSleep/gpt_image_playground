@@ -18,7 +18,7 @@ export interface SnapshotImageFile {
   bytes: Uint8Array
   createdAt: number
   updatedAt: number
-  source?: 'upload' | 'generated'
+  source?: 'upload' | 'generated' | 'mask'
 }
 
 const SNAPSHOT_VERSION = 3

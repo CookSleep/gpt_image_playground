@@ -82,6 +82,9 @@ function useIsMobileDevice() {
 
 export default function ReferenceImageEditorModal({ imageId, src, saveMode, onClose }: ReferenceImageEditorModalProps) {
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
+  const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
+  const maskDraft = useStore((s) => s.maskDraft)
+  const clearMaskDraft = useStore((s) => s.clearMaskDraft)
   const inputImages = useStore((s) => s.inputImages)
   const lightboxImageList = useStore((s) => s.lightboxImageList)
   const showToast = useStore((s) => s.showToast)
@@ -964,6 +967,17 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     await restoreHistory(historyIndexRef.current + 1)
   }
 
+  const handleOpenMaskEditor = () => {
+    onClose()
+    setMaskEditorImageId(imageId)
+  }
+
+  const handleRemoveMaskDraft = () => {
+    if (maskDraft?.targetImageId !== imageId) return
+    clearMaskDraft()
+    showToast('已移除这张参考图的遮罩', 'success')
+  }
+
   const handleSave = async () => {
     const canvas = canvasRef.current
     const sourceImage = sourceImageRef.current
@@ -971,10 +985,16 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
 
     const previousViewport = canvas.viewportTransform ? [...canvas.viewportTransform] : null
     const baseProxy = canvas.getObjects().find((object) => getEditorKind(object) === 'base-image')
+    const maskObjects = canvas.getObjects().filter((object) => {
+      const kind = getEditorKind(object)
+      return kind === 'mask-brush' || kind === 'mask-region'
+    })
     const previousBaseVisible = baseProxy?.visible
     if (baseProxy) {
       baseProxy.set({ visible: false })
     }
+    const previousMaskVisibilities = maskObjects.map((object) => object.visible)
+    maskObjects.forEach((object) => object.set({ visible: false }))
     canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
     canvas.renderAll()
     const overlayDataUrl = canvas.toDataURL({
@@ -988,6 +1008,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     if (baseProxy) {
       baseProxy.set({ visible: previousBaseVisible ?? true })
     }
+    maskObjects.forEach((object, index) => object.set({ visible: previousMaskVisibilities[index] ?? true }))
     if (previousViewport) {
       canvas.setViewportTransform(previousViewport as [number, number, number, number, number, number])
       canvas.renderAll()
@@ -1028,17 +1049,9 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   const isTextSelected = activeObject instanceof IText
   const activeEditorKind = getEditorKind(activeObject)
   const canDeleteActiveObject = Boolean(activeObject && activeEditorKind !== 'base-image')
-  const settingsPanel =
-    toolMode === 'mask'
-      ? 'mask'
-      : activeEditorKind === 'mask-region'
-        ? 'mask'
-        : isTextSelected
-          ? 'text'
-          : null
-  const showMaskSettings = settingsPanel === 'mask'
+  const hasOpenAiMask = maskDraft?.targetImageId === imageId
+  const settingsPanel = isTextSelected ? 'text' : null
   const showTextSettings = settingsPanel === 'text'
-  const showShapeSelector = showMaskSettings && activeEditorKind === 'mask-region'
 
   return (
     <div className="fixed inset-0 z-[75] h-[100dvh] overflow-hidden bg-black/70 backdrop-blur-md">
@@ -1066,7 +1079,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
             <div>
               <h3 className="text-base font-semibold md:text-lg">快速编辑</h3>
               <p className="mt-1 hidden text-xs text-white/45 sm:block">
-                文字、涂抹遮罩、贴图。
+                文字、OpenAI 遮罩、贴图。
                 {saveMode === 'replace-input' ? ' 保存后替换当前参考图。' : ' 保存后加入参考图。'}
               </p>
             </div>
@@ -1122,10 +1135,10 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
                   )}
                 </div>
                 <button
-                  onClick={() => handleToolModeChange('mask')}
-                  className={`rounded-lg px-3 py-2 text-sm transition md:rounded-xl ${toolMode === 'mask' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
+                  onClick={handleOpenMaskEditor}
+                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 md:rounded-xl"
                 >
-                  涂抹遮罩
+                  {hasOpenAiMask ? '编辑遮罩' : '添加遮罩'}
                 </button>
                 <button
                   onClick={() => handleFlipActiveObject('x')}
@@ -1142,10 +1155,11 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
                   垂直翻转
                 </button>
                 <button
-                  onClick={handleAddMaskRegion}
-                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 md:rounded-xl"
+                  onClick={handleRemoveMaskDraft}
+                  disabled={!hasOpenAiMask}
+                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-40 md:rounded-xl"
                 >
-                  区域遮罩
+                  移除遮罩
                 </button>
                 <button
                   onClick={handleAddText}
@@ -1174,92 +1188,6 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
                 onChange={(event) => void handleFileSelect(event)}
               />
             </section>
-
-            {showMaskSettings && (
-              <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3 md:rounded-2xl md:p-4">
-              <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/45 md:mb-3">遮罩</div>
-              <div className="space-y-3">
-                <label className="block">
-                  <span className="mb-1 block text-xs text-white/55">模式</span>
-                  <div className="text-sm text-white/75">
-                    {activeEditorKind === 'mask-region'
-                      ? '当前选中了区域遮罩，可以切换形状并继续调透明度。'
-                      : toolMode === 'mask'
-                        ? '当前为涂抹遮罩，直接在图片上拖动即可。'
-                        : '切到“涂抹遮罩”后即可开始绘制。'}
-                  </div>
-                </label>
-                {showShapeSelector && (
-                  <div>
-                    <span className="mb-2 block text-xs text-white/55">图形</span>
-                    <div className="grid grid-cols-3 gap-2">
-                      {([
-                        ['rect', '矩形'],
-                        ['ellipse', '圆形'],
-                        ['triangle', '三角'],
-                      ] as const).map(([shape, label]) => (
-                        <button
-                          key={shape}
-                          onClick={() => handleChangeMaskShapeType(shape)}
-                          className={`rounded-lg px-2 py-2 text-sm transition md:rounded-xl md:px-3 ${maskShapeType === shape ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <label className="block">
-                  <span className="mb-1 block text-xs text-white/55">透明度</span>
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="1"
-                    step="0.05"
-                    value={maskOpacity}
-                    onChange={(e) => setMaskOpacity(Number(e.target.value))}
-                    className="w-full"
-                  />
-                  <div className="mt-1 text-xs text-white/45">{Math.round(maskOpacity * 100)}%</div>
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-xs text-white/55">笔刷大小</span>
-                  <input
-                    type="range"
-                    min="6"
-                    max="140"
-                    step="2"
-                    value={maskWidth}
-                    onChange={(e) => setMaskWidth(Number(e.target.value))}
-                    className="w-full"
-                  />
-                  <div className="mt-1 text-xs text-white/45">{maskWidth}px</div>
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-xs text-white/55">颜色</span>
-                  <input
-                    type="range"
-                    min="0"
-                    max="360"
-                    step="1"
-                    value={maskHue}
-                    onChange={(e) => setMaskHue(Number(e.target.value))}
-                    className="w-full appearance-none rounded-full"
-                    style={{
-                      background: 'linear-gradient(90deg, hsl(0 85% 48%), hsl(60 85% 48%), hsl(120 85% 48%), hsl(180 85% 48%), hsl(240 85% 48%), hsl(300 85% 48%), hsl(360 85% 48%))',
-                    }}
-                  />
-                  <div className="mt-2 flex items-center justify-between text-xs text-white/45">
-                    <span>{maskHue}°</span>
-                    <span
-                      className="inline-block h-4 w-8 rounded-full border border-white/15"
-                      style={{ backgroundColor: buildMaskColor(maskHue, maskOpacity) }}
-                    />
-                  </div>
-                </label>
-              </div>
-              </section>
-            )}
 
             {showTextSettings && (
               <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3 md:rounded-2xl md:p-4">

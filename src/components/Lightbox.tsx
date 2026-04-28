@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useState, useRef, useCallback } from 'react'
 import { useStore, getCachedImage, ensureImageCached } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
+import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 
 const ReferenceImageEditorModal = lazy(() => import('./ReferenceImageEditorModal'))
 
@@ -24,6 +25,11 @@ export default function Lightbox() {
   const inputImages = useStore((s) => s.inputImages)
   const [src, setSrc] = useState('')
   const [showEditor, setShowEditor] = useState(false)
+  const maskDraft = useStore((s) => s.maskDraft)
+  const tasks = useStore((s) => s.tasks)
+
+  const [maskImageSrc, setMaskImageSrc] = useState('')
+  const [maskPreviewSrc, setMaskPreviewSrc] = useState('')
 
   const close = useCallback(() => setLightboxImageId(null), [setLightboxImageId])
   useCloseOnEscape(Boolean(lightboxImageId), close)
@@ -53,6 +59,54 @@ export default function Lightbox() {
     setShowEditor(true)
     setLightboxStartEditor(false)
   }, [lightboxImageId, lightboxStartEditor, setLightboxStartEditor, src])
+
+  // 遮罩图加载
+  useEffect(() => {
+    if (!lightboxImageId) {
+      setMaskImageSrc('')
+      return
+    }
+
+    if (maskDraft?.targetImageId === lightboxImageId) {
+      setMaskImageSrc(maskDraft.maskDataUrl)
+      return
+    }
+
+    const taskWithMask = tasks.find((t) => t.maskTargetImageId === lightboxImageId && t.maskImageId)
+    if (taskWithMask?.maskImageId) {
+      const cached = getCachedImage(taskWithMask.maskImageId)
+      if (cached) {
+        setMaskImageSrc(cached)
+      } else {
+        ensureImageCached(taskWithMask.maskImageId).then((url) => {
+          if (url) setMaskImageSrc(url)
+        })
+      }
+    } else {
+      setMaskImageSrc('')
+    }
+  }, [lightboxImageId, maskDraft?.targetImageId, maskDraft?.maskDataUrl, tasks])
+
+  // 生成遮罩预览
+  useEffect(() => {
+    let cancelled = false
+    if (!src || !maskImageSrc) {
+      setMaskPreviewSrc('')
+      return
+    }
+
+    createMaskPreviewDataUrl(src, maskImageSrc)
+      .then((url) => {
+        if (!cancelled) setMaskPreviewSrc(url)
+      })
+      .catch(() => {
+        if (!cancelled) setMaskPreviewSrc('')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [src, maskImageSrc])
 
   // 导航
   const currentIndex = lightboxImageId ? lightboxImageList.indexOf(lightboxImageId) : -1
@@ -85,6 +139,7 @@ export default function Lightbox() {
     <>
       <LightboxInner
         src={src}
+        maskPreviewSrc={maskPreviewSrc}
         onClose={close}
         showNav={showNav}
         currentIndex={currentIndex}
@@ -116,6 +171,7 @@ export default function Lightbox() {
 
 interface LightboxInnerProps {
   src: string
+  maskPreviewSrc?: string
   onClose: () => void
   showNav: boolean
   currentIndex: number
@@ -127,7 +183,7 @@ interface LightboxInnerProps {
 }
 
 /** 内部组件：保证挂载时 DOM 已经存在，所有 ref / effect 都可靠 */
-function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onNext, isReferenceImage, onEdit }: LightboxInnerProps) {
+function LightboxInner({ src, maskPreviewSrc, onClose, showNav, currentIndex, total, onPrev, onNext, isReferenceImage, onEdit }: LightboxInnerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   // 用 ref 追踪最新变换，避免闭包过期
@@ -462,17 +518,28 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
         {isReferenceImage ? '编辑参考图' : '编辑并加入参考图'}
       </button>
       <div className="relative animate-zoom-in">
-        <img
-          src={src}
-          className="max-w-[85vw] max-h-[85vh] object-contain rounded-lg shadow-2xl"
+        <div
+          className="relative flex items-center justify-center"
           style={{
             transform: `translate(${tx}px, ${ty}px) scale(${s})`,
             transition: isDragging ? 'none' : 'transform 0.2s ease-out',
             willChange: 'transform',
           }}
-          onDragStart={(e) => e.preventDefault()}
-          alt=""
-        />
+        >
+          <img
+            src={src}
+            className="max-w-[85vw] max-h-[85vh] object-contain rounded-lg shadow-2xl"
+            onDragStart={(e) => e.preventDefault()}
+            alt=""
+          />
+          {maskPreviewSrc && (
+            <img
+              src={maskPreviewSrc}
+              className="absolute inset-0 w-full h-full object-contain rounded-lg pointer-events-none"
+              alt=""
+            />
+          )}
+        </div>
       </div>
 
       {/* 左右切换按钮 */}

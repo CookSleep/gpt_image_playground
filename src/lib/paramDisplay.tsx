@@ -43,7 +43,7 @@ export function ActualValueBadge({ value, className = '', variant = 'highlight' 
       onMouseLeave={() => setTooltipVisible(false)}
       onFocus={() => setTooltipVisible(true)}
       onBlur={() => setTooltipVisible(false)}
-      onClick={() => setTooltipVisible((visible) => !visible)}
+      onClick={() => setTooltipVisible(true)}
       onTouchStart={() => {
         clearTouchTimer()
         touchTimerRef.current = window.setTimeout(() => {

@@ -1,4 +1,5 @@
 import type { AppSettings, ImageApiResponse, ResponsesApiResponse, TaskParams } from '../types'
+import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
 import { buildApiUrl, readClientDevProxyConfig } from './devProxy'
 
 const MIME_MAP: Record<string, string> = {
@@ -6,6 +7,9 @@ const MIME_MAP: Record<string, string> = {
   jpeg: 'image/jpeg',
   webp: 'image/webp',
 }
+
+const MAX_MASK_EDIT_FILE_BYTES = 50 * 1024 * 1024
+const MAX_IMAGE_INPUT_PAYLOAD_BYTES = 512 * 1024 * 1024
 
 export { normalizeBaseUrl } from './devProxy'
 
@@ -15,6 +19,41 @@ function isHttpUrl(value: unknown): value is string {
 
 function normalizeBase64Image(value: string, fallbackMime: string): string {
   return value.startsWith('data:') ? value : `data:${fallbackMime};base64,${value}`
+}
+
+function formatMiB(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+}
+
+function getDataUrlEncodedByteSize(dataUrl: string): number {
+  return dataUrl.length
+}
+
+function getDataUrlDecodedByteSize(dataUrl: string): number {
+  const commaIndex = dataUrl.indexOf(',')
+  if (commaIndex < 0) return dataUrl.length
+
+  const meta = dataUrl.slice(0, commaIndex)
+  const payload = dataUrl.slice(commaIndex + 1)
+  if (!/;base64/i.test(meta)) return decodeURIComponent(payload).length
+
+  const normalized = payload.replace(/\s/g, '')
+  const padding = normalized.endsWith('==') ? 2 : normalized.endsWith('=') ? 1 : 0
+  return Math.max(0, Math.floor((normalized.length * 3) / 4) - padding)
+}
+
+function assertMaxBytes(label: string, bytes: number, maxBytes: number) {
+  if (bytes > maxBytes) {
+    throw new Error(`${label}过大：${formatMiB(bytes)}，上限为 ${formatMiB(maxBytes)}`)
+  }
+}
+
+function assertImageInputPayloadSize(bytes: number) {
+  assertMaxBytes('图像输入有效负载总大小', bytes, MAX_IMAGE_INPUT_PAYLOAD_BYTES)
+}
+
+function assertMaskEditFileSize(label: string, bytes: number) {
+  assertMaxBytes(label, bytes, MAX_MASK_EDIT_FILE_BYTES)
 }
 
 async function blobToDataUrl(blob: Blob, fallbackMime: string): Promise<string> {
@@ -66,7 +105,12 @@ function createRequestHeaders(settings: AppSettings): Record<string, string> {
   }
 }
 
-function createResponsesImageTool(params: TaskParams, isEdit: boolean, settings: AppSettings): Record<string, unknown> {
+function createResponsesImageTool(
+  params: TaskParams,
+  isEdit: boolean,
+  settings: AppSettings,
+  maskDataUrl?: string,
+): Record<string, unknown> {
   const tool: Record<string, unknown> = {
     type: 'image_generation',
     action: isEdit ? 'edit' : 'generate',
@@ -80,6 +124,12 @@ function createResponsesImageTool(params: TaskParams, isEdit: boolean, settings:
 
   if (params.output_format !== 'png' && params.output_compression != null) {
     tool.output_compression = params.output_compression
+  }
+
+  if (maskDataUrl) {
+    tool.input_image_mask = {
+      image_url: maskDataUrl,
+    }
   }
 
   return tool
@@ -109,6 +159,7 @@ export interface CallApiOptions {
   params: TaskParams
   /** 输入图片的 data URL 列表 */
   inputImageDataUrls: string[]
+  maskDataUrl?: string
 }
 
 export interface CallApiResult {
@@ -218,7 +269,7 @@ async function callImagesApiConcurrent(opts: CallApiOptions, n: number): Promise
   )
   const actualParams = mergeActualParams(
     successfulResults[0]?.actualParams ?? {},
-    { quality: 'auto', n: images.length },
+    { n: images.length },
   )
 
   return { images, actualParams, actualParamsList, revisedPrompts }
@@ -255,13 +306,36 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
       if (params.output_format !== 'png' && params.output_compression != null) {
         formData.append('output_compression', String(params.output_compression))
       }
+      if (params.n > 1) {
+        formData.append('n', String(params.n))
+      }
 
+      const imageBlobs: Blob[] = []
       for (let i = 0; i < inputImageDataUrls.length; i++) {
         const dataUrl = inputImageDataUrls[i]
-        const resp = await fetch(dataUrl)
-        const blob = await resp.blob()
+        const blob = opts.maskDataUrl && i === 0
+          ? await imageDataUrlToPngBlob(dataUrl)
+          : await dataUrlToBlob(dataUrl)
+        imageBlobs.push(blob)
+      }
+
+      const maskBlob = opts.maskDataUrl ? await maskDataUrlToPngBlob(opts.maskDataUrl) : null
+      if (opts.maskDataUrl) {
+        assertMaskEditFileSize('遮罩主图文件', imageBlobs[0]?.size ?? 0)
+        assertMaskEditFileSize('遮罩文件', maskBlob?.size ?? 0)
+      }
+      assertImageInputPayloadSize(
+        imageBlobs.reduce((sum, blob) => sum + blob.size, 0) + (maskBlob?.size ?? 0),
+      )
+
+      for (let i = 0; i < imageBlobs.length; i++) {
+        const blob = imageBlobs[i]
         const ext = blob.type.split('/')[1] || 'png'
         formData.append('image[]', blob, `input-${i + 1}.${ext}`)
+      }
+
+      if (maskBlob) {
+        formData.append('mask', maskBlob, 'mask.png')
       }
 
       response = await fetch(buildApiUrl(settings.baseUrl, 'images/edits', proxyConfig), {
@@ -335,7 +409,6 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
 
     const actualParams = mergeActualParams(
       pickActualParams(payload),
-      settings.codexCli ? { quality: 'auto' } : {},
     )
     return {
       images,
@@ -391,10 +464,19 @@ async function callResponsesImageApiSingle(opts: CallApiOptions): Promise<CallAp
   const timeoutId = setTimeout(() => controller.abort(), settings.timeout * 1000)
 
   try {
+    if (opts.maskDataUrl) {
+      assertMaskEditFileSize('遮罩主图文件', getDataUrlDecodedByteSize(inputImageDataUrls[0] ?? ''))
+      assertMaskEditFileSize('遮罩文件', getDataUrlDecodedByteSize(opts.maskDataUrl))
+    }
+    assertImageInputPayloadSize(
+      inputImageDataUrls.reduce((sum, dataUrl) => sum + getDataUrlEncodedByteSize(dataUrl), 0) +
+        (opts.maskDataUrl ? getDataUrlEncodedByteSize(opts.maskDataUrl) : 0),
+    )
+
     const body = {
       model: settings.model,
       input: createResponsesInput(prompt, inputImageDataUrls),
-      tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, settings)],
+      tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, settings, opts.maskDataUrl)],
       tool_choice: 'required',
     }
 
@@ -417,13 +499,12 @@ async function callResponsesImageApiSingle(opts: CallApiOptions): Promise<CallAp
     const imageResults = parseResponsesImageResults(payload, mime)
     const actualParams = mergeActualParams(
       imageResults[0]?.actualParams ?? {},
-      settings.codexCli ? { quality: 'auto' } : {},
     )
     return {
       images: imageResults.map((result) => result.image),
       actualParams,
       actualParamsList: imageResults.map((result) =>
-        mergeActualParams(result.actualParams ?? {}, settings.codexCli ? { quality: 'auto' } : {}),
+        mergeActualParams(result.actualParams ?? {}),
       ),
       revisedPrompts: imageResults.map((result) => result.revisedPrompt),
     }
