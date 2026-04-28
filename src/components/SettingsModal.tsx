@@ -227,7 +227,7 @@ export default function SettingsModal() {
                   className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
                 <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
-                  选择 WebDAV 后，设置和图片快照会按远端地址同步；本地仍保留一份缓存。
+                  选择 WebDAV 后，设置和图片快照会按远端地址同步；本地仍保留一份缓存。页面回到前台、重新联网，以及停留期间会自动检测并补同步。
                 </div>
               </label>
 
@@ -319,6 +319,9 @@ export default function SettingsModal() {
                     />
                     启动时自动同步
                   </label>
+                  <div className="-mt-2 text-[10px] text-gray-400 dark:text-gray-500">
+                    开启后，首次打开页面会自动同步；后续本地生成、删除、导入等变更会延迟自动推送，前台页面也会定时检查远端更新。
+                  </div>
 
                   <div className="flex gap-2">
                     <button

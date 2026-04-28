@@ -13,7 +13,7 @@ import SettingsModal from './components/SettingsModal'
 import ConfirmDialog from './components/ConfirmDialog'
 import Toast from './components/Toast'
 import ImageContextMenu from './components/ImageContextMenu'
-import { syncWebDavOnLaunch } from './lib/webdavSync'
+import { isApplyingWebDavSnapshot, scheduleWebDavSync, setupWebDavAutoSync, syncWebDavOnLaunch } from './lib/webdavSync'
 
 export default function App() {
   const setSettings = useStore((s) => s.setSettings)
@@ -54,10 +54,50 @@ export default function App() {
       window.history.replaceState(null, '', nextUrl)
     }
 
+    let disposed = false
+    let unsubscribeStore: (() => void) | null = null
+    let cleanupAutoSync: (() => void) | null = null
+
     void (async () => {
       await initStore()
       await syncWebDavOnLaunch()
+
+      if (disposed) return
+
+      cleanupAutoSync = setupWebDavAutoSync()
+      unsubscribeStore = useStore.subscribe((state, prevState) => {
+        if (isApplyingWebDavSnapshot()) return
+        if (state.settings.storageMode !== 'webdav') return
+        if (!state.settings.webdav.url.trim()) return
+
+        const tasksChanged = state.tasks !== prevState.tasks
+        const settingsChanged =
+          state.settings !== prevState.settings &&
+          (
+            state.settings.baseUrl !== prevState.settings.baseUrl ||
+            state.settings.apiKey !== prevState.settings.apiKey ||
+            state.settings.model !== prevState.settings.model ||
+            state.settings.timeout !== prevState.settings.timeout ||
+            state.settings.apiMode !== prevState.settings.apiMode ||
+            state.settings.codexCli !== prevState.settings.codexCli ||
+            state.settings.storageMode !== prevState.settings.storageMode ||
+            state.settings.webdav.url !== prevState.settings.webdav.url ||
+            state.settings.webdav.username !== prevState.settings.webdav.username ||
+            state.settings.webdav.password !== prevState.settings.webdav.password ||
+            state.settings.webdav.syncOnStartup !== prevState.settings.webdav.syncOnStartup
+          )
+
+        if (tasksChanged || settingsChanged) {
+          scheduleWebDavSync()
+        }
+      })
     })()
+
+    return () => {
+      disposed = true
+      unsubscribeStore?.()
+      cleanupAutoSync?.()
+    }
   }, [setSettings])
 
   useEffect(() => {

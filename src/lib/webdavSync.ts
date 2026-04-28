@@ -12,10 +12,83 @@ import {
 } from './snapshot'
 
 let syncInFlight: Promise<void> | null = null
+let backgroundSyncTimer: ReturnType<typeof window.setTimeout> | null = null
+let applyingSnapshotDepth = 0
+let lastBackgroundSyncStartedAt = 0
+let lastBackgroundErrorMessage = ''
+let lastBackgroundErrorAt = 0
 const MANIFEST_FILE_NAME = 'manifest.json'
 const TEST_FILE_PREFIX = '.gpt-image-playground-test-'
+const BACKGROUND_SYNC_DEBOUNCE_MS = 2500
+const BACKGROUND_SYNC_INTERVAL_MS = 30000
+const BACKGROUND_SYNC_MIN_GAP_MS = 8000
 
 export async function syncWithWebDav() {
+  return runWebDavSync()
+}
+
+export async function syncWithWebDavSilently() {
+  return runWebDavSync({ silentSuccess: true, silentInfo: true })
+}
+
+export function scheduleWebDavSync(delayMs = BACKGROUND_SYNC_DEBOUNCE_MS) {
+  if (typeof window === 'undefined') return
+  clearBackgroundSyncTimer()
+  backgroundSyncTimer = window.setTimeout(() => {
+    backgroundSyncTimer = null
+    void triggerBackgroundSync()
+  }, Math.max(0, delayMs))
+}
+
+export function setupWebDavAutoSync() {
+  if (typeof window === 'undefined') {
+    return () => {}
+  }
+
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+      void triggerBackgroundSync(true)
+    }
+  }
+
+  const handleFocus = () => {
+    void triggerBackgroundSync(true)
+  }
+
+  const handleOnline = () => {
+    void triggerBackgroundSync(true)
+  }
+
+  const handlePageShow = () => {
+    void triggerBackgroundSync(true)
+  }
+
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  window.addEventListener('focus', handleFocus)
+  window.addEventListener('online', handleOnline)
+  window.addEventListener('pageshow', handlePageShow)
+
+  const intervalId = window.setInterval(() => {
+    if (document.visibilityState !== 'visible') return
+    if (typeof navigator !== 'undefined' && 'onLine' in navigator && !navigator.onLine) return
+    void triggerBackgroundSync()
+  }, BACKGROUND_SYNC_INTERVAL_MS)
+
+  return () => {
+    clearBackgroundSyncTimer()
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    window.removeEventListener('focus', handleFocus)
+    window.removeEventListener('online', handleOnline)
+    window.removeEventListener('pageshow', handlePageShow)
+    window.clearInterval(intervalId)
+  }
+}
+
+export function isApplyingWebDavSnapshot() {
+  return applyingSnapshotDepth > 0
+}
+
+async function runWebDavSync(options: { silentSuccess?: boolean; silentInfo?: boolean } = {}) {
   if (syncInFlight) return syncInFlight
 
   syncInFlight = (async () => {
@@ -23,7 +96,9 @@ export async function syncWithWebDav() {
     const webdav = settings.webdav
 
     if (settings.storageMode !== 'webdav') {
-      showToast('当前是本地存储模式，无需同步', 'info')
+      if (!options.silentInfo) {
+        showToast('当前是本地存储模式，无需同步', 'info')
+      }
       return
     }
 
@@ -39,15 +114,22 @@ export async function syncWithWebDav() {
     const files = snapshotToDirectoryFiles(mergedSnapshot)
 
     await uploadSnapshotDirectory(rootUrl, webdav.username, webdav.password, manifest, files, remoteSnapshot)
-    await replaceLocalData(mergedSnapshot)
-    replaceSyncTombstones({
-      deletedTaskIds: mergedSnapshot.deletedTaskIds,
-      deletedImageIds: mergedSnapshot.deletedImageIds,
-    })
-    primeImageCache(mergedSnapshot.images)
-    setSettings(mergedSnapshot.settings)
-    setTasks(sortTasksForDisplay(mergedSnapshot.tasks))
-    showToast(remoteSnapshot ? '已与 WebDAV 目录同步' : '已写入 WebDAV 目录', 'success')
+    applyingSnapshotDepth++
+    try {
+      await replaceLocalData(mergedSnapshot)
+      replaceSyncTombstones({
+        deletedTaskIds: mergedSnapshot.deletedTaskIds,
+        deletedImageIds: mergedSnapshot.deletedImageIds,
+      })
+      primeImageCache(mergedSnapshot.images)
+      setSettings(mergedSnapshot.settings)
+      setTasks(sortTasksForDisplay(mergedSnapshot.tasks))
+    } finally {
+      applyingSnapshotDepth--
+    }
+    if (!options.silentSuccess) {
+      showToast(remoteSnapshot ? '已与 WebDAV 目录同步' : '已写入 WebDAV 目录', 'success')
+    }
   })()
 
   try {
@@ -62,7 +144,7 @@ export async function syncWebDavOnLaunch() {
   if (settings.storageMode !== 'webdav' || !settings.webdav.syncOnStartup) return
 
   try {
-    await syncWithWebDav()
+    await syncWithWebDavSilently()
   } catch (err) {
     showToast(formatWebDavError('WebDAV 启动同步失败', err), 'error')
   }
@@ -118,6 +200,38 @@ function buildAuthHeaders(username: string, password: string) {
     headers.Authorization = `Basic ${btoa(`${username}:${password}`)}`
   }
   return headers
+}
+
+function clearBackgroundSyncTimer() {
+  if (backgroundSyncTimer != null) {
+    window.clearTimeout(backgroundSyncTimer)
+    backgroundSyncTimer = null
+  }
+}
+
+async function triggerBackgroundSync(force = false) {
+  const { settings } = useStore.getState()
+  if (settings.storageMode !== 'webdav') return
+  if (!settings.webdav.url.trim()) return
+  if (typeof navigator !== 'undefined' && 'onLine' in navigator && !navigator.onLine) return
+
+  const now = Date.now()
+  if (!force && now - lastBackgroundSyncStartedAt < BACKGROUND_SYNC_MIN_GAP_MS) {
+    return
+  }
+
+  lastBackgroundSyncStartedAt = now
+  try {
+    await syncWithWebDavSilently()
+  } catch (err) {
+    const message = formatWebDavError('WebDAV 自动同步失败', err)
+    const now = Date.now()
+    if (message !== lastBackgroundErrorMessage || now - lastBackgroundErrorAt > BACKGROUND_SYNC_INTERVAL_MS) {
+      lastBackgroundErrorMessage = message
+      lastBackgroundErrorAt = now
+      useStore.getState().showToast(message, 'error')
+    }
+  }
 }
 
 async function readRemoteSnapshot(rootUrl: string, username: string, password: string) {
