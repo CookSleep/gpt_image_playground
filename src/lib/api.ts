@@ -338,7 +338,7 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
         formData.append('mask', maskBlob, 'mask.png')
       }
 
-      response = await fetch(buildApiUrl(settings.baseUrl, 'images/edits', proxyConfig), {
+      response = await fetch(buildApiUrl(settings.baseUrl, 'images/edits', proxyConfig, settings.apiProxy), {
         method: 'POST',
         headers: requestHeaders,
         cache: 'no-store',
@@ -365,7 +365,7 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
         body.n = params.n
       }
 
-      response = await fetch(buildApiUrl(settings.baseUrl, 'images/generations', proxyConfig), {
+      response = await fetch(buildApiUrl(settings.baseUrl, 'images/generations', proxyConfig, settings.apiProxy), {
         method: 'POST',
         headers: {
           ...requestHeaders,
@@ -480,7 +480,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions): Promise<CallAp
       tool_choice: 'required',
     }
 
-    const response = await fetch(buildApiUrl(settings.baseUrl, 'responses', proxyConfig), {
+    const response = await fetch(buildApiUrl(settings.baseUrl, 'responses', proxyConfig, settings.apiProxy), {
       method: 'POST',
       headers: {
         ...requestHeaders,

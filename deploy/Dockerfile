@@ -16,6 +16,7 @@ FROM nginx:alpine
 
 ENV HOST=0.0.0.0
 ENV PORT=80
+ENV API_URL=https://api.openai.com
 
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY deploy/nginx.conf /etc/nginx/templates/default.conf.template
