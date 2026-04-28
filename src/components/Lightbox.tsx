@@ -1,7 +1,9 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { Suspense, lazy, useEffect, useState, useRef, useCallback } from 'react'
 import { useStore, getCachedImage, ensureImageCached } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
+
+const ReferenceImageEditorModal = lazy(() => import('./ReferenceImageEditorModal'))
 
 const MIN_SCALE = 1
 const MAX_SCALE = 10
@@ -10,14 +12,22 @@ function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v))
 }
 
+function isLightboxControl(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest('[data-lightbox-control]'))
+}
+
 export default function Lightbox() {
   const lightboxImageId = useStore((s) => s.lightboxImageId)
   const lightboxImageList = useStore((s) => s.lightboxImageList)
+  const lightboxStartEditor = useStore((s) => s.lightboxStartEditor)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
+  const setLightboxStartEditor = useStore((s) => s.setLightboxStartEditor)
+  const inputImages = useStore((s) => s.inputImages)
+  const [src, setSrc] = useState('')
+  const [showEditor, setShowEditor] = useState(false)
   const maskDraft = useStore((s) => s.maskDraft)
   const tasks = useStore((s) => s.tasks)
 
-  const [src, setSrc] = useState('')
   const [maskImageSrc, setMaskImageSrc] = useState('')
   const [maskPreviewSrc, setMaskPreviewSrc] = useState('')
 
@@ -28,6 +38,8 @@ export default function Lightbox() {
   useEffect(() => {
     if (!lightboxImageId) {
       setSrc('')
+      setShowEditor(false)
+      setLightboxStartEditor(false)
       return
     }
     const cached = getCachedImage(lightboxImageId)
@@ -38,7 +50,15 @@ export default function Lightbox() {
         if (url) setSrc(url)
       })
     }
-  }, [lightboxImageId])
+  }, [lightboxImageId, setLightboxStartEditor])
+
+  const isReferenceImage = Boolean(lightboxImageId && inputImages.some((image) => image.id === lightboxImageId))
+
+  useEffect(() => {
+    if (!lightboxImageId || !src || !lightboxStartEditor) return
+    setShowEditor(true)
+    setLightboxStartEditor(false)
+  }, [lightboxImageId, lightboxStartEditor, setLightboxStartEditor, src])
 
   // 遮罩图加载
   useEffect(() => {
@@ -116,16 +136,36 @@ export default function Lightbox() {
   if (!lightboxImageId || !src) return null
 
   return (
-    <LightboxInner
-      src={src}
-      maskPreviewSrc={maskPreviewSrc}
-      onClose={close}
-      showNav={showNav}
-      currentIndex={currentIndex}
-      total={total}
-      onPrev={goPrev}
-      onNext={goNext}
-    />
+    <>
+      <LightboxInner
+        src={src}
+        maskPreviewSrc={maskPreviewSrc}
+        onClose={close}
+        showNav={showNav}
+        currentIndex={currentIndex}
+        total={total}
+        onPrev={goPrev}
+        onNext={goNext}
+        isReferenceImage={isReferenceImage}
+        onEdit={() => setShowEditor(true)}
+      />
+      {showEditor && lightboxImageId && src ? (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/55 backdrop-blur-md text-sm text-white/70">
+              正在加载编辑器...
+            </div>
+          }
+        >
+          <ReferenceImageEditorModal
+            imageId={lightboxImageId}
+            src={src}
+            saveMode={isReferenceImage ? 'replace-input' : 'append-input'}
+            onClose={() => setShowEditor(false)}
+          />
+        </Suspense>
+      ) : null}
+    </>
   )
 }
 
@@ -138,10 +178,12 @@ interface LightboxInnerProps {
   total: number
   onPrev: () => void
   onNext: () => void
+  isReferenceImage: boolean
+  onEdit: () => void
 }
 
 /** 内部组件：保证挂载时 DOM 已经存在，所有 ref / effect 都可靠 */
-function LightboxInner({ src, maskPreviewSrc, onClose, showNav, currentIndex, total, onPrev, onNext }: LightboxInnerProps) {
+function LightboxInner({ src, maskPreviewSrc, onClose, showNav, currentIndex, total, onPrev, onNext, isReferenceImage, onEdit }: LightboxInnerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   // 用 ref 追踪最新变换，避免闭包过期
@@ -295,6 +337,7 @@ function LightboxInner({ src, maskPreviewSrc, onClose, showNav, currentIndex, to
 
   // ====== 单击关闭（仅未缩放且非拖拽） ======
   const onClick = useCallback((e: React.MouseEvent) => {
+    if (isLightboxControl(e.target)) return
     if (suppressNextClickRef.current) {
       suppressNextClickRef.current = false
       e.stopPropagation()
@@ -324,6 +367,12 @@ function LightboxInner({ src, maskPreviewSrc, onClose, showNav, currentIndex, to
     if (!el) return
 
     const onTouchStart = (e: TouchEvent) => {
+      if (isLightboxControl(e.target)) {
+        tapRef.current = { time: 0, x: 0, y: 0 }
+        touchStartedOnImageRef.current = false
+        return
+      }
+
       if (e.touches.length === 2) {
         e.preventDefault()
         hadMultiTouchRef.current = true
@@ -398,6 +447,11 @@ function LightboxInner({ src, maskPreviewSrc, onClose, showNav, currentIndex, to
     }
 
     const onTouchEnd = (e: TouchEvent) => {
+      if (isLightboxControl(e.target)) {
+        tapRef.current = { time: 0, x: 0, y: 0 }
+        return
+      }
+
       if (e.touches.length < 2) pinchRef.current.active = false
       if (e.touches.length === 0) {
         dragRef.current.active = false
@@ -450,6 +504,19 @@ function LightboxInner({ src, maskPreviewSrc, onClose, showNav, currentIndex, to
       onDoubleClick={onDoubleClick}
     >
       <div className="absolute inset-0 bg-black/70 backdrop-blur-md animate-fade-in" />
+      <button
+        data-lightbox-control
+        className="absolute right-5 top-5 z-20 rounded-full bg-black/45 px-4 py-2 text-sm text-white backdrop-blur-sm transition hover:bg-black/65"
+        onPointerDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation()
+          onEdit()
+        }}
+      >
+        {isReferenceImage ? '高级编辑' : '高级编辑并加入参考图'}
+      </button>
       <div className="relative animate-zoom-in">
         <div
           className="relative flex items-center justify-center"
@@ -479,7 +546,11 @@ function LightboxInner({ src, maskPreviewSrc, onClose, showNav, currentIndex, to
       {showNav && !isZoomed && (
         <>
           <button
+            data-lightbox-control
             className={`${navBtnClass} left-3 sm:left-5`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); goPrev() }}
           >
             <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -487,7 +558,11 @@ function LightboxInner({ src, maskPreviewSrc, onClose, showNav, currentIndex, to
             </svg>
           </button>
           <button
+            data-lightbox-control
             className={`${navBtnClass} right-3 sm:right-5`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); goNext() }}
           >
             <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

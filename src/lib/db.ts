@@ -116,7 +116,8 @@ export async function storeImage(dataUrl: string, source: NonNullable<StoredImag
   const id = await hashDataUrl(dataUrl)
   const existing = await getImage(id)
   if (!existing) {
-    await putImage({ id, dataUrl, createdAt: Date.now(), source })
+    const now = Date.now()
+    await putImage({ id, dataUrl, createdAt: now, updatedAt: now, source })
   }
   return id
 }

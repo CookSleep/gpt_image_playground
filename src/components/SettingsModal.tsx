@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { normalizeBaseUrl } from '../lib/api'
-import { useStore, exportData, importData, clearAllData } from '../store'
+import { useStore, exportData, importData, clearAllData, resetLocalDataPreservingSettings } from '../store'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, type AppSettings } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
+import {
+  clearWebDavDirectory,
+  overwriteLocalWithWebDav,
+  overwriteWebDavWithLocal,
+  testWebDavDirectory,
+} from '../lib/webdavSync'
 import Select from './Select'
 
 export default function SettingsModal() {
@@ -28,14 +34,20 @@ export default function SettingsModal() {
 
   const commitSettings = (nextDraft: AppSettings) => {
     const apiMode = nextDraft.apiMode === 'responses' ? 'responses' : DEFAULT_SETTINGS.apiMode
+    const storageMode = nextDraft.storageMode === 'webdav' ? 'webdav' : DEFAULT_SETTINGS.storageMode
     const defaultModel = getDefaultModelForMode(apiMode)
     const normalizedDraft = {
       ...nextDraft,
       apiMode,
+      storageMode,
       baseUrl: normalizeBaseUrl(nextDraft.baseUrl.trim() || DEFAULT_SETTINGS.baseUrl),
       apiKey: nextDraft.apiKey,
       model: nextDraft.model.trim() || defaultModel,
       timeout: Number(nextDraft.timeout) || DEFAULT_SETTINGS.timeout,
+      webdav: {
+        ...DEFAULT_SETTINGS.webdav,
+        ...nextDraft.webdav,
+      },
     }
     setDraft(normalizedDraft)
     setSettings(normalizedDraft)
@@ -69,6 +81,79 @@ export default function SettingsModal() {
     const file = e.target.files?.[0]
     if (file) importData(file)
     e.target.value = ''
+  }
+
+  const handleTestDirectory = async () => {
+    try {
+      await testWebDavDirectory()
+    } catch (err) {
+      useStore.getState().showToast(
+        `WebDAV 目录测试失败：${err instanceof Error ? err.message : String(err)}`,
+        'error',
+      )
+    }
+  }
+
+  const handleOverwriteLocal = () => {
+    setConfirmDialog({
+      title: '远端覆盖本地',
+      message: '确定要使用 WebDAV 远端数据覆盖当前浏览器的本地数据吗？\n\n当前浏览器里的任务、图片、设置和删除记录都会被远端快照替换。这个操作不会修改远端。',
+      confirmText: '确认覆盖',
+      action: async () => {
+        try {
+          await overwriteLocalWithWebDav()
+          useStore.getState().showToast('已用 WebDAV 远端数据覆盖本地', 'success')
+        } catch (err) {
+          useStore.getState().showToast(
+            `远端覆盖本地失败：${err instanceof Error ? err.message : String(err)}`,
+            'error',
+          )
+        }
+      },
+      messageAlign: 'left',
+    })
+  }
+
+  const handleOverwriteRemote = () => {
+    setConfirmDialog({
+      title: '本地覆盖远端',
+      message: '确定要使用当前浏览器的本地数据覆盖 WebDAV 远端数据吗？\n\n远端 manifest、sync-state 和快照引用的图片会被当前浏览器的数据替换。其他设备下次同步后会以这份远端数据为准。',
+      confirmText: '确认覆盖',
+      action: async () => {
+        try {
+          await overwriteWebDavWithLocal()
+          useStore.getState().showToast('已用本地数据覆盖 WebDAV 远端', 'success')
+        } catch (err) {
+          useStore.getState().showToast(
+            `本地覆盖远端失败：${err instanceof Error ? err.message : String(err)}`,
+            'error',
+          )
+        }
+      },
+      messageAlign: 'left',
+    })
+  }
+
+  const handleReinitializeLocalAndWebDav = () => {
+    setConfirmDialog({
+      title: '初始化 IndexedDB 和 WebDAV',
+      message: '确定要初始化当前浏览器的 IndexedDB 缓存，并清空当前 WebDAV 目录中的 manifest、sync-state 和图片文件吗？\n\n会保留当前填写的 API 与 WebDAV 配置，但任务、图片、删除记录和同步状态都会被清空。初始化完成后，程序会立即写回一份新的空快照，用来重建远端同步状态。此操作不可恢复。',
+      confirmText: '确认初始化',
+      action: async () => {
+        try {
+          await clearWebDavDirectory()
+          await resetLocalDataPreservingSettings({ silent: true })
+          await overwriteWebDavWithLocal()
+          useStore.getState().showToast('IndexedDB 和 WebDAV 已初始化并重建同步状态', 'success')
+        } catch (err) {
+          useStore.getState().showToast(
+            `初始化 IndexedDB 和 WebDAV 失败：${err instanceof Error ? err.message : String(err)}`,
+            'error',
+          )
+        }
+      },
+      messageAlign: 'left',
+    })
   }
 
   return (
@@ -182,6 +267,156 @@ export default function SettingsModal() {
               </div>
 
               <label className="block">
+                <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">存储模式</span>
+                <Select
+                  value={draft.storageMode ?? DEFAULT_SETTINGS.storageMode}
+                  onChange={(value) => {
+                    const storageMode: AppSettings['storageMode'] = value === 'webdav' ? 'webdav' : 'local'
+                    const nextDraft: AppSettings = { ...draft, storageMode }
+                    setDraft(nextDraft)
+                    commitSettings(nextDraft)
+                  }}
+                  options={[
+                    { label: '本地存储（IndexedDB）', value: 'local' },
+                    { label: '远端同步（WebDAV）', value: 'webdav' },
+                  ]}
+                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                />
+                <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                  选择 WebDAV 后，设置和图片快照会按远端地址同步；本地仍保留一份缓存。页面回到前台、重新联网，以及停留期间会自动检测并补同步。
+                </div>
+              </label>
+
+              {draft.storageMode === 'webdav' && (
+                <div className="space-y-4 rounded-2xl border border-dashed border-blue-200/70 bg-blue-50/40 p-4 dark:border-blue-500/20 dark:bg-blue-500/10">
+                  <label className="block">
+                    <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">WebDAV 快照地址</span>
+                    <input
+                      value={draft.webdav.url}
+                      onChange={(e) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          webdav: { ...prev.webdav, url: e.target.value },
+                        }))
+                      }
+                      onBlur={(e) =>
+                        commitSettings({
+                          ...draft,
+                          webdav: { ...draft.webdav, url: e.target.value },
+                        })
+                      }
+                      type="text"
+                      placeholder="https://dav.example.com/path/gptimage/"
+                      className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                    />
+                    <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                      这里填写 WebDAV 目录地址，程序会在其下读写 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">manifest.json</code>、<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">sync-state.json</code> 和图片文件。
+                    </div>
+                  </label>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="block">
+                      <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">用户名</span>
+                      <input
+                        value={draft.webdav.username}
+                        onChange={(e) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            webdav: { ...prev.webdav, username: e.target.value },
+                          }))
+                        }
+                        onBlur={(e) =>
+                          commitSettings({
+                            ...draft,
+                            webdav: { ...draft.webdav, username: e.target.value },
+                          })
+                        }
+                        type="text"
+                        placeholder="username"
+                        className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">密码</span>
+                      <input
+                        value={draft.webdav.password}
+                        onChange={(e) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            webdav: { ...prev.webdav, password: e.target.value },
+                          }))
+                        }
+                        onBlur={(e) =>
+                          commitSettings({
+                            ...draft,
+                            webdav: { ...draft.webdav, password: e.target.value },
+                          })
+                        }
+                        type="password"
+                        placeholder="password"
+                        className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={draft.webdav.syncOnStartup}
+                      onChange={(e) => {
+                        const nextDraft = {
+                          ...draft,
+                          webdav: { ...draft.webdav, syncOnStartup: e.target.checked },
+                        }
+                        setDraft(nextDraft)
+                        commitSettings(nextDraft)
+                      }}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500 dark:border-white/[0.12]"
+                    />
+                    启动时自动同步
+                  </label>
+                  <div className="-mt-2 text-[10px] text-gray-400 dark:text-gray-500">
+                    开启后，首次打开页面会自动同步；本地生成、删除、导入等变更约 2.5 秒后自动推送；前台页面每 30 秒检查一次远端更新。若远端目录被手动清空，程序不会自动回灌，需手动确认重建。
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <button
+                      type="button"
+                      onClick={handleTestDirectory}
+                      className="rounded-xl bg-gray-100/80 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-200 dark:bg-white/[0.06] dark:text-gray-200 dark:hover:bg-white/[0.1]"
+                      disabled={!draft.webdav.url.trim()}
+                    >
+                      测试目录
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOverwriteLocal}
+                      className="rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-600 disabled:opacity-50"
+                      disabled={!draft.webdav.url.trim()}
+                    >
+                      远端覆盖本地
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOverwriteRemote}
+                      className="rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-amber-600 disabled:opacity-50"
+                      disabled={!draft.webdav.url.trim()}
+                    >
+                      本地覆盖远端
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleReinitializeLocalAndWebDav}
+                    className="w-full rounded-xl border border-red-300/80 bg-red-100/70 px-4 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-200/80 disabled:opacity-50 dark:border-red-500/30 dark:bg-red-500/15 dark:text-red-300 dark:hover:bg-red-500/25"
+                    disabled={!draft.webdav.url.trim()}
+                  >
+                    初始化 IndexedDB 和 WebDAV
+                  </button>
+                </div>
+              )}
+
+              <label className="block">
                 <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">API 接口</span>
                 <Select
                   value={draft.apiMode ?? DEFAULT_SETTINGS.apiMode}
@@ -288,6 +523,31 @@ export default function SettingsModal() {
                 className="w-full rounded-xl border border-red-200/80 bg-red-50/50 px-4 py-2.5 text-sm text-red-500 transition hover:bg-red-100/80 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
               >
                 清空所有数据
+              </button>
+              <button
+                onClick={() =>
+                  setConfirmDialog({
+                    title: '清空所有数据并清空 WebDAV',
+                    message: '确定要清空当前设备的所有任务记录和图片数据，并删除远端 WebDAV 目录中的 manifest、sync-state 和图片文件吗？\n\n此操作不可恢复，且会影响连接到同一 WebDAV 目录的其他设备。',
+                    confirmText: '确认清空',
+                    action: async () => {
+                      try {
+                        await clearWebDavDirectory()
+                        await clearAllData({ silent: true })
+                        useStore.getState().showToast('本地与 WebDAV 数据已清空', 'success')
+                      } catch (err) {
+                        useStore.getState().showToast(
+                          `清空 WebDAV 失败：${err instanceof Error ? err.message : String(err)}`,
+                          'error',
+                        )
+                      }
+                    },
+                    messageAlign: 'left',
+                  })
+                }
+                className="w-full rounded-xl border border-red-300/80 bg-red-100/70 px-4 py-2.5 text-sm text-red-600 transition hover:bg-red-200/80 dark:border-red-500/30 dark:bg-red-500/15 dark:text-red-300 dark:hover:bg-red-500/25"
+              >
+                清空所有数据并清空 WebDAV
               </button>
             </div>
           </section>

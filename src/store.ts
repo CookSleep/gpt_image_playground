@@ -6,7 +6,7 @@ import type {
   InputImage,
   MaskDraft,
   TaskRecord,
-  ExportData,
+  WebDavSettings,
 } from './types'
 import { DEFAULT_SETTINGS, DEFAULT_PARAMS } from './types'
 import {
@@ -16,7 +16,6 @@ import {
   clearTasks as dbClearTasks,
   getImage,
   getAllImages,
-  putImage,
   deleteImage,
   clearImages,
   storeImage,
@@ -26,7 +25,17 @@ import { callImageApi } from './lib/api'
 import { validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
 import { normalizeImageSize } from './lib/size'
-import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
+import {
+  buildLocalSnapshot,
+  clearSyncTombstones,
+  markImageDeleted,
+  markTaskDeleted,
+  readSnapshotFromBlob,
+  replaceLocalData,
+  replaceSyncTombstones,
+  snapshotToZipBlob,
+  sortTasksForDisplay,
+} from './lib/snapshot'
 
 // ===== Image cache =====
 // 内存缓存，id → dataUrl，避免每次从 IndexedDB 读取
@@ -47,12 +56,18 @@ export async function ensureImageCached(id: string): Promise<string | undefined>
   return undefined
 }
 
+export function primeImageCache(images: Array<{ id: string; dataUrl: string }>) {
+  for (const img of images) {
+    imageCache.set(img.id, img.dataUrl)
+  }
+}
+
 // ===== Store 类型 =====
 
 interface AppState {
   // 设置
   settings: AppSettings
-  setSettings: (s: Partial<AppSettings>) => void
+  setSettings: (s: Partial<AppSettings> & { webdav?: Partial<WebDavSettings> }) => void
   dismissedCodexCliPrompts: string[]
   dismissCodexCliPrompt: (key: string) => void
 
@@ -64,6 +79,7 @@ interface AppState {
   removeInputImage: (idx: number) => void
   clearInputImages: () => void
   setInputImages: (imgs: InputImage[]) => void
+  replaceInputImage: (currentId: string, nextImage: InputImage) => void
   maskDraft: MaskDraft | null
   setMaskDraft: (draft: MaskDraft | null) => void
   clearMaskDraft: () => void
@@ -97,7 +113,9 @@ interface AppState {
   setDetailTaskId: (id: string | null) => void
   lightboxImageId: string | null
   lightboxImageList: string[]
+  lightboxStartEditor: boolean
   setLightboxImageId: (id: string | null, list?: string[]) => void
+  setLightboxStartEditor: (v: boolean) => void
   showSettings: boolean
   setShowSettings: (v: boolean) => void
 
@@ -127,11 +145,20 @@ export const useStore = create<AppState>()(
         settings: {
           ...st.settings,
           ...s,
+          webdav: {
+            ...st.settings.webdav,
+            ...s.webdav,
+          },
           apiMode:
             s.apiMode === 'images' || s.apiMode === 'responses'
               ? s.apiMode
               : st.settings.apiMode ?? DEFAULT_SETTINGS.apiMode,
           codexCli: s.codexCli ?? st.settings.codexCli ?? DEFAULT_SETTINGS.codexCli,
+          storageMode:
+            s.storageMode === 'local' || s.storageMode === 'webdav'
+              ? s.storageMode
+              : st.settings.storageMode ?? DEFAULT_SETTINGS.storageMode,
+          updatedAt: Date.now(),
         },
       })),
       dismissedCodexCliPrompts: [],
@@ -170,6 +197,14 @@ export const useStore = create<AppState>()(
             Boolean(s.maskDraft) && !imgs.some((img) => img.id === s.maskDraft?.targetImageId)
           return {
             inputImages: imgs,
+            ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
+          }
+        }),
+      replaceInputImage: (currentId, nextImage) =>
+        set((s) => {
+          const shouldClearMask = s.maskDraft?.targetImageId === currentId
+          return {
+            inputImages: s.inputImages.map((img) => (img.id === currentId ? nextImage : img)),
             ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
           }
         }),
@@ -217,8 +252,10 @@ export const useStore = create<AppState>()(
       setDetailTaskId: (detailTaskId) => set({ detailTaskId }),
       lightboxImageId: null,
       lightboxImageList: [],
+      lightboxStartEditor: false,
       setLightboxImageId: (lightboxImageId, list) =>
         set({ lightboxImageId, lightboxImageList: list ?? (lightboxImageId ? [lightboxImageId] : []) }),
+      setLightboxStartEditor: (lightboxStartEditor) => set({ lightboxStartEditor }),
       showSettings: false,
       setShowSettings: (showSettings) => set({ showSettings }),
 
@@ -279,7 +316,7 @@ export function showCodexCliPrompt(force = false, reason = '接口返回的提�
 /** 初始化：从 IndexedDB 加载任务和图片缓存，清理孤立图片 */
 export async function initStore() {
   const tasks = await getAllTasks()
-  useStore.getState().setTasks(tasks)
+  useStore.getState().setTasks(sortTasksForDisplay(tasks))
 
   // 收集所有任务引用的图片 id
   const referencedIds = new Set<string>()
@@ -367,6 +404,7 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     id: taskId,
     prompt: prompt.trim(),
     params: normalizedParams,
+    updatedAt: Date.now(),
     inputImageIds: orderedInputImages.map((i) => i.id),
     maskTargetImageId,
     maskImageId,
@@ -482,7 +520,7 @@ async function executeTask(taskId: string) {
 export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
   const { tasks, setTasks } = useStore.getState()
   const updated = tasks.map((t) =>
-    t.id === taskId ? { ...t, ...patch } : t,
+    t.id === taskId ? { ...t, ...patch, updatedAt: Date.now() } : t,
   )
   setTasks(updated)
   const task = updated.find((t) => t.id === taskId)
@@ -562,6 +600,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
   setTasks(remaining)
   for (const id of taskIds) {
     await dbDeleteTask(id)
+    markTaskDeleted(id)
   }
 
   // 找出其他任务仍引用的图片
@@ -578,6 +617,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
     if (!stillUsed.has(imgId)) {
       await deleteImage(imgId)
       imageCache.delete(imgId)
+      markImageDeleted(imgId)
     }
   }
 
@@ -605,6 +645,7 @@ export async function removeTask(task: TaskRecord) {
   const remaining = tasks.filter((t) => t.id !== task.id)
   setTasks(remaining)
   await dbDeleteTask(task.id)
+  markTaskDeleted(task.id)
 
   // 找出其他任务仍引用的图片
   const stillUsed = new Set<string>()
@@ -620,6 +661,7 @@ export async function removeTask(task: TaskRecord) {
     if (!stillUsed.has(imgId)) {
       await deleteImage(imgId)
       imageCache.delete(imgId)
+      markImageDeleted(imgId)
     }
   }
 
@@ -627,9 +669,10 @@ export async function removeTask(task: TaskRecord) {
 }
 
 /** 清空所有数据（含配置重置） */
-export async function clearAllData() {
+export async function clearAllData(options: { silent?: boolean } = {}) {
   await dbClearTasks()
   await clearImages()
+  clearSyncTombstones()
   imageCache.clear()
   const { setTasks, clearInputImages, clearMaskDraft, setSettings, setParams, showToast } = useStore.getState()
   setTasks([])
@@ -638,75 +681,54 @@ export async function clearAllData() {
   clearMaskDraft()
   setSettings({ ...DEFAULT_SETTINGS })
   setParams({ ...DEFAULT_PARAMS })
-  showToast('所有数据已清空', 'success')
+  if (!options.silent) {
+    showToast('所有数据已清空', 'success')
+  }
+}
+
+/** 初始化本地缓存数据，但保留当前设置 */
+export async function resetLocalDataPreservingSettings(options: { silent?: boolean } = {}) {
+  await dbClearTasks()
+  await clearImages()
+  clearSyncTombstones()
+  imageCache.clear()
+  const {
+    settings,
+    setTasks,
+    clearInputImages,
+    setParams,
+    setPrompt,
+    clearSelection,
+    setDetailTaskId,
+    setLightboxImageId,
+    setLightboxStartEditor,
+    showToast,
+  } = useStore.getState()
+  setTasks([])
+  clearInputImages()
+  setPrompt('')
+  setParams({ ...DEFAULT_PARAMS })
+  clearSelection()
+  setDetailTaskId(null)
+  setLightboxImageId(null, [])
+  setLightboxStartEditor(false)
+  useStore.setState({
+    settings: {
+      ...settings,
+      updatedAt: Date.now(),
+    },
+  })
+  if (!options.silent) {
+    showToast('本地缓存已初始化', 'success')
+  }
 }
 
 /** 从 dataUrl 解析出 MIME 扩展名和二进制数据 */
-function dataUrlToBytes(dataUrl: string): { ext: string; bytes: Uint8Array } {
-  const match = dataUrl.match(/^data:image\/(\w+);base64,/)
-  const ext = match?.[1] ?? 'png'
-  const b64 = dataUrl.replace(/^data:[^;]+;base64,/, '')
-  const binary = atob(b64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  return { ext, bytes }
-}
-
-/** 将二进制数据还原为 dataUrl */
-function bytesToDataUrl(bytes: Uint8Array, filePath: string): string {
-  const ext = filePath.split('.').pop()?.toLowerCase() ?? 'png'
-  const mimeMap: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' }
-  const mime = mimeMap[ext] ?? 'image/png'
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-  return `data:${mime};base64,${btoa(binary)}`
-}
-
 /** 导出数据为 ZIP */
 export async function exportData() {
   try {
-    const tasks = await getAllTasks()
-    const images = await getAllImages()
-    const { settings } = useStore.getState()
-    const exportedAt = Date.now()
-    const imageCreatedAtFallback = new Map<string, number>()
-
-    for (const task of tasks) {
-      for (const id of [
-        ...(task.inputImageIds || []),
-        ...(task.maskImageId ? [task.maskImageId] : []),
-        ...(task.outputImages || []),
-      ]) {
-        const prev = imageCreatedAtFallback.get(id)
-        if (prev == null || task.createdAt < prev) {
-          imageCreatedAtFallback.set(id, task.createdAt)
-        }
-      }
-    }
-
-    const imageFiles: ExportData['imageFiles'] = {}
-    const zipFiles: Record<string, Uint8Array | [Uint8Array, { mtime: Date }]> = {}
-
-    for (const img of images) {
-      const { ext, bytes } = dataUrlToBytes(img.dataUrl)
-      const path = `images/${img.id}.${ext}`
-      const createdAt = img.createdAt ?? imageCreatedAtFallback.get(img.id) ?? exportedAt
-      imageFiles[img.id] = { path, createdAt, source: img.source }
-      zipFiles[path] = [bytes, { mtime: new Date(createdAt) }]
-    }
-
-    const manifest: ExportData = {
-      version: 2,
-      exportedAt: new Date(exportedAt).toISOString(),
-      settings,
-      tasks,
-      imageFiles,
-    }
-
-    zipFiles['manifest.json'] = [strToU8(JSON.stringify(manifest, null, 2)), { mtime: new Date(exportedAt) }]
-
-    const zipped = zipSync(zipFiles, { level: 6 })
-    const blob = new Blob([zipped.buffer as ArrayBuffer], { type: 'application/zip' })
+    const snapshot = await buildLocalSnapshot(useStore.getState().settings)
+    const blob = snapshotToZipBlob(snapshot)
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -727,37 +749,19 @@ export async function exportData() {
 /** 导入 ZIP 数据 */
 export async function importData(file: File) {
   try {
-    const buffer = await file.arrayBuffer()
-    const unzipped = unzipSync(new Uint8Array(buffer))
+    const snapshot = await readSnapshotFromBlob(file)
+    await replaceLocalData(snapshot)
+    replaceSyncTombstones({
+      deletedTaskIds: snapshot.deletedTaskIds,
+      deletedImageIds: snapshot.deletedImageIds,
+    })
 
-    const manifestBytes = unzipped['manifest.json']
-    if (!manifestBytes) throw new Error('ZIP 中缺少 manifest.json')
-
-    const data: ExportData = JSON.parse(strFromU8(manifestBytes))
-    if (!data.tasks || !data.imageFiles) throw new Error('无效的数据格式')
-
-    // 还原图片
-    for (const [id, info] of Object.entries(data.imageFiles)) {
-      const bytes = unzipped[info.path]
-      if (!bytes) continue
-      const dataUrl = bytesToDataUrl(bytes, info.path)
-      await putImage({ id, dataUrl, createdAt: info.createdAt, source: info.source })
-      imageCache.set(id, dataUrl)
-    }
-
-    for (const task of data.tasks) {
-      await putTask(task)
-    }
-
-    if (data.settings) {
-      useStore.getState().setSettings(data.settings)
-    }
-
-    const tasks = await getAllTasks()
-    useStore.getState().setTasks(tasks)
+    useStore.getState().setSettings(snapshot.settings)
+    primeImageCache(snapshot.images)
+    useStore.getState().setTasks(sortTasksForDisplay(snapshot.tasks))
     useStore
       .getState()
-      .showToast(`已导入 ${data.tasks.length} 条记录`, 'success')
+      .showToast(`已导入 ${snapshot.tasks.length} 条记录`, 'success')
   } catch (e) {
     useStore
       .getState()
@@ -775,6 +779,23 @@ export async function addImageFromFile(file: File): Promise<void> {
   const id = await hashDataUrl(dataUrl)
   imageCache.set(id, dataUrl)
   useStore.getState().addInputImage({ id, dataUrl })
+}
+
+export async function replaceInputImageWithDataUrl(currentId: string, dataUrl: string): Promise<string> {
+  const id = await hashDataUrl(dataUrl)
+  imageCache.set(id, dataUrl)
+  useStore.getState().replaceInputImage(currentId, { id, dataUrl })
+  return id
+}
+
+export async function addInputImageWithDataUrl(dataUrl: string): Promise<string> {
+  const id = await hashDataUrl(dataUrl)
+  imageCache.set(id, dataUrl)
+  const state = useStore.getState()
+  if (!state.inputImages.some((image) => image.id === id)) {
+    state.addInputImage({ id, dataUrl })
+  }
+  return id
 }
 
 /** 添加图片到输入（右键菜单）—— 支持 data/blob/http URL */

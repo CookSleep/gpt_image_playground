@@ -1,6 +1,14 @@
 // ===== 设置 =====
 
 export type ApiMode = 'images' | 'responses'
+export type StorageMode = 'local' | 'webdav'
+
+export interface WebDavSettings {
+  url: string
+  username: string
+  password: string
+  syncOnStartup: boolean
+}
 
 export interface AppSettings {
   baseUrl: string
@@ -8,7 +16,10 @@ export interface AppSettings {
   model: string
   timeout: number
   apiMode: ApiMode
+  storageMode: StorageMode
+  webdav: WebDavSettings
   codexCli: boolean
+  updatedAt?: number
 }
 
 const DEFAULT_BASE_URL = import.meta.env.VITE_DEFAULT_API_URL?.trim() || 'https://api.openai.com/v1'
@@ -21,6 +32,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   model: DEFAULT_IMAGES_MODEL,
   timeout: 300,
   apiMode: 'images',
+  storageMode: 'local',
+  webdav: {
+    url: '',
+    username: '',
+    password: '',
+    syncOnStartup: true,
+  },
   codexCli: false,
 }
 
@@ -67,6 +85,8 @@ export interface TaskRecord {
   id: string
   prompt: string
   params: TaskParams
+  /** 最近一次写入时间（ms） */
+  updatedAt?: number
   /** API 返回的实际生效参数，用于标记与请求值不一致的情况 */
   actualParams?: Partial<TaskParams>
   /** 输出图片对应的实际生效参数，key 为 outputImages 中的图片 id */
@@ -96,6 +116,8 @@ export interface StoredImage {
   dataUrl: string
   /** 图片首次存储时间（ms） */
   createdAt?: number
+  /** 图片最近一次写入时间（ms） */
+  updatedAt?: number
   /** 图片来源：用户上传 / API 生成 / 遮罩 */
   source?: 'upload' | 'generated' | 'mask'
 }
@@ -172,10 +194,13 @@ export interface ExportData {
   exportedAt: string
   settings: AppSettings
   tasks: TaskRecord[]
+  deletedTaskIds?: Record<string, number>
+  deletedImageIds?: Record<string, number>
   /** imageId → 图片信息 */
   imageFiles: Record<string, {
     path: string
     createdAt?: number
+    updatedAt?: number
     source?: 'upload' | 'generated' | 'mask'
   }>
 }

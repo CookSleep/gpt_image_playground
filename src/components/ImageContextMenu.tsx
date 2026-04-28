@@ -21,6 +21,9 @@ export default function ImageContextMenu() {
         // 忽略没有 src 或空的 img
         if (!imgTarget.src) return
 
+        // 当前页面不是安全上下文时，放行浏览器原生右键菜单，避免图片复制失效。
+        if (!window.isSecureContext) return
+
         e.preventDefault()
         setMenuInfo({
           src: imgTarget.src,

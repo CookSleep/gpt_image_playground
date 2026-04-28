@@ -29,6 +29,7 @@ export default defineConfig(({ command }) => {
     },
     server: {
       host: true,
+      allowedHosts: ['xian-yu.top', '.xian-yu.top'],
       proxy:
         devProxyConfig?.enabled
           ? {
@@ -44,6 +45,9 @@ export default defineConfig(({ command }) => {
               },
             }
           : undefined,
+    },
+    preview: {
+      allowedHosts: ['xian-yu.top', '.xian-yu.top'],
     },
   }
 })

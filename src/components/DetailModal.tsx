@@ -11,6 +11,7 @@ export default function DetailModal() {
   const detailTaskId = useStore((s) => s.detailTaskId)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
+  const setLightboxStartEditor = useStore((s) => s.setLightboxStartEditor)
   const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const showToast = useStore((s) => s.showToast)
@@ -193,6 +194,13 @@ export default function DetailModal() {
     setDetailTaskId(null)
   }
 
+  const handleQuickEditOutput = () => {
+    if (!currentOutputImageId) return
+    setDetailTaskId(null)
+    setLightboxStartEditor(true)
+    setLightboxImageId(currentOutputImageId, task.outputImages)
+  }
+
   const handleMaskEditCurrentOutput = () => {
     const imgId = task.outputImages?.[imageIndex]
     if (!imgId) return
@@ -350,6 +358,26 @@ export default function DetailModal() {
                   </span>
                 </>
               )}
+              <div className="absolute bottom-3 right-3 flex items-center gap-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleMaskEditCurrentOutput()
+                  }}
+                  className="rounded-full bg-blue-500/75 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition hover:bg-blue-500"
+                >
+                  遮罩编辑
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleQuickEditOutput()
+                  }}
+                  className="rounded-full bg-black/55 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition hover:bg-black/70"
+                >
+                  高级编辑
+                </button>
+              </div>
             </>
           )}
           {task.status === 'running' && (
