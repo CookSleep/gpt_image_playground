@@ -20,10 +20,7 @@ export default function App() {
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)
-    const nextSettings: { baseUrl?: string; apiKey?: string; codexCli?: boolean; apiMode?: ApiMode } = {
-      codexCli: false,
-      apiMode: 'images',
-    }
+    const nextSettings: { baseUrl?: string; apiKey?: string; codexCli?: boolean; apiMode?: ApiMode } = {}
 
     const apiUrlParam = searchParams.get('apiUrl')
     if (apiUrlParam !== null) {
@@ -45,7 +42,9 @@ export default function App() {
       nextSettings.apiMode = apiModeParam
     }
 
-    setSettings(nextSettings)
+    if (Object.keys(nextSettings).length > 0) {
+      setSettings(nextSettings)
+    }
 
     if (searchParams.has('apiUrl') || searchParams.has('apiKey') || searchParams.has('codexCli') || searchParams.has('apiMode')) {
       searchParams.delete('apiUrl')
