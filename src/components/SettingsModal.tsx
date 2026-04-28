@@ -3,7 +3,7 @@ import { normalizeBaseUrl } from '../lib/api'
 import { useStore, exportData, importData, clearAllData } from '../store'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, type AppSettings } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
-import { syncWithWebDav, testWebDavDirectory } from '../lib/webdavSync'
+import { clearWebDavDirectory, isWebDavRemoteResetError, syncWithWebDav, testWebDavDirectory } from '../lib/webdavSync'
 import Select from './Select'
 
 export default function SettingsModal() {
@@ -82,6 +82,25 @@ export default function SettingsModal() {
     try {
       await syncWithWebDav()
     } catch (err) {
+      if (isWebDavRemoteResetError(err)) {
+        setConfirmDialog({
+          title: '重建远端 WebDAV 数据',
+          message: '检测到远端 WebDAV 目录已经为空。\n\n这通常表示你手动清空了远端目录。为避免旧客户端自动把本地历史数据重新灌回去，本次同步已被拦截。\n\n如果你确认要用当前设备的本地数据重新初始化远端，请继续。',
+          confirmText: '确认重建',
+          action: async () => {
+            try {
+              await syncWithWebDav({ allowRemoteReinitialize: true })
+            } catch (nextErr) {
+              useStore.getState().showToast(
+                `WebDAV 同步失败：${nextErr instanceof Error ? nextErr.message : String(nextErr)}`,
+                'error',
+              )
+            }
+          },
+          messageAlign: 'left',
+        })
+        return
+      }
       useStore.getState().showToast(
         `WebDAV 同步失败：${err instanceof Error ? err.message : String(err)}`,
         'error',
@@ -254,7 +273,7 @@ export default function SettingsModal() {
                       className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                     />
                     <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
-                      这里填写 WebDAV 目录地址，程序会在其下读写 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">manifest.json</code> 和图片文件。
+                      这里填写 WebDAV 目录地址，程序会在其下读写 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">manifest.json</code>、<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">sync-state.json</code> 和图片文件。
                     </div>
                   </label>
 
@@ -320,7 +339,7 @@ export default function SettingsModal() {
                     启动时自动同步
                   </label>
                   <div className="-mt-2 text-[10px] text-gray-400 dark:text-gray-500">
-                    开启后，首次打开页面会自动同步；后续本地生成、删除、导入等变更会延迟自动推送，前台页面也会定时检查远端更新。
+                    开启后，首次打开页面会自动同步；后续本地生成、删除、导入等变更会延迟自动推送，前台页面也会定时检查远端更新。若远端目录被手动清空，程序不会自动回灌，需手动确认重建。
                   </div>
 
                   <div className="flex gap-2">
@@ -451,6 +470,31 @@ export default function SettingsModal() {
                 className="w-full rounded-xl border border-red-200/80 bg-red-50/50 px-4 py-2.5 text-sm text-red-500 transition hover:bg-red-100/80 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
               >
                 清空所有数据
+              </button>
+              <button
+                onClick={() =>
+                  setConfirmDialog({
+                    title: '清空所有数据并清空 WebDAV',
+                    message: '确定要清空当前设备的所有任务记录和图片数据，并删除远端 WebDAV 目录中的 manifest、sync-state 和图片文件吗？\n\n此操作不可恢复，且会影响连接到同一 WebDAV 目录的其他设备。',
+                    confirmText: '确认清空',
+                    action: async () => {
+                      try {
+                        await clearWebDavDirectory()
+                        await clearAllData({ silent: true })
+                        useStore.getState().showToast('本地与 WebDAV 数据已清空', 'success')
+                      } catch (err) {
+                        useStore.getState().showToast(
+                          `清空 WebDAV 失败：${err instanceof Error ? err.message : String(err)}`,
+                          'error',
+                        )
+                      }
+                    },
+                    messageAlign: 'left',
+                  })
+                }
+                className="w-full rounded-xl border border-red-300/80 bg-red-100/70 px-4 py-2.5 text-sm text-red-600 transition hover:bg-red-200/80 dark:border-red-500/30 dark:bg-red-500/15 dark:text-red-300 dark:hover:bg-red-500/25"
+              >
+                清空所有数据并清空 WebDAV
               </button>
             </div>
           </section>

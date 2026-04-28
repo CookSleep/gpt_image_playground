@@ -11,6 +11,8 @@ import {
   sortTasksForDisplay,
 } from './snapshot'
 
+const REMOTE_STATE_FILE_NAME = 'sync-state.json'
+const LOCAL_REMOTE_STATE_STORAGE_KEY = 'gpt-image-playground-webdav-remote-state'
 let syncInFlight: Promise<void> | null = null
 let backgroundSyncTimer: ReturnType<typeof window.setTimeout> | null = null
 let applyingSnapshotDepth = 0
@@ -23,12 +25,38 @@ const BACKGROUND_SYNC_DEBOUNCE_MS = 2500
 const BACKGROUND_SYNC_INTERVAL_MS = 30000
 const BACKGROUND_SYNC_MIN_GAP_MS = 8000
 
-export async function syncWithWebDav() {
-  return runWebDavSync()
+interface WebDavRemoteState {
+  remoteId: string
+  generation: number
+  initializedAt: number
+  updatedAt: number
+}
+
+interface LocalRemoteStateRecord extends WebDavRemoteState {
+  rootUrl: string
+  lastSeenAt: number
+}
+
+export class WebDavRemoteResetError extends Error {
+  rootUrl: string
+
+  constructor(message: string, rootUrl: string) {
+    super(message)
+    this.name = 'WebDavRemoteResetError'
+    this.rootUrl = rootUrl
+  }
+}
+
+export async function syncWithWebDav(options: { allowRemoteReinitialize?: boolean } = {}) {
+  return runWebDavSync(options)
 }
 
 export async function syncWithWebDavSilently() {
   return runWebDavSync({ silentSuccess: true, silentInfo: true })
+}
+
+export function isWebDavRemoteResetError(err: unknown): err is WebDavRemoteResetError {
+  return err instanceof WebDavRemoteResetError
 }
 
 export function scheduleWebDavSync(delayMs = BACKGROUND_SYNC_DEBOUNCE_MS) {
@@ -108,12 +136,27 @@ async function runWebDavSync(options: { silentSuccess?: boolean; silentInfo?: bo
 
     const rootUrl = resolveWebDavRoot(webdav.url.trim())
     const localSnapshot = await buildLocalSnapshot(settings)
+    const localRemoteState = readLocalRemoteState(rootUrl)
+    const remoteState = await readRemoteState(rootUrl, webdav.username, webdav.password)
     const remoteSnapshot = await readRemoteSnapshot(rootUrl, webdav.username, webdav.password)
+    if (!remoteSnapshot && hasMeaningfulSnapshotData(localSnapshot) && !options.allowRemoteReinitialize) {
+      throw new WebDavRemoteResetError('检测到远端 WebDAV 目录已被清空，已阻止自动用本地数据重新写回。若确认要重建远端，请在设置中再次手动同步并确认。', rootUrl)
+    }
+
     const mergedSnapshot = remoteSnapshot ? mergeSnapshots(localSnapshot, remoteSnapshot) : localSnapshot
     const manifest = snapshotToDirectoryManifest(mergedSnapshot)
     const files = snapshotToDirectoryFiles(mergedSnapshot)
+    const nextRemoteState = buildNextRemoteState({
+      rootUrl,
+      remoteState,
+      localRemoteState,
+      hasRemoteSnapshot: Boolean(remoteSnapshot),
+      allowRemoteReinitialize: Boolean(options.allowRemoteReinitialize),
+    })
 
     await uploadSnapshotDirectory(rootUrl, webdav.username, webdav.password, manifest, files, remoteSnapshot)
+    await writeRemoteState(rootUrl, webdav.username, webdav.password, nextRemoteState)
+    saveLocalRemoteState(rootUrl, nextRemoteState)
     applyingSnapshotDepth++
     try {
       await replaceLocalData(mergedSnapshot)
@@ -185,6 +228,47 @@ export async function testWebDavDirectory() {
   showToast('WebDAV 目录可用', 'success')
 }
 
+export async function clearWebDavDirectory() {
+  const { settings, showToast } = useStore.getState()
+  if (settings.storageMode !== 'webdav') {
+    showToast('当前是本地存储模式，未启用 WebDAV', 'info')
+    return
+  }
+
+  const webdav = settings.webdav
+  if (!webdav.url.trim()) {
+    throw new Error('请先填写 WebDAV 目录地址')
+  }
+
+  const rootUrl = resolveWebDavRoot(webdav.url.trim())
+  const remoteSnapshot = await readRemoteSnapshot(rootUrl, webdav.username, webdav.password)
+
+  if (remoteSnapshot) {
+    const files = snapshotToDirectoryFiles(remoteSnapshot)
+    for (const file of files) {
+      try {
+        await deleteRemoteFile(resolveRemoteUrl(rootUrl, file.path), webdav.username, webdav.password)
+      } catch {
+        /* 忽略单个图片删除失败，继续尝试删除其他文件 */
+      }
+    }
+  }
+
+  try {
+    await deleteRemoteFile(resolveRemoteUrl(rootUrl, MANIFEST_FILE_NAME), webdav.username, webdav.password)
+  } catch {
+    /* 忽略 manifest 删除失败 */
+  }
+
+  try {
+    await deleteRemoteFile(resolveRemoteUrl(rootUrl, REMOTE_STATE_FILE_NAME), webdav.username, webdav.password)
+  } catch {
+    /* 忽略状态文件删除失败 */
+  }
+
+  clearLocalRemoteState(rootUrl)
+}
+
 function resolveWebDavRoot(url: string) {
   const trimmed = url.trim()
   return trimmed.endsWith('/') ? trimmed : `${trimmed}/`
@@ -193,6 +277,107 @@ function resolveWebDavRoot(url: string) {
 function resolveRemoteUrl(rootUrl: string, relativePath: string) {
   return new URL(relativePath.replace(/^\/+/, ''), rootUrl).toString()
 }
+
+function readLocalRemoteState(rootUrl: string): LocalRemoteStateRecord | null {
+  if (typeof localStorage === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(LOCAL_REMOTE_STATE_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Record<string, LocalRemoteStateRecord>
+    const record = parsed[rootUrl]
+    if (!record || typeof record !== 'object') return null
+    if (typeof record.remoteId !== 'string' || !record.remoteId.trim()) return null
+    if (typeof record.generation !== 'number' || !Number.isFinite(record.generation)) return null
+    if (typeof record.initializedAt !== 'number' || !Number.isFinite(record.initializedAt)) return null
+    if (typeof record.updatedAt !== 'number' || !Number.isFinite(record.updatedAt)) return null
+    return { ...record, rootUrl }
+  } catch {
+    return null
+  }
+}
+
+function saveLocalRemoteState(rootUrl: string, remoteState: WebDavRemoteState) {
+  if (typeof localStorage === 'undefined') return
+  try {
+    const raw = localStorage.getItem(LOCAL_REMOTE_STATE_STORAGE_KEY)
+    const parsed = raw ? JSON.parse(raw) as Record<string, LocalRemoteStateRecord> : {}
+    parsed[rootUrl] = {
+      rootUrl,
+      remoteId: remoteState.remoteId,
+      generation: remoteState.generation,
+      initializedAt: remoteState.initializedAt,
+      updatedAt: remoteState.updatedAt,
+      lastSeenAt: Date.now(),
+    }
+    localStorage.setItem(LOCAL_REMOTE_STATE_STORAGE_KEY, JSON.stringify(parsed))
+  } catch {
+    /* 忽略本地存储失败 */
+  }
+}
+
+function clearLocalRemoteState(rootUrl: string) {
+  if (typeof localStorage === 'undefined') return
+  try {
+    const raw = localStorage.getItem(LOCAL_REMOTE_STATE_STORAGE_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as Record<string, LocalRemoteStateRecord>
+    if (!(rootUrl in parsed)) return
+    delete parsed[rootUrl]
+    localStorage.setItem(LOCAL_REMOTE_STATE_STORAGE_KEY, JSON.stringify(parsed))
+  } catch {
+    /* 忽略本地存储失败 */
+  }
+}
+
+function hasMeaningfulSnapshotData(snapshot: Awaited<ReturnType<typeof buildLocalSnapshot>>) {
+  return (
+    snapshot.tasks.length > 0 ||
+    snapshot.images.length > 0 ||
+    Object.keys(snapshot.deletedTaskIds).length > 0 ||
+    Object.keys(snapshot.deletedImageIds).length > 0
+  )
+}
+
+function buildNextRemoteState(options: {
+  rootUrl: string
+  remoteState: WebDavRemoteState | null
+  localRemoteState: LocalRemoteStateRecord | null
+  hasRemoteSnapshot: boolean
+  allowRemoteReinitialize: boolean
+}) {
+  const now = Date.now()
+
+  if (options.remoteState && options.hasRemoteSnapshot) {
+    return {
+      ...options.remoteState,
+      updatedAt: now,
+    }
+  }
+
+  if (!options.hasRemoteSnapshot && options.allowRemoteReinitialize) {
+    return {
+      remoteId: options.localRemoteState?.remoteId ?? createRemoteId(),
+      generation: (options.localRemoteState?.generation ?? 0) + 1,
+      initializedAt: now,
+      updatedAt: now,
+    }
+  }
+
+  return {
+    remoteId: options.remoteState?.remoteId ?? options.localRemoteState?.remoteId ?? createRemoteId(),
+    generation: options.remoteState?.generation ?? options.localRemoteState?.generation ?? 1,
+    initializedAt: options.remoteState?.initializedAt ?? options.localRemoteState?.initializedAt ?? now,
+    updatedAt: now,
+  }
+}
+
+function createRemoteId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `remote-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 
 function buildAuthHeaders(username: string, password: string) {
   const headers: Record<string, string> = {}
@@ -279,6 +464,57 @@ async function readRemoteSnapshot(rootUrl: string, username: string, password: s
   })
 }
 
+async function readRemoteState(rootUrl: string, username: string, password: string) {
+  const stateUrl = resolveRemoteUrl(rootUrl, REMOTE_STATE_FILE_NAME)
+  const response = await fetch(stateUrl, {
+    method: 'GET',
+    cache: 'no-store',
+    headers: {
+      ...buildAuthHeaders(username, password),
+    },
+  })
+
+  if (response.status === 404) return null
+  if (!response.ok) {
+    throw new Error(await readWebDavError(response))
+  }
+
+  const text = await response.text()
+  if (!text.trim()) return null
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch (error) {
+    throw new Error(`远端 sync-state.json 不是有效 JSON：${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('远端 sync-state.json 格式无效')
+  }
+
+  const state = parsed as Partial<WebDavRemoteState>
+  if (
+    typeof state.remoteId !== 'string' ||
+    !state.remoteId.trim() ||
+    typeof state.generation !== 'number' ||
+    !Number.isFinite(state.generation) ||
+    typeof state.initializedAt !== 'number' ||
+    !Number.isFinite(state.initializedAt) ||
+    typeof state.updatedAt !== 'number' ||
+    !Number.isFinite(state.updatedAt)
+  ) {
+    throw new Error('远端 sync-state.json 缺少必要字段')
+  }
+
+  return {
+    remoteId: state.remoteId,
+    generation: state.generation,
+    initializedAt: state.initializedAt,
+    updatedAt: state.updatedAt,
+  }
+}
+
 async function uploadSnapshotDirectory(
   rootUrl: string,
   username: string,
@@ -319,6 +555,17 @@ async function uploadSnapshotDirectory(
       }
     }
   }
+}
+
+async function writeRemoteState(rootUrl: string, username: string, password: string, remoteState: WebDavRemoteState) {
+  const stateUrl = resolveRemoteUrl(rootUrl, REMOTE_STATE_FILE_NAME)
+  await putRemoteFile(
+    stateUrl,
+    new Blob([JSON.stringify(remoteState, null, 2)], { type: 'application/json' }),
+    'application/json',
+    username,
+    password,
+  )
 }
 
 async function putRemoteFile(url: string, body: Blob, contentType: string, username: string, password: string) {

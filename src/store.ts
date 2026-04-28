@@ -571,7 +571,7 @@ export async function removeTask(task: TaskRecord) {
 }
 
 /** 清空所有数据（含配置重置） */
-export async function clearAllData() {
+export async function clearAllData(options: { silent?: boolean } = {}) {
   await dbClearTasks()
   await clearImages()
   clearSyncTombstones()
@@ -582,7 +582,9 @@ export async function clearAllData() {
   useStore.setState({ dismissedCodexCliPrompts: [] })
   setSettings({ ...DEFAULT_SETTINGS })
   setParams({ ...DEFAULT_PARAMS })
-  showToast('所有数据已清空', 'success')
+  if (!options.silent) {
+    showToast('所有数据已清空', 'success')
+  }
 }
 
 /** 从 dataUrl 解析出 MIME 扩展名和二进制数据 */
