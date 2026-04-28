@@ -515,7 +515,7 @@ function LightboxInner({ src, maskPreviewSrc, onClose, showNav, currentIndex, to
           onEdit()
         }}
       >
-        {isReferenceImage ? '编辑参考图' : '编辑并加入参考图'}
+        {isReferenceImage ? '高级编辑' : '高级编辑并加入参考图'}
       </button>
       <div className="relative animate-zoom-in">
         <div

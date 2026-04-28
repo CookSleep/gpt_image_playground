@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { ensureImageCached, useStore } from '../store'
@@ -6,6 +6,7 @@ import { canvasToBlob, loadImage } from '../lib/canvasImage'
 import { storeImage } from '../lib/db'
 import { prepareMaskTargetDataUrl, replaceMaskTargetImage } from '../lib/maskPreprocess'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
+const ReferenceImageEditorModal = lazy(() => import('./ReferenceImageEditorModal'))
 import {
   clampViewTransform,
   clientPointToCanvasPoint,
@@ -146,12 +147,21 @@ export default function MaskEditorModal() {
   const [isPanning, setIsPanning] = useState(false)
   const [sliderAnchor, setSliderAnchor] = useState<SliderAnchor | null>(null)
   const [showMaskInfo, setShowMaskInfo] = useState(false)
+  const [referenceEditorSession, setReferenceEditorSession] = useState<{
+    imageId: string
+    src: string
+  } | null>(null)
 
   const close = () => {
     if (isSaving) return
     setMaskEditorImageId(null)
   }
   useCloseOnEscape(Boolean(imageId), close)
+
+  const handleReferenceEditorSaved = (nextImageId: string) => {
+    setReferenceEditorSession(null)
+    setMaskEditorImageId(nextImageId)
+  }
 
   useEffect(() => () => {
     if (maskInfoTimerRef.current != null) {
@@ -441,6 +451,12 @@ export default function MaskEditorModal() {
       if (activeSessionIdRef.current === nextSessionId) {
         activeSessionIdRef.current = 0
       }
+    }
+  }, [imageId])
+
+  useEffect(() => {
+    if (imageId) {
+      setReferenceEditorSession(null)
     }
   }, [imageId])
 
@@ -837,9 +853,20 @@ export default function MaskEditorModal() {
     setShowBrushControls((value) => !value)
   }
 
+  const handleOpenReferenceEditor = () => {
+    if (!imageId || !sourceDataUrl || isLoading || isSaving) return
+    setReferenceEditorSession({
+      imageId,
+      src: sourceDataUrl,
+    })
+  }
+
   return (
     <>
-      <div className="fixed inset-0 z-[80] flex flex-col bg-gray-50 dark:bg-gray-900 animate-modal-in">
+      <div
+        className="fixed inset-0 z-[80] flex flex-col bg-gray-50 dark:bg-gray-900 animate-modal-in"
+        aria-hidden={referenceEditorSession ? 'true' : undefined}
+      >
       {/* Header */}
       <div className="flex-none flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950 z-20">
         <div className="flex items-center gap-3">
@@ -999,6 +1026,18 @@ export default function MaskEditorModal() {
                   <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
                 </svg>
               </button>
+              <div className="w-px h-4 sm:h-5 bg-gray-300 dark:bg-[#323338] mx-1"></div>
+              <button
+                onClick={handleOpenReferenceEditor}
+                disabled={!isReady || isSaving}
+                className="flex items-center gap-1.5 rounded-lg sm:rounded-xl bg-blue-50 px-3 py-2 text-xs font-medium text-blue-600 transition hover:bg-blue-100 disabled:opacity-30 dark:bg-blue-500/10 dark:text-blue-300 dark:hover:bg-blue-500/20"
+                title="切换到高级编辑"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+                高级编辑
+              </button>
             </div>
           </div>
         </div>
@@ -1025,6 +1064,28 @@ export default function MaskEditorModal() {
         </div>,
         document.body,
       )}
+      {referenceEditorSession
+        ? createPortal(
+            <div className="fixed inset-0 z-[120]">
+              <Suspense
+                fallback={
+                  <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/55 backdrop-blur-md text-sm text-white/70">
+                    正在加载高级编辑器...
+                  </div>
+                }
+              >
+                <ReferenceImageEditorModal
+                  imageId={referenceEditorSession.imageId}
+                  src={referenceEditorSession.src}
+                  saveMode="replace-input"
+                  onSaved={handleReferenceEditorSaved}
+                  onClose={() => setReferenceEditorSession(null)}
+                />
+              </Suspense>
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   )
 }

@@ -375,7 +375,7 @@ export default function DetailModal() {
                   }}
                   className="rounded-full bg-black/55 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition hover:bg-black/70"
                 >
-                  快速编辑
+                  高级编辑
                 </button>
               </div>
             </>

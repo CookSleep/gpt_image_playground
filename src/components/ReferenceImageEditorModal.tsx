@@ -8,9 +8,10 @@ interface ReferenceImageEditorModalProps {
   src: string
   saveMode: 'replace-input' | 'append-input'
   onClose: () => void
+  onSaved?: (nextImageId: string, nextDataUrl: string) => void
 }
 
-type ToolMode = 'select' | 'mask'
+type ToolMode = 'select' | 'mask-brush'
 type MaskShapeType = 'rect' | 'ellipse' | 'triangle'
 
 interface TextStyleState {
@@ -80,11 +81,8 @@ function useIsMobileDevice() {
   return isMobileDevice
 }
 
-export default function ReferenceImageEditorModal({ imageId, src, saveMode, onClose }: ReferenceImageEditorModalProps) {
+export default function ReferenceImageEditorModal({ imageId, src, saveMode, onClose, onSaved }: ReferenceImageEditorModalProps) {
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
-  const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
-  const maskDraft = useStore((s) => s.maskDraft)
-  const clearMaskDraft = useStore((s) => s.clearMaskDraft)
   const inputImages = useStore((s) => s.inputImages)
   const lightboxImageList = useStore((s) => s.lightboxImageList)
   const showToast = useStore((s) => s.showToast)
@@ -241,8 +239,8 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     brush.color = buildMaskColor(maskHue, alpha)
     brush.width = width
     canvas.freeDrawingBrush = brush
-    canvas.isDrawingMode = toolMode === 'mask'
-    canvas.defaultCursor = toolMode === 'mask' ? 'crosshair' : 'default'
+    canvas.isDrawingMode = toolMode === 'mask-brush'
+    canvas.defaultCursor = toolMode === 'mask-brush' ? 'crosshair' : 'default'
   }, [maskHue, maskOpacity, maskWidth, toolMode])
 
   const handleToolModeChange = useCallback((nextToolMode: ToolMode) => {
@@ -535,7 +533,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
       canvas.on('mouse:up', () => {
         panningRef.current = false
         canvas.selection = toolModeRef.current === 'select'
-        canvas.defaultCursor = toolModeRef.current === 'mask' ? 'crosshair' : 'default'
+        canvas.defaultCursor = toolModeRef.current === 'mask-brush' ? 'crosshair' : 'default'
       })
 
       const handleSelection = () => {
@@ -967,17 +965,6 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     await restoreHistory(historyIndexRef.current + 1)
   }
 
-  const handleOpenMaskEditor = () => {
-    onClose()
-    setMaskEditorImageId(imageId)
-  }
-
-  const handleRemoveMaskDraft = () => {
-    if (maskDraft?.targetImageId !== imageId) return
-    clearMaskDraft()
-    showToast('已移除这张参考图的遮罩', 'success')
-  }
-
   const handleSave = async () => {
     const canvas = canvasRef.current
     const sourceImage = sourceImageRef.current
@@ -985,16 +972,10 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
 
     const previousViewport = canvas.viewportTransform ? [...canvas.viewportTransform] : null
     const baseProxy = canvas.getObjects().find((object) => getEditorKind(object) === 'base-image')
-    const maskObjects = canvas.getObjects().filter((object) => {
-      const kind = getEditorKind(object)
-      return kind === 'mask-brush' || kind === 'mask-region'
-    })
     const previousBaseVisible = baseProxy?.visible
     if (baseProxy) {
       baseProxy.set({ visible: false })
     }
-    const previousMaskVisibilities = maskObjects.map((object) => object.visible)
-    maskObjects.forEach((object) => object.set({ visible: false }))
     canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
     canvas.renderAll()
     const overlayDataUrl = canvas.toDataURL({
@@ -1008,7 +989,6 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     if (baseProxy) {
       baseProxy.set({ visible: previousBaseVisible ?? true })
     }
-    maskObjects.forEach((object, index) => object.set({ visible: previousMaskVisibilities[index] ?? true }))
     if (previousViewport) {
       canvas.setViewportTransform(previousViewport as [number, number, number, number, number, number])
       canvas.renderAll()
@@ -1036,11 +1016,13 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     if (saveMode === 'replace-input') {
       const nextId = await replaceInputImageWithDataUrl(imageId, editedDataUrl)
       setLightboxImageId(nextId, currentImageList.map((id) => (id === imageId ? nextId : id)))
+      onSaved?.(nextId, editedDataUrl)
       showToast('参考图已更新', 'success')
     } else {
       const nextId = await addInputImageWithDataUrl(editedDataUrl)
       const nextList = currentImageList.includes(nextId) ? currentImageList : [...currentImageList, nextId]
       setLightboxImageId(nextId, nextList)
+      onSaved?.(nextId, editedDataUrl)
       showToast('编辑结果已加入参考图', 'success')
     }
     onClose()
@@ -1049,9 +1031,11 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   const isTextSelected = activeObject instanceof IText
   const activeEditorKind = getEditorKind(activeObject)
   const canDeleteActiveObject = Boolean(activeObject && activeEditorKind !== 'base-image')
-  const hasOpenAiMask = maskDraft?.targetImageId === imageId
-  const settingsPanel = isTextSelected ? 'text' : null
+  const isMaskRegionSelected = activeEditorKind === 'mask-region'
+  const showMaskSettings = toolMode === 'mask-brush' || isMaskRegionSelected
+  const settingsPanel = isTextSelected ? 'text' : showMaskSettings ? 'mask' : null
   const showTextSettings = settingsPanel === 'text'
+  const showLocalMaskSettings = settingsPanel === 'mask'
 
   return (
     <div className="fixed inset-0 z-[75] h-[100dvh] overflow-hidden bg-black/70 backdrop-blur-md">
@@ -1076,10 +1060,10 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
         </div>
         <aside className="absolute inset-x-2 bottom-2 z-20 max-h-[282px] overflow-y-auto rounded-2xl border border-white/10 bg-[#12161d]/96 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-white shadow-2xl backdrop-blur-xl sm:inset-x-3 sm:bottom-3 sm:max-h-[306px] sm:p-4 md:bottom-4 md:left-auto md:right-4 md:top-4 md:max-h-none md:w-[360px] md:p-5">
           <div className="mb-3 flex items-center justify-between md:mb-5">
-            <div>
-              <h3 className="text-base font-semibold md:text-lg">快速编辑</h3>
-              <p className="mt-1 hidden text-xs text-white/45 sm:block">
-                文字、OpenAI 遮罩、贴图。
+              <div>
+                <h3 className="text-base font-semibold md:text-lg">高级编辑</h3>
+                <p className="mt-1 hidden text-xs text-white/45 sm:block">
+                文字、涂抹、区域填色、贴图。
                 {saveMode === 'replace-input' ? ' 保存后替换当前参考图。' : ' 保存后加入参考图。'}
               </p>
             </div>
@@ -1135,10 +1119,10 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
                   )}
                 </div>
                 <button
-                  onClick={handleOpenMaskEditor}
-                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 md:rounded-xl"
+                  onClick={() => handleToolModeChange('mask-brush')}
+                  className={`rounded-lg px-3 py-2 text-sm transition md:rounded-xl ${toolMode === 'mask-brush' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
                 >
-                  {hasOpenAiMask ? '编辑遮罩' : '添加遮罩'}
+                  涂抹
                 </button>
                 <button
                   onClick={() => handleFlipActiveObject('x')}
@@ -1155,11 +1139,10 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
                   垂直翻转
                 </button>
                 <button
-                  onClick={handleRemoveMaskDraft}
-                  disabled={!hasOpenAiMask}
-                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-40 md:rounded-xl"
+                  onClick={handleAddMaskRegion}
+                  className="rounded-lg bg-white/8 px-3 py-2 text-sm text-white transition hover:bg-white/12 md:rounded-xl"
                 >
-                  移除遮罩
+                  区域填色
                 </button>
                 <button
                   onClick={handleAddText}
@@ -1243,6 +1226,71 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
                   <div className="text-xs text-white/45">当前没有选中文字对象，样式会用于下一个新建文字。</div>
                 )}
               </div>
+              </section>
+            )}
+
+            {showLocalMaskSettings && (
+              <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3 md:rounded-2xl md:p-4">
+                <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/45 md:mb-3">填色样式</div>
+                <div className="space-y-3">
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-white/55">透明度</span>
+                    <input
+                      type="range"
+                      min={0.05}
+                      max={1}
+                      step={0.05}
+                      value={maskOpacity}
+                      onChange={(e) => setMaskOpacity(Number(e.target.value))}
+                      className="w-full accent-blue-500"
+                    />
+                    <span className="mt-1 block text-xs text-white/45">{Math.round(maskOpacity * 100)}%</span>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-white/55">笔刷大小</span>
+                    <input
+                      type="range"
+                      min={4}
+                      max={160}
+                      step={1}
+                      value={maskWidth}
+                      onChange={(e) => setMaskWidth(Number(e.target.value))}
+                      className="w-full accent-blue-500"
+                    />
+                    <span className="mt-1 block text-xs text-white/45">{maskWidth}px</span>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-white/55">颜色</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={360}
+                      step={1}
+                      value={maskHue}
+                      onChange={(e) => setMaskHue(Number(e.target.value))}
+                      className="w-full"
+                      style={{ accentColor: buildMaskColor(maskHue, 1) }}
+                    />
+                    <span
+                      className="mt-1 block h-6 rounded-lg border border-white/10"
+                      style={{ background: buildMaskColor(maskHue, maskOpacity) }}
+                    />
+                  </label>
+                  <div>
+                    <div className="mb-1 text-xs text-white/55">区域形状</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['rect', 'ellipse', 'triangle'] as const).map((shapeType) => (
+                        <button
+                          key={shapeType}
+                          onClick={() => handleChangeMaskShapeType(shapeType)}
+                          className={`rounded-lg px-3 py-2 text-sm transition md:rounded-xl ${maskShapeType === shapeType ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
+                        >
+                          {shapeType === 'rect' ? '矩形' : shapeType === 'ellipse' ? '圆形' : '三角'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </section>
             )}
 
