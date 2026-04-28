@@ -55,6 +55,75 @@ export async function syncWithWebDavSilently() {
   return runWebDavSync({ silentSuccess: true, silentInfo: true })
 }
 
+export async function overwriteLocalWithWebDav() {
+  const { settings, setSettings, setTasks } = useStore.getState()
+  const webdav = settings.webdav
+
+  if (settings.storageMode !== 'webdav') {
+    throw new Error('当前是本地存储模式，未启用 WebDAV')
+  }
+
+  if (!webdav.url.trim()) {
+    throw new Error('请先填写 WebDAV 目录地址')
+  }
+
+  const rootUrl = resolveWebDavRoot(webdav.url.trim())
+  const remoteState = await readRemoteState(rootUrl, webdav.username, webdav.password)
+  const remoteSnapshot = await readRemoteSnapshot(rootUrl, webdav.username, webdav.password)
+  if (!remoteSnapshot) {
+    throw new Error('远端 WebDAV 目录中没有 manifest.json，无法覆盖本地')
+  }
+
+  applyingSnapshotDepth++
+  try {
+    await replaceLocalData(remoteSnapshot)
+    replaceSyncTombstones({
+      deletedTaskIds: remoteSnapshot.deletedTaskIds,
+      deletedImageIds: remoteSnapshot.deletedImageIds,
+    })
+    primeImageCache(remoteSnapshot.images)
+    setSettings(remoteSnapshot.settings)
+    setTasks(sortTasksForDisplay(remoteSnapshot.tasks))
+    if (remoteState) {
+      saveLocalRemoteState(rootUrl, remoteState)
+    }
+  } finally {
+    applyingSnapshotDepth--
+  }
+}
+
+export async function overwriteWebDavWithLocal() {
+  const { settings } = useStore.getState()
+  const webdav = settings.webdav
+
+  if (settings.storageMode !== 'webdav') {
+    throw new Error('当前是本地存储模式，未启用 WebDAV')
+  }
+
+  if (!webdav.url.trim()) {
+    throw new Error('请先填写 WebDAV 目录地址')
+  }
+
+  const rootUrl = resolveWebDavRoot(webdav.url.trim())
+  const localSnapshot = await buildLocalSnapshot(settings)
+  const localRemoteState = readLocalRemoteState(rootUrl)
+  const remoteState = await readRemoteState(rootUrl, webdav.username, webdav.password)
+  const remoteSnapshot = await readRemoteSnapshot(rootUrl, webdav.username, webdav.password)
+  const manifest = snapshotToDirectoryManifest(localSnapshot)
+  const files = snapshotToDirectoryFiles(localSnapshot)
+  const nextRemoteState = buildNextRemoteState({
+    rootUrl,
+    remoteState,
+    localRemoteState,
+    hasRemoteSnapshot: Boolean(remoteSnapshot),
+    allowRemoteReinitialize: true,
+  })
+
+  await uploadSnapshotDirectory(rootUrl, webdav.username, webdav.password, manifest, files, remoteSnapshot)
+  await writeRemoteState(rootUrl, webdav.username, webdav.password, nextRemoteState)
+  saveLocalRemoteState(rootUrl, nextRemoteState)
+}
+
 export function isWebDavRemoteResetError(err: unknown): err is WebDavRemoteResetError {
   return err instanceof WebDavRemoteResetError
 }

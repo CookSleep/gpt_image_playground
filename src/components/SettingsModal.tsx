@@ -3,7 +3,12 @@ import { normalizeBaseUrl } from '../lib/api'
 import { useStore, exportData, importData, clearAllData } from '../store'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, type AppSettings } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
-import { clearWebDavDirectory, isWebDavRemoteResetError, syncWithWebDav, testWebDavDirectory } from '../lib/webdavSync'
+import {
+  clearWebDavDirectory,
+  overwriteLocalWithWebDav,
+  overwriteWebDavWithLocal,
+  testWebDavDirectory,
+} from '../lib/webdavSync'
 import Select from './Select'
 
 export default function SettingsModal() {
@@ -78,36 +83,6 @@ export default function SettingsModal() {
     e.target.value = ''
   }
 
-  const handleSyncNow = async () => {
-    try {
-      await syncWithWebDav()
-    } catch (err) {
-      if (isWebDavRemoteResetError(err)) {
-        setConfirmDialog({
-          title: '重建远端 WebDAV 数据',
-          message: '检测到远端 WebDAV 目录已经为空。\n\n这通常表示你手动清空了远端目录。为避免旧客户端自动把本地历史数据重新灌回去，本次同步已被拦截。\n\n如果你确认要用当前设备的本地数据重新初始化远端，请继续。',
-          confirmText: '确认重建',
-          action: async () => {
-            try {
-              await syncWithWebDav({ allowRemoteReinitialize: true })
-            } catch (nextErr) {
-              useStore.getState().showToast(
-                `WebDAV 同步失败：${nextErr instanceof Error ? nextErr.message : String(nextErr)}`,
-                'error',
-              )
-            }
-          },
-          messageAlign: 'left',
-        })
-        return
-      }
-      useStore.getState().showToast(
-        `WebDAV 同步失败：${err instanceof Error ? err.message : String(err)}`,
-        'error',
-      )
-    }
-  }
-
   const handleTestDirectory = async () => {
     try {
       await testWebDavDirectory()
@@ -117,6 +92,46 @@ export default function SettingsModal() {
         'error',
       )
     }
+  }
+
+  const handleOverwriteLocal = () => {
+    setConfirmDialog({
+      title: '远端覆盖本地',
+      message: '确定要使用 WebDAV 远端数据覆盖当前浏览器的本地数据吗？\n\n当前浏览器里的任务、图片、设置和删除记录都会被远端快照替换。这个操作不会修改远端。',
+      confirmText: '确认覆盖',
+      action: async () => {
+        try {
+          await overwriteLocalWithWebDav()
+          useStore.getState().showToast('已用 WebDAV 远端数据覆盖本地', 'success')
+        } catch (err) {
+          useStore.getState().showToast(
+            `远端覆盖本地失败：${err instanceof Error ? err.message : String(err)}`,
+            'error',
+          )
+        }
+      },
+      messageAlign: 'left',
+    })
+  }
+
+  const handleOverwriteRemote = () => {
+    setConfirmDialog({
+      title: '本地覆盖远端',
+      message: '确定要使用当前浏览器的本地数据覆盖 WebDAV 远端数据吗？\n\n远端 manifest、sync-state 和快照引用的图片会被当前浏览器的数据替换。其他设备下次同步后会以这份远端数据为准。',
+      confirmText: '确认覆盖',
+      action: async () => {
+        try {
+          await overwriteWebDavWithLocal()
+          useStore.getState().showToast('已用本地数据覆盖 WebDAV 远端', 'success')
+        } catch (err) {
+          useStore.getState().showToast(
+            `本地覆盖远端失败：${err instanceof Error ? err.message : String(err)}`,
+            'error',
+          )
+        }
+      },
+      messageAlign: 'left',
+    })
   }
 
   return (
@@ -339,25 +354,33 @@ export default function SettingsModal() {
                     启动时自动同步
                   </label>
                   <div className="-mt-2 text-[10px] text-gray-400 dark:text-gray-500">
-                    开启后，首次打开页面会自动同步；后续本地生成、删除、导入等变更会延迟自动推送，前台页面也会定时检查远端更新。若远端目录被手动清空，程序不会自动回灌，需手动确认重建。
+                    开启后，首次打开页面会自动同步；本地生成、删除、导入等变更约 2.5 秒后自动推送；前台页面每 30 秒检查一次远端更新。若远端目录被手动清空，程序不会自动回灌，需手动确认重建。
                   </div>
 
-                  <div className="flex gap-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <button
                       type="button"
                       onClick={handleTestDirectory}
-                      className="flex-1 rounded-xl bg-gray-100/80 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-200 dark:bg-white/[0.06] dark:text-gray-200 dark:hover:bg-white/[0.1]"
+                      className="rounded-xl bg-gray-100/80 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-200 dark:bg-white/[0.06] dark:text-gray-200 dark:hover:bg-white/[0.1]"
                       disabled={!draft.webdav.url.trim()}
                     >
                       测试目录
                     </button>
                     <button
                       type="button"
-                      onClick={handleSyncNow}
-                      className="flex-1 rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-600 disabled:opacity-50"
+                      onClick={handleOverwriteLocal}
+                      className="rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-600 disabled:opacity-50"
                       disabled={!draft.webdav.url.trim()}
                     >
-                      立即同步
+                      远端覆盖本地
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOverwriteRemote}
+                      className="rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-amber-600 disabled:opacity-50"
+                      disabled={!draft.webdav.url.trim()}
+                    >
+                      本地覆盖远端
                     </button>
                   </div>
                 </div>
