@@ -14,7 +14,7 @@ import {
 const REMOTE_STATE_FILE_NAME = 'sync-state.json'
 const LOCAL_REMOTE_STATE_STORAGE_KEY = 'gpt-image-playground-webdav-remote-state'
 let syncInFlight: Promise<void> | null = null
-let backgroundSyncTimer: ReturnType<typeof window.setTimeout> | null = null
+let backgroundSyncTimer: number | null = null
 let applyingSnapshotDepth = 0
 let lastBackgroundSyncStartedAt = 0
 let lastBackgroundErrorMessage = ''
@@ -24,6 +24,7 @@ const TEST_FILE_PREFIX = '.gpt-image-playground-test-'
 const BACKGROUND_SYNC_DEBOUNCE_MS = 2500
 const BACKGROUND_SYNC_INTERVAL_MS = 30000
 const BACKGROUND_SYNC_MIN_GAP_MS = 8000
+const SYNC_RETRY_LIMIT = 3
 
 interface WebDavRemoteState {
   remoteId: string
@@ -37,6 +38,18 @@ interface LocalRemoteStateRecord extends WebDavRemoteState {
   lastSeenAt: number
 }
 
+interface WebDavSyncOptions {
+  allowRemoteReinitialize?: boolean
+  silentSuccess?: boolean
+  silentInfo?: boolean
+}
+
+interface RemoteReadResult {
+  state: WebDavRemoteState | null
+  snapshot: Awaited<ReturnType<typeof readRemoteSnapshot>>
+  version: string
+}
+
 export class WebDavRemoteResetError extends Error {
   rootUrl: string
 
@@ -47,7 +60,7 @@ export class WebDavRemoteResetError extends Error {
   }
 }
 
-export async function syncWithWebDav(options: { allowRemoteReinitialize?: boolean } = {}) {
+export async function syncWithWebDav(options: WebDavSyncOptions = {}) {
   return runWebDavSync(options)
 }
 
@@ -185,7 +198,7 @@ export function isApplyingWebDavSnapshot() {
   return applyingSnapshotDepth > 0
 }
 
-async function runWebDavSync(options: { silentSuccess?: boolean; silentInfo?: boolean } = {}) {
+async function runWebDavSync(options: WebDavSyncOptions = {}) {
   if (syncInFlight) return syncInFlight
 
   syncInFlight = (async () => {
@@ -204,43 +217,72 @@ async function runWebDavSync(options: { silentSuccess?: boolean; silentInfo?: bo
     }
 
     const rootUrl = resolveWebDavRoot(webdav.url.trim())
-    const localSnapshot = await buildLocalSnapshot(settings)
-    const localRemoteState = readLocalRemoteState(rootUrl)
-    const remoteState = await readRemoteState(rootUrl, webdav.username, webdav.password)
-    const remoteSnapshot = await readRemoteSnapshot(rootUrl, webdav.username, webdav.password)
-    if (!remoteSnapshot && hasMeaningfulSnapshotData(localSnapshot) && !options.allowRemoteReinitialize) {
-      throw new WebDavRemoteResetError('检测到远端 WebDAV 目录已被清空，已阻止自动用本地数据重新写回。若确认要重建远端，请在设置中再次手动同步并确认。', rootUrl)
+    let syncResult: {
+      snapshot: Awaited<ReturnType<typeof buildLocalSnapshot>>
+      remoteState: WebDavRemoteState
+      hadRemoteSnapshot: boolean
+    } | null = null
+
+    for (let attempt = 1; attempt <= SYNC_RETRY_LIMIT; attempt++) {
+      const localSnapshot = await buildLocalSnapshot(settings)
+      const localRemoteState = readLocalRemoteState(rootUrl)
+      const remoteBefore = await readRemote(rootUrl, webdav.username, webdav.password)
+      if (!remoteBefore.snapshot && hasMeaningfulSnapshotData(localSnapshot) && !options.allowRemoteReinitialize) {
+        throw new WebDavRemoteResetError('检测到远端 WebDAV 目录已被清空，已阻止自动用本地数据重新写回。若确认要重建远端，请在设置中再次手动同步并确认。', rootUrl)
+      }
+
+      const mergedSnapshot = remoteBefore.snapshot ? mergeSnapshots(localSnapshot, remoteBefore.snapshot) : localSnapshot
+      const manifest = snapshotToDirectoryManifest(mergedSnapshot)
+      const files = snapshotToDirectoryFiles(mergedSnapshot)
+      const nextRemoteState = buildNextRemoteState({
+        rootUrl,
+        remoteState: remoteBefore.state,
+        localRemoteState,
+        hasRemoteSnapshot: Boolean(remoteBefore.snapshot),
+        allowRemoteReinitialize: Boolean(options.allowRemoteReinitialize),
+      })
+
+      const remoteBeforeWrite = await readRemote(rootUrl, webdav.username, webdav.password)
+      if (remoteBeforeWrite.version !== remoteBefore.version) {
+        continue
+      }
+
+      await uploadSnapshotDirectory(rootUrl, webdav.username, webdav.password, manifest, files, remoteBefore.snapshot)
+      await writeRemoteState(rootUrl, webdav.username, webdav.password, nextRemoteState)
+
+      const remoteAfterWrite = await readRemote(rootUrl, webdav.username, webdav.password)
+      if (!remoteVersionsMatch(remoteAfterWrite, nextRemoteState, mergedSnapshot)) {
+        continue
+      }
+
+      syncResult = {
+        snapshot: mergedSnapshot,
+        remoteState: nextRemoteState,
+        hadRemoteSnapshot: Boolean(remoteBefore.snapshot),
+      }
+      break
     }
 
-    const mergedSnapshot = remoteSnapshot ? mergeSnapshots(localSnapshot, remoteSnapshot) : localSnapshot
-    const manifest = snapshotToDirectoryManifest(mergedSnapshot)
-    const files = snapshotToDirectoryFiles(mergedSnapshot)
-    const nextRemoteState = buildNextRemoteState({
-      rootUrl,
-      remoteState,
-      localRemoteState,
-      hasRemoteSnapshot: Boolean(remoteSnapshot),
-      allowRemoteReinitialize: Boolean(options.allowRemoteReinitialize),
-    })
+    if (!syncResult) {
+      throw new Error('WebDAV 同步期间远端持续变化，请稍后重试')
+    }
 
-    await uploadSnapshotDirectory(rootUrl, webdav.username, webdav.password, manifest, files, remoteSnapshot)
-    await writeRemoteState(rootUrl, webdav.username, webdav.password, nextRemoteState)
-    saveLocalRemoteState(rootUrl, nextRemoteState)
+    saveLocalRemoteState(rootUrl, syncResult.remoteState)
     applyingSnapshotDepth++
     try {
-      await replaceLocalData(mergedSnapshot)
+      await replaceLocalData(syncResult.snapshot)
       replaceSyncTombstones({
-        deletedTaskIds: mergedSnapshot.deletedTaskIds,
-        deletedImageIds: mergedSnapshot.deletedImageIds,
+        deletedTaskIds: syncResult.snapshot.deletedTaskIds,
+        deletedImageIds: syncResult.snapshot.deletedImageIds,
       })
-      primeImageCache(mergedSnapshot.images)
-      setSettings(mergedSnapshot.settings)
-      setTasks(sortTasksForDisplay(mergedSnapshot.tasks))
+      primeImageCache(syncResult.snapshot.images)
+      setSettings(syncResult.snapshot.settings)
+      setTasks(sortTasksForDisplay(syncResult.snapshot.tasks))
     } finally {
       applyingSnapshotDepth--
     }
     if (!options.silentSuccess) {
-      showToast(remoteSnapshot ? '已与 WebDAV 目录同步' : '已写入 WebDAV 目录', 'success')
+      showToast(syncResult.hadRemoteSnapshot ? '已与 WebDAV 目录同步' : '已写入 WebDAV 目录', 'success')
     }
   })()
 
@@ -486,6 +528,44 @@ async function triggerBackgroundSync(force = false) {
       useStore.getState().showToast(message, 'error')
     }
   }
+}
+
+async function readRemote(rootUrl: string, username: string, password: string): Promise<RemoteReadResult> {
+  const [state, snapshot] = await Promise.all([
+    readRemoteState(rootUrl, username, password),
+    readRemoteSnapshot(rootUrl, username, password),
+  ])
+
+  return {
+    state,
+    snapshot,
+    version: buildRemoteVersion(state, snapshot),
+  }
+}
+
+function buildRemoteVersion(
+  state: WebDavRemoteState | null,
+  snapshot: Awaited<ReturnType<typeof readRemoteSnapshot>>,
+) {
+  return JSON.stringify({
+    state: state
+      ? {
+          remoteId: state.remoteId,
+          generation: state.generation,
+          initializedAt: state.initializedAt,
+          updatedAt: state.updatedAt,
+        }
+      : null,
+    manifest: snapshot ? snapshotToDirectoryManifest(snapshot) : null,
+  })
+}
+
+function remoteVersionsMatch(
+  remote: RemoteReadResult,
+  expectedState: WebDavRemoteState,
+  expectedSnapshot: Awaited<ReturnType<typeof buildLocalSnapshot>>,
+) {
+  return remote.version === buildRemoteVersion(expectedState, expectedSnapshot)
 }
 
 async function readRemoteSnapshot(rootUrl: string, username: string, password: string) {

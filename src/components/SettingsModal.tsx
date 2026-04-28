@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { normalizeBaseUrl } from '../lib/api'
-import { useStore, exportData, importData, clearAllData } from '../store'
+import { useStore, exportData, importData, clearAllData, resetLocalDataPreservingSettings } from '../store'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, type AppSettings } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import {
@@ -126,6 +126,28 @@ export default function SettingsModal() {
         } catch (err) {
           useStore.getState().showToast(
             `本地覆盖远端失败：${err instanceof Error ? err.message : String(err)}`,
+            'error',
+          )
+        }
+      },
+      messageAlign: 'left',
+    })
+  }
+
+  const handleReinitializeLocalAndWebDav = () => {
+    setConfirmDialog({
+      title: '初始化 IndexedDB 和 WebDAV',
+      message: '确定要初始化当前浏览器的 IndexedDB 缓存，并清空当前 WebDAV 目录中的 manifest、sync-state 和图片文件吗？\n\n会保留当前填写的 API 与 WebDAV 配置，但任务、图片、删除记录和同步状态都会被清空。初始化完成后，程序会立即写回一份新的空快照，用来重建远端同步状态。此操作不可恢复。',
+      confirmText: '确认初始化',
+      action: async () => {
+        try {
+          await clearWebDavDirectory()
+          await resetLocalDataPreservingSettings({ silent: true })
+          await overwriteWebDavWithLocal()
+          useStore.getState().showToast('IndexedDB 和 WebDAV 已初始化并重建同步状态', 'success')
+        } catch (err) {
+          useStore.getState().showToast(
+            `初始化 IndexedDB 和 WebDAV 失败：${err instanceof Error ? err.message : String(err)}`,
             'error',
           )
         }
@@ -383,6 +405,14 @@ export default function SettingsModal() {
                       本地覆盖远端
                     </button>
                   </div>
+                  <button
+                    type="button"
+                    onClick={handleReinitializeLocalAndWebDav}
+                    className="w-full rounded-xl border border-red-300/80 bg-red-100/70 px-4 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-200/80 disabled:opacity-50 dark:border-red-500/30 dark:bg-red-500/15 dark:text-red-300 dark:hover:bg-red-500/25"
+                    disabled={!draft.webdav.url.trim()}
+                  >
+                    初始化 IndexedDB 和 WebDAV
+                  </button>
                 </div>
               )}
 

@@ -35,8 +35,14 @@ const DEFAULT_TEXT_STYLE: TextStyleState = {
   fontStyle: 'normal',
 }
 
+const DEFAULT_MASK_HUE = 0
+
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
+}
+
+function buildMaskColor(hue: number, alpha: number) {
+  return `hsla(${Math.round(hue)}, 85%, 48%, ${clamp(alpha, 0.05, 1)})`
 }
 
 function getEditorKind(object: FabricObject | null): string | undefined {
@@ -112,6 +118,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   const [toolMode, setToolMode] = useState<ToolMode>('select')
   const [maskOpacity, setMaskOpacity] = useState(0.55)
   const [maskWidth, setMaskWidth] = useState(34)
+  const [maskHue, setMaskHue] = useState(DEFAULT_MASK_HUE)
   const [maskShapeType, setMaskShapeType] = useState<MaskShapeType>('rect')
   const [activeObject, setActiveObject] = useState<FabricObject | null>(null)
   const [textStyle, setTextStyle] = useState<TextStyleState>(DEFAULT_TEXT_STYLE)
@@ -228,12 +235,22 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     const alpha = clamp(maskOpacity, 0.05, 1)
     const width = clamp(maskWidth, 4, 160)
     const brush = new PencilBrush(canvas)
-    brush.color = `rgba(0, 0, 0, ${alpha})`
+    brush.color = buildMaskColor(maskHue, alpha)
     brush.width = width
     canvas.freeDrawingBrush = brush
     canvas.isDrawingMode = toolMode === 'mask'
     canvas.defaultCursor = toolMode === 'mask' ? 'crosshair' : 'default'
-  }, [maskOpacity, maskWidth, toolMode])
+  }, [maskHue, maskOpacity, maskWidth, toolMode])
+
+  const handleToolModeChange = useCallback((nextToolMode: ToolMode) => {
+    const canvas = canvasRef.current
+    if (canvas) {
+      canvas.discardActiveObject()
+      canvas.requestRenderAll()
+    }
+    setActiveObject(null)
+    setToolMode(nextToolMode)
+  }, [])
 
   const redrawBackground = useCallback(() => {
     redrawBackgroundNow()
@@ -335,8 +352,8 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
       fill: 'rgba(59, 130, 246, 0.001)',
       stroke: 'rgba(59, 130, 246, 0)',
       strokeWidth: 0,
-      selectable: true,
-      evented: true,
+      selectable: false,
+      evented: false,
       hasControls: false,
       lockMovementX: true,
       lockMovementY: true,
@@ -479,6 +496,23 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
           lastPointerRef.current = { x: rawEvent.clientX, y: rawEvent.clientY }
           canvas.selection = false
           canvas.defaultCursor = 'grab'
+          return
+        }
+
+        if (toolModeRef.current === 'select' && !event.target) {
+          const pointer = canvas.getScenePoint(event.e)
+          const bounds = imageBoundsRef.current
+          const isInsideBaseImage =
+            pointer.x >= bounds.left &&
+            pointer.x <= bounds.left + bounds.width &&
+            pointer.y >= bounds.top &&
+            pointer.y <= bounds.top + bounds.height
+          if (isInsideBaseImage) {
+            const baseProxy = canvas.getObjects().find((object) => getEditorKind(object) === 'base-image') ?? null
+            canvas.discardActiveObject()
+            canvas.requestRenderAll()
+            setActiveObject(baseProxy)
+          }
         }
       })
 
@@ -506,10 +540,16 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
         setActiveObject(current)
         syncTextStyleFromObject(current)
         const selectedShapeType = getMaskShapeTypeFromObject(current)
-        if (selectedShapeType) {
+      if (selectedShapeType) {
           setMaskShapeType(selectedShapeType)
+        if (typeof current?.fill === 'string') {
+          const match = current.fill.match(/hsla?\((\d+)/i)
+          if (match) {
+            setMaskHue(clamp(Number(match[1]) || DEFAULT_MASK_HUE, 0, 360))
+          }
         }
       }
+    }
 
       canvas.on('selection:created', handleSelection)
       canvas.on('selection:updated', handleSelection)
@@ -640,11 +680,11 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     const current = activeObject
     if (!canvas || !current || getEditorKind(current) !== 'mask-region') return
     current.set({
-      fill: `rgba(0, 0, 0, ${clamp(maskOpacity, 0.05, 1)})`,
+      fill: buildMaskColor(maskHue, maskOpacity),
     })
     current.setCoords()
     canvas.renderAll()
-  }, [activeObject, maskOpacity])
+  }, [activeObject, maskHue, maskOpacity])
 
   const handleDeleteActiveObject = useCallback(() => {
     const canvas = canvasRef.current
@@ -784,7 +824,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   }
 
   const buildMaskShape = useCallback((shapeType: MaskShapeType, left: number, top: number, width: number, height: number) => {
-    const fill = `rgba(0, 0, 0, ${clamp(maskOpacity, 0.05, 1)})`
+    const fill = buildMaskColor(maskHue, maskOpacity)
     const centerLeft = left + width / 2
     const centerTop = top + height / 2
     const shared = {
@@ -821,7 +861,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
       width,
       height,
     })
-  }, [maskOpacity])
+  }, [maskHue, maskOpacity])
 
   const handleAddMaskRegion = () => {
     const canvas = canvasRef.current
@@ -855,7 +895,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
     const angle = activeObject.angle ?? 0
     const fill = typeof activeObject.fill === 'string'
       ? activeObject.fill
-      : `rgba(0, 0, 0, ${clamp(maskOpacity, 0.05, 1)})`
+      : buildMaskColor(maskHue, maskOpacity)
 
     suppressHistoryRef.current = true
     canvas.remove(activeObject)
@@ -885,7 +925,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
 
   const handleFlipActiveObject = (axis: 'x' | 'y') => {
     const canvas = canvasRef.current
-    const current = canvas?.getActiveObject()
+    const current = canvas?.getActiveObject() ?? activeObject
     if (!canvas || !current) return
 
     if (getEditorKind(current) === 'base-image') {
@@ -988,9 +1028,17 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
   const isTextSelected = activeObject instanceof IText
   const activeEditorKind = getEditorKind(activeObject)
   const canDeleteActiveObject = Boolean(activeObject && activeEditorKind !== 'base-image')
-  const showMaskSettings = toolMode === 'mask' || activeEditorKind === 'mask-region' || activeEditorKind === 'mask-brush'
-  const showTextSettings = isTextSelected
-  const showShapeSelector = activeEditorKind === 'mask-region'
+  const settingsPanel =
+    toolMode === 'mask'
+      ? 'mask'
+      : activeEditorKind === 'mask-region'
+        ? 'mask'
+        : isTextSelected
+          ? 'text'
+          : null
+  const showMaskSettings = settingsPanel === 'mask'
+  const showTextSettings = settingsPanel === 'text'
+  const showShapeSelector = showMaskSettings && activeEditorKind === 'mask-region'
 
   return (
     <div className="fixed inset-0 z-[75] h-[100dvh] overflow-hidden bg-black/70 backdrop-blur-md">
@@ -1059,7 +1107,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
               <div className="grid grid-cols-2 gap-2">
                 <div className={canDeleteActiveObject && isMobileDevice ? 'grid grid-cols-2 gap-2' : ''}>
                   <button
-                    onClick={() => setToolMode('select')}
+                  onClick={() => handleToolModeChange('select')}
                     className={`w-full rounded-lg px-3 py-2 text-sm transition md:rounded-xl ${toolMode === 'select' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
                   >
                     选择
@@ -1074,7 +1122,7 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
                   )}
                 </div>
                 <button
-                  onClick={() => setToolMode('mask')}
+                  onClick={() => handleToolModeChange('mask')}
                   className={`rounded-lg px-3 py-2 text-sm transition md:rounded-xl ${toolMode === 'mask' ? 'bg-blue-500 text-white' : 'bg-white/8 text-white hover:bg-white/12'}`}
                 >
                   涂抹遮罩
@@ -1186,6 +1234,28 @@ export default function ReferenceImageEditorModal({ imageId, src, saveMode, onCl
                     className="w-full"
                   />
                   <div className="mt-1 text-xs text-white/45">{maskWidth}px</div>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-white/55">颜色</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="360"
+                    step="1"
+                    value={maskHue}
+                    onChange={(e) => setMaskHue(Number(e.target.value))}
+                    className="w-full appearance-none rounded-full"
+                    style={{
+                      background: 'linear-gradient(90deg, hsl(0 85% 48%), hsl(60 85% 48%), hsl(120 85% 48%), hsl(180 85% 48%), hsl(240 85% 48%), hsl(300 85% 48%), hsl(360 85% 48%))',
+                    }}
+                  />
+                  <div className="mt-2 flex items-center justify-between text-xs text-white/45">
+                    <span>{maskHue}°</span>
+                    <span
+                      className="inline-block h-4 w-8 rounded-full border border-white/15"
+                      style={{ backgroundColor: buildMaskColor(maskHue, maskOpacity) }}
+                    />
+                  </div>
                 </label>
               </div>
               </section>

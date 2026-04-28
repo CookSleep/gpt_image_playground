@@ -587,6 +587,43 @@ export async function clearAllData(options: { silent?: boolean } = {}) {
   }
 }
 
+/** 初始化本地缓存数据，但保留当前设置 */
+export async function resetLocalDataPreservingSettings(options: { silent?: boolean } = {}) {
+  await dbClearTasks()
+  await clearImages()
+  clearSyncTombstones()
+  imageCache.clear()
+  const {
+    settings,
+    setTasks,
+    clearInputImages,
+    setParams,
+    setPrompt,
+    clearSelection,
+    setDetailTaskId,
+    setLightboxImageId,
+    setLightboxStartEditor,
+    showToast,
+  } = useStore.getState()
+  setTasks([])
+  clearInputImages()
+  setPrompt('')
+  setParams({ ...DEFAULT_PARAMS })
+  clearSelection()
+  setDetailTaskId(null)
+  setLightboxImageId(null, [])
+  setLightboxStartEditor(false)
+  useStore.setState({
+    settings: {
+      ...settings,
+      updatedAt: Date.now(),
+    },
+  })
+  if (!options.silent) {
+    showToast('本地缓存已初始化', 'success')
+  }
+}
+
 /** 从 dataUrl 解析出 MIME 扩展名和二进制数据 */
 /** 导出数据为 ZIP */
 export async function exportData() {
