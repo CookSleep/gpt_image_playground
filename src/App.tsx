@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { initStore } from './store'
 import { useStore } from './store'
 import { normalizeBaseUrl } from './lib/api'
-import type { ApiMode } from './types'
+import type { ApiMode, ApiProvider } from './types'
 import Header from './components/Header'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
@@ -20,7 +20,7 @@ export default function App() {
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)
-    const nextSettings: { baseUrl?: string; apiKey?: string; codexCli?: boolean; apiMode?: ApiMode } = {}
+    const nextSettings: { baseUrl?: string; apiKey?: string; codexCli?: boolean; apiMode?: ApiMode; profiles?: any[]; activeProfileId?: string } = {}
 
     const apiUrlParam = searchParams.get('apiUrl')
     if (apiUrlParam !== null) {
@@ -42,13 +42,33 @@ export default function App() {
       nextSettings.apiMode = apiModeParam
     }
 
+    const providerParam = searchParams.get('provider')?.trim().toLowerCase()
+    if (providerParam) {
+      const provider: ApiProvider | null = providerParam === 'fal'
+        ? 'fal'
+        : ['oai', 'openai', 'openai-compatible', 'new-api', 'oai-like'].includes(providerParam)
+          ? 'oai-like'
+          : null
+      if (provider) {
+        const state = useStore.getState()
+        const current = state.settings.profiles.find((profile) => profile.id === state.settings.activeProfileId) ?? state.settings.profiles[0]
+        if (current) {
+          nextSettings.profiles = state.settings.profiles.map((profile) =>
+            profile.id === current.id ? { ...profile, provider } : profile,
+          )
+          nextSettings.activeProfileId = current.id
+        }
+      }
+    }
+
     setSettings(nextSettings)
 
-    if (searchParams.has('apiUrl') || searchParams.has('apiKey') || searchParams.has('codexCli') || searchParams.has('apiMode')) {
+    if (searchParams.has('apiUrl') || searchParams.has('apiKey') || searchParams.has('codexCli') || searchParams.has('apiMode') || searchParams.has('provider')) {
       searchParams.delete('apiUrl')
       searchParams.delete('apiKey')
       searchParams.delete('codexCli')
       searchParams.delete('apiMode')
+      searchParams.delete('provider')
 
       const nextSearch = searchParams.toString()
       const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`

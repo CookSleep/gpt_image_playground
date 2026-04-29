@@ -8,7 +8,7 @@ import type {
   TaskRecord,
   ExportData,
 } from './types'
-import { DEFAULT_SETTINGS, DEFAULT_PARAMS } from './types'
+import { DEFAULT_SETTINGS, DEFAULT_PARAMS, getActiveApiProfile, normalizeSettings, validateApiProfile } from './types'
 import {
   getAllTasks,
   putTask,
@@ -134,18 +134,36 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       // Settings
       settings: { ...DEFAULT_SETTINGS },
-      setSettings: (s) => set((st) => ({
-        settings: {
-          ...st.settings,
-          ...s,
-          apiMode:
-            s.apiMode === 'images' || s.apiMode === 'responses'
-              ? s.apiMode
-              : st.settings.apiMode ?? DEFAULT_SETTINGS.apiMode,
-          codexCli: s.codexCli ?? st.settings.codexCli ?? DEFAULT_SETTINGS.codexCli,
-          apiProxy: s.apiProxy ?? st.settings.apiProxy ?? DEFAULT_SETTINGS.apiProxy,
-        },
-      })),
+      setSettings: (s) => set((st) => {
+        const previous = normalizeSettings(st.settings)
+        const incoming = s as Partial<AppSettings>
+        const hasLegacyOverrides =
+          incoming.baseUrl !== undefined ||
+          incoming.apiKey !== undefined ||
+          incoming.model !== undefined ||
+          incoming.timeout !== undefined ||
+          incoming.apiMode !== undefined ||
+          incoming.codexCli !== undefined ||
+          incoming.apiProxy !== undefined
+        const merged = normalizeSettings({ ...previous, ...incoming })
+        if (hasLegacyOverrides && incoming.profiles === undefined) {
+          merged.profiles = merged.profiles.map((profile) =>
+            profile.id === merged.activeProfileId
+              ? {
+                  ...profile,
+                  baseUrl: incoming.baseUrl ?? profile.baseUrl,
+                  apiKey: incoming.apiKey ?? profile.apiKey,
+                  model: incoming.model ?? profile.model,
+                  timeout: incoming.timeout ?? profile.timeout,
+                  apiMode: incoming.apiMode === 'images' || incoming.apiMode === 'responses' ? incoming.apiMode : profile.apiMode,
+                  codexCli: incoming.codexCli ?? profile.codexCli,
+                  apiProxy: incoming.apiProxy ?? profile.apiProxy,
+                }
+              : profile,
+          )
+        }
+        return { settings: normalizeSettings(merged) }
+      }),
       dismissedCodexCliPrompts: [],
       dismissCodexCliPrompt: (key) => set((st) => ({
         dismissedCodexCliPrompts: st.dismissedCodexCliPrompts.includes(key)
@@ -285,7 +303,8 @@ function genId(): string {
 }
 
 export function getCodexCliPromptKey(settings: AppSettings): string {
-  return `${settings.baseUrl}\n${settings.apiKey}`
+  const profile = getActiveApiProfile(settings)
+  return `${profile.baseUrl}\n${profile.apiKey}`
 }
 
 export function showCodexCliPrompt(force = false, reason = '接口返回的提示词已被改写') {
@@ -308,10 +327,11 @@ export function showCodexCliPrompt(force = false, reason = '接口返回的提�
 }
 
 function normalizeParamsForSettings(params: TaskParams, settings: AppSettings): TaskParams {
+  const activeProfile = getActiveApiProfile(settings)
   return {
     ...params,
     size: normalizeImageSize(params.size) || DEFAULT_PARAMS.size,
-    quality: settings.codexCli ? DEFAULT_PARAMS.quality : params.quality,
+    quality: activeProfile.provider === 'oai-like' && activeProfile.codexCli ? DEFAULT_PARAMS.quality : params.quality,
   }
 }
 
@@ -344,8 +364,9 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
   const { settings, prompt, inputImages, maskDraft, params, showToast, setConfirmDialog } =
     useStore.getState()
 
-  if (!settings.apiKey) {
-    showToast('请先在设置中配置 API Key', 'error')
+  const activeProfile = getActiveApiProfile(settings)
+  if (validateApiProfile(activeProfile)) {
+    showToast(`请先完善当前 Provider：${validateApiProfile(activeProfile)}`, 'error')
     useStore.getState().setShowSettings(true)
     return
   }
@@ -402,6 +423,9 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     id: taskId,
     prompt: prompt.trim(),
     params: normalizedParams,
+    apiProvider: activeProfile.provider,
+    apiProfileName: activeProfile.name,
+    apiModel: activeProfile.model,
     inputImageIds: orderedInputImages.map((i) => i.id),
     maskTargetImageId,
     maskImageId,
@@ -469,7 +493,8 @@ async function executeTask(taskId: string) {
       (revisedPrompt) => revisedPrompt?.trim() && revisedPrompt.trim() !== task.prompt.trim(),
     )
     const hasRevisedPromptValue = result.revisedPrompts?.some((revisedPrompt) => revisedPrompt?.trim())
-    if (!settings.codexCli) {
+    const activeProfile = getActiveApiProfile(settings)
+    if (activeProfile.provider === 'oai-like' && !activeProfile.codexCli) {
       if (promptWasRevised) {
         showCodexCliPrompt()
       } else if (!hasRevisedPromptValue) {
@@ -527,12 +552,16 @@ export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
 /** 重试失败的任务：创建新任务并执行 */
 export async function retryTask(task: TaskRecord) {
   const { settings } = useStore.getState()
+  const activeProfile = getActiveApiProfile(settings)
   const normalizedParams = normalizeParamsForSettings(task.params, settings)
   const taskId = genId()
   const newTask: TaskRecord = {
     id: taskId,
     prompt: task.prompt,
     params: normalizedParams,
+    apiProvider: activeProfile.provider,
+    apiProfileName: activeProfile.name,
+    apiModel: activeProfile.model,
     inputImageIds: [...task.inputImageIds],
     maskTargetImageId: task.maskTargetImageId ?? null,
     maskImageId: task.maskImageId ?? null,

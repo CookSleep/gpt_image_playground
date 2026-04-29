@@ -741,11 +741,13 @@ export default function InputBar() {
             setLightboxImageId(img.id, inputImages.map((i) => i.id))
           }}
         >
-          <img
-            src={displaySrc}
-            className="w-full h-full object-cover hover:opacity-90 transition-opacity pointer-events-none"
-            alt=""
-          />
+          {displaySrc && (
+            <img
+              src={displaySrc}
+              className="w-full h-full object-cover hover:opacity-90 transition-opacity pointer-events-none"
+              alt=""
+            />
+          )}
           {isMaskTarget && (
             <span className="absolute left-1 top-1 rounded bg-blue-500/90 px-1.5 py-0.5 text-[8px] leading-none text-white font-bold tracking-wider backdrop-blur-sm z-10 pointer-events-none">
               MASK
@@ -811,7 +813,7 @@ export default function InputBar() {
           {inputImages.map((img, idx) => renderImageThumb(img, idx))}
           {renderClearAllButton()}
         </div>
-        {touchDragPreview && createPortal(
+        {touchDragPreview?.src && createPortal(
           <div
             className="fixed z-[140] h-[52px] w-[52px] overflow-hidden rounded-xl shadow-xl pointer-events-none opacity-90"
             style={{ left: touchDragPreview.x, top: touchDragPreview.y, transform: 'translate(-50%, -50%)' }}

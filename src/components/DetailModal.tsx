@@ -163,6 +163,10 @@ export default function DetailModal() {
   const hasHandledPromptWarning = settings.codexCli || dismissedCodexCliPrompts.includes(codexCliPromptKey)
   const showPromptWarning = Boolean(currentOutputImageId && (!currentRevisedPrompt || showRevisedPrompt) && !hasHandledPromptWarning)
   const aggregateActualParams = outputLen > 0 ? { ...task.actualParams, n: outputLen } : task.actualParams
+  const taskProvider = task.apiProvider
+  const taskProviderName = taskProvider === 'fal' ? 'fal.ai' : taskProvider === 'oai-like' ? 'OAI-like' : '未知'
+  const taskProfileName = task.apiProfileName || '旧记录未保存'
+  const taskModel = task.apiModel || '未知'
 
   const formatTime = (ts: number | null) => {
     if (!ts) return ''
@@ -285,7 +289,7 @@ export default function DetailModal() {
 
         {/* 左侧：图片 */}
         <div ref={imagePanelRef} className="md:w-1/2 w-full h-64 md:h-auto bg-gray-100 dark:bg-black/20 relative flex items-center justify-center flex-shrink-0 min-h-[16rem]">
-          {task.status === 'done' && outputLen > 0 && (
+          {task.status === 'done' && outputLen > 0 && currentOutputImageSrc && (
             <>
               <img
                 ref={mainImageRef}
@@ -499,11 +503,13 @@ export default function DetailModal() {
                           }`}
                           onClick={() => setLightboxImageId(imgId, allInputImageIds)}
                         >
-                          <img
-                            src={displaySrc}
-                            className="w-full h-full object-cover"
-                            alt=""
-                          />
+                          {displaySrc && (
+                            <img
+                              src={displaySrc}
+                              className="w-full h-full object-cover"
+                              alt=""
+                            />
+                          )}
                           {isMaskTarget && (
                             <span className="absolute left-1 top-1 rounded bg-blue-500/90 px-1.5 py-0.5 text-[8px] leading-none text-white font-bold tracking-wider backdrop-blur-sm z-10 pointer-events-none">
                               MASK
@@ -521,6 +527,12 @@ export default function DetailModal() {
             <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">
               参数配置
             </h3>
+            <div className="mb-2 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-white/[0.03]">
+              <span className="text-gray-400 dark:text-gray-500">Provider</span>
+              <br />
+              <span className="font-medium text-gray-700 dark:text-gray-200">{taskProviderName}</span>
+              <span className="text-gray-400 dark:text-gray-500"> · {taskProfileName} · {taskModel}</span>
+            </div>
             <div className="grid grid-cols-2 gap-2 text-xs mb-4">
               <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2">
                 <span className="text-gray-400 dark:text-gray-500">尺寸</span>
