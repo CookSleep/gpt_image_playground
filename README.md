@@ -98,7 +98,30 @@
 </details>
 
 <details>
-<summary><strong>🐳 方式二：Docker 部署</strong></summary>
+<summary><strong>☁️ 方式二：EdgeOne Pages 自动部署</strong></summary>
+
+项目可直接部署到 EdgeOne Pages，仓库根目录已包含 `edgeone.json`，用于固定安装命令、构建命令、输出目录与 Node 版本。将 GitHub 仓库导入 EdgeOne 后，可直接使用仓库内配置自动构建与部署。
+
+如需在 EdgeOne 控制台手动核对配置，请确认以下参数：
+
+- Root Directory：`.`
+- Install Command：`npm install`
+- Build Command：`npm run build`
+- Output Directory：`dist`
+- Node Version：`20`
+
+如需预置默认 API 节点，可在 EdgeOne Pages 的环境变量中添加：
+
+```bash
+VITE_DEFAULT_API_URL=https://api.openai.com/v1
+```
+
+部署完成后，打开 EdgeOne 分配的域名，在页面右上角设置中填入 API Key 即可使用。
+
+</details>
+
+<details>
+<summary><strong>🐳 方式三：Docker 部署</strong></summary>
 
 官方镜像已发布至 GitHub Container Registry。Docker 部署支持在运行时注入默认配置。
 
@@ -145,7 +168,7 @@ services:
 </details>
 
 <details>
-<summary><strong>💻 方式三：本地开发与静态构建</strong></summary>
+<summary><strong>💻 方式四：本地开发与静态构建</strong></summary>
 
 **1. 环境准备与启动**
 
