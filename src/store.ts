@@ -24,6 +24,7 @@ import {
 } from './lib/db'
 import { callImageApi } from './lib/api'
 import { getFalErrorMessage, getFalQueuedImageResult, getFalQueueStatus } from './lib/falAiImageApi'
+import { getMixedContentError, isApiProxyAvailable, readClientDevProxyConfig, shouldUseApiProxy } from './lib/devProxy'
 import { validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
 import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompatibility'
@@ -568,6 +569,17 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
   if (!prompt.trim()) {
     showToast('请输入提示词', 'error')
     return
+  }
+
+  if (activeProfile.provider === 'openai') {
+    const proxyConfig = readClientDevProxyConfig()
+    const useApiProxy = isApiProxyAvailable(proxyConfig) && (activeProfile.apiProxy || shouldUseApiProxy(activeProfile.baseUrl, proxyConfig))
+    const mixedContentError = useApiProxy ? null : getMixedContentError(activeProfile.baseUrl)
+    if (mixedContentError) {
+      showToast(mixedContentError, 'error')
+      useStore.getState().setShowSettings(true)
+      return
+    }
   }
 
   let orderedInputImages = inputImages

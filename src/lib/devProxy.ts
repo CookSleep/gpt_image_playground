@@ -88,3 +88,44 @@ export function readClientDevProxyConfig(): DevProxyConfig | null {
 export function isApiProxyAvailable(proxyConfig: DevProxyConfig | null = readClientDevProxyConfig()): boolean {
   return readRuntimeEnv(import.meta.env.VITE_API_PROXY_AVAILABLE) === 'true' || Boolean(proxyConfig?.enabled)
 }
+
+export function getMixedContentError(baseUrl: string, pageProtocol = typeof window !== 'undefined' ? window.location.protocol : ''): string | null {
+  if (pageProtocol !== 'https:') return null
+
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
+  if (!normalizedBaseUrl || !/^http:\/\//i.test(normalizedBaseUrl)) return null
+
+  return '当前页面是 HTTPS，浏览器会拦截 HTTP API 请求。请改用 HTTPS API，或在本地 HTTP 页面/同源代理环境中使用该地址。'
+}
+
+function isPrivateOrLocalHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase()
+  if (!normalized) return false
+  if (normalized === 'localhost' || normalized === '::1') return true
+  if (normalized.endsWith('.local')) return true
+  if (/^127(?:\.\d{1,3}){3}$/.test(normalized)) return true
+  if (/^10(?:\.\d{1,3}){3}$/.test(normalized)) return true
+  if (/^192\.168(?:\.\d{1,3}){2}$/.test(normalized)) return true
+  if (/^172\.(1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2}$/.test(normalized)) return true
+  return false
+}
+
+export function shouldUseApiProxy(
+  baseUrl: string,
+  proxyConfig: DevProxyConfig | null = readClientDevProxyConfig(),
+  pageOrigin = typeof window !== 'undefined' ? window.location.origin : '',
+  isDev = import.meta.env.DEV,
+): boolean {
+  if (!isApiProxyAvailable(proxyConfig) || !isDev) return false
+
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
+  if (!normalizedBaseUrl) return false
+
+  try {
+    const apiUrl = new URL(normalizedBaseUrl)
+    if (pageOrigin && apiUrl.origin === pageOrigin) return false
+    return isPrivateOrLocalHostname(apiUrl.hostname)
+  } catch {
+    return false
+  }
+}

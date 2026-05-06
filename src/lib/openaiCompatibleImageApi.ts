@@ -1,6 +1,6 @@
 import type { ApiProfile, ImageApiResponse, ResponsesApiResponse, TaskParams } from '../types'
 import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
-import { buildApiUrl, isApiProxyAvailable, readClientDevProxyConfig } from './devProxy'
+import { buildApiUrl, getMixedContentError, isApiProxyAvailable, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import {
   assertImageInputPayloadSize,
   assertMaskEditFileSize,
@@ -162,7 +162,11 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
   const isEdit = inputImageDataUrls.length > 0
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
-  const useApiProxy = profile.apiProxy && isApiProxyAvailable(proxyConfig)
+  const useApiProxy = isApiProxyAvailable(proxyConfig) && (profile.apiProxy || shouldUseApiProxy(profile.baseUrl, proxyConfig))
+  if (!useApiProxy) {
+    const mixedContentError = getMixedContentError(profile.baseUrl)
+    if (mixedContentError) throw new Error(mixedContentError)
+  }
   const requestHeaders = createRequestHeaders(profile)
 
   const controller = new AbortController()
@@ -339,7 +343,11 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
   const { prompt, params, inputImageDataUrls } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
-  const useApiProxy = profile.apiProxy && isApiProxyAvailable(proxyConfig)
+  const useApiProxy = isApiProxyAvailable(proxyConfig) && (profile.apiProxy || shouldUseApiProxy(profile.baseUrl, proxyConfig))
+  if (!useApiProxy) {
+    const mixedContentError = getMixedContentError(profile.baseUrl)
+    if (mixedContentError) throw new Error(mixedContentError)
+  }
   const requestHeaders = createRequestHeaders(profile)
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)

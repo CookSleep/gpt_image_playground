@@ -7,6 +7,7 @@ describe('callImageApi', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
   })
 
   it.each([false, true])(
@@ -125,7 +126,7 @@ describe('callImageApi', () => {
     )
   })
 
-  it('ignores stored API proxy settings when the current deployment has no proxy', async () => {
+  it('uses the configured API URL directly for public hosts when API proxy is disabled', async () => {
     vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       data: [{ b64_json: 'aW1hZ2U=' }],
@@ -138,8 +139,8 @@ describe('callImageApi', () => {
       settings: {
         ...DEFAULT_SETTINGS,
         apiKey: 'test-key',
-        apiProxy: true,
-        baseUrl: 'http://api.example.com/v1',
+        apiProxy: false,
+        baseUrl: 'https://api.example.com/v1',
       },
       prompt: 'prompt',
       params: { ...DEFAULT_PARAMS },
@@ -147,7 +148,44 @@ describe('callImageApi', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://api.example.com/v1/images/generations',
+      'https://api.example.com/v1/images/generations',
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
+  it('uses the dev proxy automatically for local network API URLs', async () => {
+    vi.stubGlobal('__DEV_PROXY_CONFIG__', {
+      enabled: true,
+      prefix: '/api-proxy',
+      target: 'http://192.168.0.171:8080/v1',
+      changeOrigin: true,
+      secure: false,
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      output: [{
+        type: 'image_generation_call',
+        result: 'aW1hZ2U=',
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        apiMode: 'responses',
+        apiProxy: false,
+        baseUrl: 'http://192.168.0.171:8080/v1',
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api-proxy/responses',
       expect.objectContaining({ method: 'POST' }),
     )
   })

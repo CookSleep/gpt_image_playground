@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { normalizeBaseUrl } from '../lib/api'
-import { isApiProxyAvailable, readClientDevProxyConfig } from '../lib/devProxy'
+import { getMixedContentError, isApiProxyAvailable, readClientDevProxyConfig, shouldUseApiProxy } from '../lib/devProxy'
 import { useStore, exportData, importData, clearAllData } from '../store'
 import {
   createDefaultOpenAIProfile,
@@ -41,7 +41,10 @@ export default function SettingsModal() {
   
   const apiProxyAvailable = isApiProxyAvailable(readClientDevProxyConfig())
   const activeProfile = draft.profiles.find((profile) => profile.id === draft.activeProfileId) ?? draft.profiles[0] ?? getActiveApiProfile(draft)
-  const apiProxyEnabled = apiProxyAvailable && activeProfile.provider === 'openai' && activeProfile.apiProxy
+  const apiProxyEnabled = apiProxyAvailable && activeProfile.provider === 'openai' && (activeProfile.apiProxy || shouldUseApiProxy(activeProfile.baseUrl))
+  const mixedContentError = activeProfile.provider === 'openai' && !apiProxyEnabled
+    ? getMixedContentError(activeProfile.baseUrl)
+    : null
 
   const getDefaultModelForMode = (apiMode: AppSettings['apiMode']) =>
     apiMode === 'responses' ? DEFAULT_RESPONSES_MODEL : DEFAULT_IMAGES_MODEL
@@ -397,11 +400,16 @@ export default function SettingsModal() {
                   />
                   <div data-selectable-text className="mt-1 min-h-[22px] flex items-center text-[10px] text-gray-400 dark:text-gray-500">
                     {apiProxyEnabled ? (
-                      <span className="text-yellow-600 dark:text-yellow-500">已开启代理，实际请求目标由部署端决定，此处设置被忽略。</span>
+                      <span className="text-yellow-600 dark:text-yellow-500">已启用同源代理，实际请求会走 /api-proxy，此处 API URL 设置会被忽略。</span>
                     ) : (
                       <span>支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code>，<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">codexCli=true</code></span>
                     )}
                   </div>
+                  {mixedContentError && (
+                    <div data-selectable-text className="mt-2 rounded-xl border border-red-200/70 bg-red-50/80 px-3 py-2 text-[10px] leading-relaxed text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+                      {mixedContentError}
+                    </div>
+                  )}
                 </label>
               )}
 

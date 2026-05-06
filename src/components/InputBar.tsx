@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useStore, submitTask, addImageFromFile, updateTaskInStore, removeMultipleTasks } from '../store'
 import { DEFAULT_PARAMS } from '../types'
 import { getActiveApiProfile } from '../lib/apiProfiles'
+import { getMixedContentError, isApiProxyAvailable, readClientDevProxyConfig, shouldUseApiProxy } from '../lib/devProxy'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
@@ -156,6 +157,11 @@ export default function InputBar() {
   const canSubmit = prompt.trim() && settings.apiKey
   const activeProfile = getActiveApiProfile(settings)
   const activeProvider = activeProfile.provider
+  const proxyConfig = readClientDevProxyConfig()
+  const apiProxyEnabled = activeProvider === 'openai' && isApiProxyAvailable(proxyConfig) && (activeProfile.apiProxy || shouldUseApiProxy(activeProfile.baseUrl, proxyConfig))
+  const mixedContentError = activeProvider === 'openai' && !apiProxyEnabled
+    ? getMixedContentError(activeProfile.baseUrl)
+    : null
   const isFalProvider = activeProvider === 'fal'
   const moderationDisabled = settings.apiMode === 'responses' || isFalProvider
   const compressionDisabled = params.output_format === 'png' || isFalProvider
@@ -185,6 +191,11 @@ export default function InputBar() {
   const referenceImages = maskTargetImage
     ? inputImages.filter((img) => img.id !== maskTargetImage.id)
     : inputImages
+  const submitTooltipText = !settings.apiKey
+    ? '尚未完成 API 配置，请在右上角设置中进行'
+    : mixedContentError
+      ? mixedContentError
+      : null
 
   useEffect(() => {
     setOutputCompressionInput(
@@ -1257,16 +1268,22 @@ export default function InputBar() {
                   onMouseEnter={() => setSubmitHover(true)}
                   onMouseLeave={() => setSubmitHover(false)}
                 >
-                  <ButtonTooltip visible={!settings.apiKey && submitHover} text="尚未完成 API 配置，请在右上角设置中进行" />
+                  <ButtonTooltip visible={Boolean(submitTooltipText && submitHover)} text={submitTooltipText ?? ''} />
                   <button
                     onClick={() => settings.apiKey ? submitTask() : setShowSettings(true)}
-                    disabled={settings.apiKey ? !canSubmit : false}
+                    disabled={settings.apiKey ? (!canSubmit || Boolean(mixedContentError)) : false}
                     className={`p-2.5 rounded-xl transition-all shadow-sm hover:shadow ${
                       !settings.apiKey
                         ? 'bg-gray-300 dark:bg-white/[0.06] text-white cursor-pointer'
                         : 'bg-blue-500 text-white hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-white/[0.04] disabled:opacity-50 disabled:cursor-not-allowed'
                     }`}
-                    title={settings.apiKey ? (maskDraft ? '遮罩编辑 (Ctrl+Enter)' : '生成 (Ctrl+Enter)') : '请先配置 API'}
+                    title={settings.apiKey
+                      ? mixedContentError
+                        ? mixedContentError
+                        : maskDraft
+                          ? '遮罩编辑 (Ctrl+Enter)'
+                          : '生成 (Ctrl+Enter)'
+                      : '请先配置 API'}
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
@@ -1311,10 +1328,17 @@ export default function InputBar() {
                   onMouseEnter={() => setSubmitHover(true)}
                   onMouseLeave={() => setSubmitHover(false)}
                 >
-                  <ButtonTooltip visible={!settings.apiKey && submitHover} text="尚未完成 API 配置，请在右上角设置中进行" />
+                  <ButtonTooltip visible={Boolean(submitTooltipText && submitHover)} text={submitTooltipText ?? ''} />
                   <button
                     onClick={() => settings.apiKey ? submitTask() : setShowSettings(true)}
-                    disabled={settings.apiKey ? !canSubmit : false}
+                    disabled={settings.apiKey ? (!canSubmit || Boolean(mixedContentError)) : false}
+                    title={settings.apiKey
+                      ? mixedContentError
+                        ? mixedContentError
+                        : maskDraft
+                          ? '遮罩编辑 (Ctrl+Enter)'
+                          : '生成图像 (Ctrl+Enter)'
+                      : '请先配置 API'}
                     className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all shadow-sm ${
                       !settings.apiKey
                         ? 'bg-gray-300 dark:bg-white/[0.06] text-white cursor-pointer'
