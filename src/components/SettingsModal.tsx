@@ -20,6 +20,9 @@ import {
   normalizeCustomProviderDefinition,
   normalizeSettings,
   switchApiProfileProvider,
+  ASTRAFLOW_PROVIDER_DEFINITION,
+  ASTRAFLOW_BASE_URL_GLOBAL,
+  ASTRAFLOW_BASE_URL_CN,
 } from '../lib/apiProfiles'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import type { ApiProfile, AppSettings, CustomProviderDefinition } from '../types'
@@ -36,6 +39,9 @@ function newId(prefix: string) {
 }
 
 const ADD_CUSTOM_PROVIDER_VALUE = '__add_custom_provider__'
+const ADD_ASTRAFLOW_GLOBAL_VALUE = '__add_astraflow_global__'
+const ADD_ASTRAFLOW_CN_VALUE = '__add_astraflow_cn__'
+
 const COPY_IMPORT_URL_OPTIONS_STORAGE_KEY = 'gpt-image-playground.copy-import-url-options'
 
 const DEFAULT_COPY_IMPORT_URL_OPTIONS = {
@@ -355,6 +361,8 @@ export default function SettingsModal() {
 
   const providerOptions = [
     { label: '创建自定义服务商', value: ADD_CUSTOM_PROVIDER_VALUE, variant: 'action' as const },
+    { label: '添加 Astraflow（全球节点）', value: ADD_ASTRAFLOW_GLOBAL_VALUE, variant: 'action' as const },
+    { label: '添加 Astraflow（中国节点）', value: ADD_ASTRAFLOW_CN_VALUE, variant: 'action' as const },
     ...unorderedProviderOptions.sort((a, b) => {
       const aIndex = providerOrder.indexOf(String(a.value))
       const bIndex = providerOrder.indexOf(String(b.value))
@@ -854,6 +862,14 @@ export default function SettingsModal() {
   }
 
   const handleProviderTypeChange = (value: string | number) => {
+    if (value === ADD_ASTRAFLOW_GLOBAL_VALUE) {
+      addAstraflowProvider(ASTRAFLOW_BASE_URL_GLOBAL)
+      return
+    }
+    if (value === ADD_ASTRAFLOW_CN_VALUE) {
+      addAstraflowProvider(ASTRAFLOW_BASE_URL_CN)
+      return
+    }
     if (value === ADD_CUSTOM_PROVIDER_VALUE) {
       setEditingCustomProviderId(null)
       setCustomProviderForm(createDefaultCustomProviderForm())

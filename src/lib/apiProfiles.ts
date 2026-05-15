@@ -255,6 +255,57 @@ export function normalizeCustomProviderDefinitions(input: unknown): CustomProvid
     .filter((item): item is CustomProviderDefinition => Boolean(item))
 }
 
+export const ASTRAFLOW_PROVIDER_DEFINITION: CustomProviderDefinition = {
+  id: 'custom-astraflow',
+  name: 'Astraflow (UCloud)',
+  template: 'http-image',
+  submit: {
+    path: 'images/generations',
+    method: 'POST',
+    contentType: 'json',
+    body: {
+      model: '$profile.model',
+      prompt: '$prompt',
+      size: '$params.size',
+      quality: '$params.quality',
+      output_format: '$params.output_format',
+      moderation: '$params.moderation',
+      output_compression: '$params.output_compression',
+      n: '$params.n',
+    },
+    result: {
+      imageUrlPaths: ['data.*.url'],
+      b64JsonPaths: ['data.*.b64_json'],
+    },
+  },
+  editSubmit: {
+    path: 'images/edits',
+    method: 'POST',
+    contentType: 'multipart',
+    body: {
+      model: '$profile.model',
+      prompt: '$prompt',
+      size: '$params.size',
+      quality: '$params.quality',
+      output_format: '$params.output_format',
+      moderation: '$params.moderation',
+      output_compression: '$params.output_compression',
+      n: '$params.n',
+    },
+    files: [
+      { field: 'image[]', source: 'inputImages', array: true },
+      { field: 'mask', source: 'mask' },
+    ],
+    result: {
+      imageUrlPaths: ['data.*.url'],
+      b64JsonPaths: ['data.*.b64_json'],
+    },
+  },
+}
+
+export const ASTRAFLOW_BASE_URL_GLOBAL = 'https://api-us-ca.umodelverse.ai/v1'
+export const ASTRAFLOW_BASE_URL_CN = 'https://api.modelverse.cn/v1'
+
 export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
   return {
     id: DEFAULT_OPENAI_PROFILE_ID,
