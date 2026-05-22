@@ -95,9 +95,25 @@ vi.mock('./lib/agentApi', () => ({
     }
   }),
 }))
-import { clearAgentConversations, clearImages, getAllAgentConversations, getAllTasks, putAgentConversation, putImage, putTask as putDbTask } from './lib/db'
+vi.mock('./lib/agentImageSearch', () => ({
+  searchAgentImages: vi.fn(async () => ({
+    query: '春日影 人物',
+    source: 'openverse',
+    results: [{
+      id: 'openverse:person-1',
+      title: '春日影 人物参考图',
+      imageUrl: 'https://example.com/person.png',
+      thumbnailUrl: 'https://example.com/person-thumb.png',
+      pageUrl: 'https://example.com/person',
+      source: 'Openverse',
+    }],
+  })),
+  fetchAgentImageAsDataUrl: vi.fn(async () => 'data:image/png;base64,reference-image'),
+}))
+import { clearAgentConversations, clearImages, getAllAgentConversations, getAllTasks, getImage, putAgentConversation, putImage, putTask as putDbTask } from './lib/db'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { cleanStaleAgentInputDrafts, deleteAgentRoundFromConversation, editOutputs, getActiveAgentRounds, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
+import { fetchAgentImageAsDataUrl, searchAgentImages } from './lib/agentImageSearch'
+import { cleanStaleAgentInputDrafts, deleteAgentRoundFromConversation, deleteImageIfUnreferenced, editOutputs, getActiveAgentRounds, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -350,6 +366,78 @@ describe('agent conversation persistence', () => {
     expect(state.agentConversations.map((conversation) => conversation.id)).toEqual(['stored-conversation', 'legacy-conversation'])
     expect(state.activeAgentConversationId).toBe('legacy-conversation')
     expect(stored.map((conversation) => conversation.id)).toEqual(['stored-conversation', 'legacy-conversation'])
+  })
+
+  it('keeps saved agent reference images during startup cleanup', async () => {
+    await clearImages()
+    await putImage({ id: 'saved-ref-image', dataUrl: imageA.dataUrl, source: 'upload', createdAt: 1 })
+    await putImage({ id: 'orphan-image', dataUrl: imageB.dataUrl, source: 'upload', createdAt: 1 })
+    await putAgentConversation(agentConversation({
+      id: 'conversation-with-ref',
+      rounds: [{
+        id: 'round-a',
+        index: 1,
+        parentRoundId: null,
+        userMessageId: 'user-a',
+        prompt: '保存参考图',
+        inputImageIds: [],
+        outputTaskIds: [],
+        savedReferenceImages: [{
+          id: 'saved-ref-a',
+          imageId: 'saved-ref-image',
+          title: '参考图',
+          sourceUrl: 'https://example.com/ref.png',
+          createdAt: 1,
+        }],
+        status: 'done',
+        error: null,
+        createdAt: 1,
+        finishedAt: 2,
+      }],
+      messages: [{ id: 'user-a', role: 'user', content: '保存参考图', roundId: 'round-a', createdAt: 1 }],
+    }))
+
+    await initStore()
+
+    expect(await getImage('saved-ref-image')).toBeTruthy()
+    expect(await getImage('orphan-image')).toBeUndefined()
+  })
+
+  it('does not delete images referenced only by saved agent references', async () => {
+    await clearImages()
+    await putImage({ id: 'saved-ref-image', dataUrl: imageA.dataUrl, source: 'upload', createdAt: 1 })
+    useStore.setState({
+      inputImages: [],
+      galleryInputDraft: null,
+      agentInputDrafts: {},
+      tasks: [],
+      agentConversations: [agentConversation({
+        rounds: [{
+          id: 'round-a',
+          index: 1,
+          parentRoundId: null,
+          userMessageId: 'user-a',
+          prompt: '保存参考图',
+          inputImageIds: [],
+          outputTaskIds: [],
+          savedReferenceImages: [{
+            id: 'saved-ref-a',
+            imageId: 'saved-ref-image',
+            title: '参考图',
+            sourceUrl: 'https://example.com/ref.png',
+            createdAt: 1,
+          }],
+          status: 'done',
+          error: null,
+          createdAt: 1,
+          finishedAt: 2,
+        }],
+      })],
+    })
+
+    await deleteImageIfUnreferenced('saved-ref-image')
+
+    expect(await getImage('saved-ref-image')).toBeTruthy()
   })
 
   it('strips generated image payloads from legacy task raw payloads during startup migration', async () => {
@@ -1513,6 +1601,405 @@ describe('agent batch reference resolution', () => {
     const batchArgs = vi.mocked(callBatchImageSingle).mock.calls[0][0]
     expect(batchArgs.referenceImageDataUrls).toEqual([imageA.dataUrl])
     expect(batchArgs.referenceIds).toEqual(['round-3-reference-1'])
+  })
+})
+
+describe('agent searched reference image flow', () => {
+  const responsesProfile = createDefaultOpenAIProfile({
+    id: 'responses-profile',
+    apiKey: 'test-key',
+    apiMode: 'responses',
+    model: DEFAULT_RESPONSES_MODEL,
+  })
+
+  beforeEach(async () => {
+    await clearImages()
+    vi.mocked(callAgentResponsesApi).mockReset()
+    vi.mocked(searchAgentImages).mockClear()
+    vi.mocked(fetchAgentImageAsDataUrl).mockClear()
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        apiMode: 'responses',
+        model: DEFAULT_RESPONSES_MODEL,
+        agentWebSearch: true,
+        profiles: [responsesProfile],
+        activeProfileId: responsesProfile.id,
+      }),
+      prompt: '搜索并整理一下“春日影”这个梗，然后将与其相关的人物的图片作为参考图。画一幅科普这个梗的图片，注意，请将相关人物图片传入参考图',
+      inputImages: [],
+      maskDraft: null,
+      params: { ...DEFAULT_PARAMS },
+      appMode: 'agent',
+      tasks: [],
+      agentConversations: [agentConversation({ id: 'conversation-a', activeRoundId: null })],
+      activeAgentConversationId: 'conversation-a',
+      agentEditingRoundId: null,
+      showToast: vi.fn(),
+    })
+  })
+
+  it('collects and injects searched reference images before image generation', async () => {
+    vi.mocked(callAgentResponsesApi)
+      .mockResolvedValueOnce({
+        text: '',
+        images: [],
+        outputItems: [{
+          type: 'function_call',
+          name: 'search_images',
+          call_id: 'search-call',
+          arguments: JSON.stringify({
+            query: '春日影 人物',
+            count: 6,
+            page_urls: ['https://anime.bang-dream.com/mygo/character/soyo/'],
+          }),
+        }],
+        responseId: 'response-search',
+      })
+      .mockResolvedValueOnce({
+        text: '',
+        images: [],
+        outputItems: [{
+          type: 'function_call',
+          name: 'save_images_for_reference',
+          call_id: 'save-call',
+          arguments: JSON.stringify({
+            images: [{
+              search_result_id: 'openverse:person-1',
+              image_url: '',
+              title: '春日影 人物参考图',
+              page_url: '',
+            }],
+            purpose: '作为科普信息图人物参考',
+          }),
+        }],
+        responseId: 'response-save',
+      })
+      .mockResolvedValueOnce({
+        text: '已使用保存的人物参考图生成。',
+        images: [{
+          toolCallId: 'image-call',
+          dataUrl: 'data:image/png;base64,generated-image',
+          revisedPrompt: '使用 <ref id="round-1-saved-reference-1" /> 作为人物参考生成中文科普信息图',
+        }],
+        outputItems: [
+          { type: 'message', content: [{ type: 'output_text', text: '已使用保存的人物参考图生成。' }] },
+          { type: 'image_generation_call', id: 'image-call', result: 'generated-image' },
+        ],
+        responseId: 'response-generate',
+      })
+
+    await submitAgentMessage()
+    for (let i = 0; i < 10 && vi.mocked(callAgentResponsesApi).mock.calls.length < 3; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
+    expect(callAgentResponsesApi).toHaveBeenCalledTimes(3)
+    expect(searchAgentImages).toHaveBeenCalledWith(expect.objectContaining({
+      query: '春日影 人物',
+      count: 6,
+      pageUrls: ['https://anime.bang-dream.com/mygo/character/soyo/'],
+    }))
+    expect(fetchAgentImageAsDataUrl).toHaveBeenCalledWith('https://example.com/person.png', expect.any(AbortSignal))
+
+    const firstCall = vi.mocked(callAgentResponsesApi).mock.calls[0][0]
+    expect(firstCall.imageGenerationEnabled).toBe(false)
+    expect(firstCall.toolChoice).toBeUndefined()
+
+    const secondCall = vi.mocked(callAgentResponsesApi).mock.calls[1][0]
+    expect(secondCall.imageGenerationEnabled).toBe(false)
+    expect(secondCall.toolChoice).toEqual({ type: 'function', name: 'save_images_for_reference' })
+
+    const thirdCall = vi.mocked(callAgentResponsesApi).mock.calls[2][0]
+    expect(thirdCall.imageGenerationEnabled).toBe(true)
+    const thirdInput = JSON.stringify(thirdCall.input)
+    expect(thirdInput).toContain('input_image')
+    expect(thirdInput).toContain('data:image/png;base64,reference-image')
+    expect(thirdInput).toContain('round-1-saved-reference-1')
+
+    const tasks = useStore.getState().tasks
+    const generatedTask = tasks.find((item) => item.agentToolCallId === 'image-call')
+    const conversation = useStore.getState().agentConversations.find((item) => item.id === 'conversation-a')
+    const savedReferenceImages = conversation?.rounds[0]?.savedReferenceImages ?? []
+    expect(tasks.some((item) => item.agentToolAction === 'save_reference')).toBe(false)
+    expect(tasks).toHaveLength(1)
+    expect(savedReferenceImages).toHaveLength(1)
+    expect(savedReferenceImages[0]).toEqual(expect.objectContaining({
+      imageId: expect.any(String),
+      title: '春日影 人物参考图',
+      sourceUrl: 'https://example.com/person.png',
+      pageUrl: 'https://example.com/person',
+      searchResultId: 'openverse:person-1',
+      toolCallId: 'save-call',
+    }))
+    expect(generatedTask?.inputImageIds).toContain(savedReferenceImages[0].imageId)
+    expect(conversation?.rounds[0]?.outputTaskIds).toEqual([generatedTask?.id])
+  })
+
+  it('keeps saved searched references available in later agent rounds', async () => {
+    await putImage({ id: 'saved-ref-image', dataUrl: imageA.dataUrl, source: 'upload', createdAt: 1 })
+    useStore.setState({
+      prompt: '基于上一轮已选图片再画一张',
+      agentConversations: [agentConversation({
+        id: 'conversation-a',
+        activeRoundId: 'round-a',
+        rounds: [{
+          id: 'round-a',
+          index: 1,
+          parentRoundId: null,
+          userMessageId: 'user-a',
+          assistantMessageId: 'assistant-a',
+          prompt: '搜索并保存参考图',
+          inputImageIds: [],
+          outputTaskIds: [],
+          savedReferenceImages: [{
+            id: 'saved-ref-a',
+            imageId: 'saved-ref-image',
+            title: '春日影 人物参考图',
+            sourceUrl: 'https://example.com/person.png',
+            pageUrl: 'https://example.com/person',
+            createdAt: 1,
+          }],
+          responseOutput: [
+            { type: 'function_call', name: 'save_images_for_reference', call_id: 'save-call' },
+            { type: 'function_call_output', call_id: 'save-call', output: '{"saved_refs":["<ref id=\\"round-1-saved-reference-1\\" />"]}' },
+          ],
+          status: 'done',
+          error: null,
+          createdAt: 1,
+          finishedAt: 2,
+        }],
+        messages: [
+          { id: 'user-a', role: 'user', content: '搜索并保存参考图', roundId: 'round-a', createdAt: 1 },
+          { id: 'assistant-a', role: 'assistant', content: '已保存参考图。', roundId: 'round-a', createdAt: 2 },
+        ],
+      })],
+    })
+    vi.mocked(callAgentResponsesApi).mockResolvedValueOnce({
+      text: '完成',
+      images: [],
+      outputItems: [{ type: 'message', content: [{ type: 'output_text', text: '完成' }] }],
+      responseId: 'response-followup',
+    })
+
+    await submitAgentMessage()
+    for (let i = 0; i < 10 && vi.mocked(callAgentResponsesApi).mock.calls.length < 1; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
+    expect(callAgentResponsesApi).toHaveBeenCalledTimes(1)
+    const serializedInput = JSON.stringify(vi.mocked(callAgentResponsesApi).mock.calls[0][0].input)
+    expect(serializedInput).toContain('data:image/png;base64,a')
+    expect(serializedInput).toContain('round-1-saved-reference-1')
+  })
+
+  it('does not silently generate when searched references are required but network search is disabled', async () => {
+    useStore.setState((state) => ({
+      settings: normalizeSettings({
+        ...state.settings,
+        agentWebSearch: false,
+      }),
+    }))
+
+    await submitAgentMessage()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(callAgentResponsesApi).not.toHaveBeenCalled()
+    const conversation = useStore.getState().agentConversations.find((item) => item.id === 'conversation-a')
+    const assistantMessage = conversation?.messages.find((message) => message.role === 'assistant')
+    expect(assistantMessage?.content).toContain('请在设置的 Agent 配置中开启“网络搜索”')
+  })
+
+  it('keeps collecting source pages when generic image search returns no savable references', async () => {
+    vi.mocked(searchAgentImages)
+      .mockResolvedValueOnce({
+        query: '春日影 人物',
+        source: 'openverse',
+        results: [],
+      })
+      .mockResolvedValueOnce({
+        query: '長崎そよ 公式',
+        source: 'webpage',
+        pageUrls: ['https://anime.bang-dream.com/mygo/character/soyo/'],
+        results: [{
+          id: 'webpage:soyo',
+          title: '長崎そよ',
+          imageUrl: 'https://anime.bang-dream.com/mygo/wordpress/wp-content/themes/mygo_v1/assets/images/common/character/body_soyo.png',
+          pageUrl: 'https://anime.bang-dream.com/mygo/character/soyo/',
+          source: 'anime.bang-dream.com',
+          provider: 'webpage',
+        }],
+      })
+    vi.mocked(callAgentResponsesApi)
+      .mockResolvedValueOnce({
+        text: '',
+        images: [],
+        outputItems: [{
+          type: 'function_call',
+          name: 'search_images',
+          call_id: 'search-call-empty',
+          arguments: JSON.stringify({ query: '春日影 人物', count: 6, page_urls: [] }),
+        }],
+        responseId: 'response-search-empty',
+      })
+      .mockResolvedValueOnce({
+        text: '需要先找官方角色页。',
+        images: [],
+        outputItems: [
+          { type: 'web_search_call', id: 'web-call', status: 'completed', action: { type: 'search' } },
+          {
+            type: 'function_call',
+            name: 'search_images',
+            call_id: 'search-call-page',
+            arguments: JSON.stringify({
+              query: '長崎そよ 公式',
+              count: 6,
+              page_urls: ['https://anime.bang-dream.com/mygo/character/soyo/'],
+            }),
+          },
+        ],
+        responseId: 'response-search-page',
+      })
+      .mockResolvedValueOnce({
+        text: '',
+        images: [],
+        outputItems: [{
+          type: 'function_call',
+          name: 'save_images_for_reference',
+          call_id: 'save-call',
+          arguments: JSON.stringify({
+            images: [{
+              search_result_id: 'webpage:soyo',
+              image_url: '',
+              title: '長崎そよ',
+              page_url: 'https://anime.bang-dream.com/mygo/character/soyo/',
+            }],
+            purpose: '人物参考图',
+          }),
+        }],
+        responseId: 'response-save',
+      })
+      .mockResolvedValueOnce({
+        text: '完成',
+        images: [{
+          toolCallId: 'image-call',
+          dataUrl: 'data:image/png;base64,generated-image',
+          revisedPrompt: '参考 <ref id="round-1-saved-reference-1" /> 生成',
+        }],
+        outputItems: [{ type: 'image_generation_call', id: 'image-call', result: 'generated-image' }],
+        responseId: 'response-generate',
+      })
+
+    await submitAgentMessage()
+    for (let i = 0; i < 10 && vi.mocked(callAgentResponsesApi).mock.calls.length < 4; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
+    expect(callAgentResponsesApi).toHaveBeenCalledTimes(4)
+    expect(JSON.stringify(vi.mocked(callAgentResponsesApi).mock.calls[1][0].input)).toContain('previous image search returned no savable reference images')
+    expect(JSON.stringify(vi.mocked(callAgentResponsesApi).mock.calls[1][0].input)).toContain('function_call_output')
+    expect(searchAgentImages).toHaveBeenNthCalledWith(1, expect.objectContaining({ query: '春日影 人物', pageUrls: undefined }))
+    expect(searchAgentImages).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      query: '長崎そよ 公式',
+      pageUrls: ['https://anime.bang-dream.com/mygo/character/soyo/'],
+    }))
+    expect(JSON.stringify(vi.mocked(callAgentResponsesApi).mock.calls[3][0].input)).toContain('data:image/png;base64,reference-image')
+  })
+
+  it('stops when page image extraction returns no savable references', async () => {
+    vi.mocked(searchAgentImages).mockResolvedValueOnce({
+      query: '春日影 人物',
+      source: 'webpage',
+      pageUrls: ['https://example.com/page'],
+      results: [],
+    })
+    vi.mocked(callAgentResponsesApi).mockResolvedValueOnce({
+      text: '',
+      images: [],
+      outputItems: [{
+        type: 'function_call',
+        name: 'search_images',
+        call_id: 'search-call',
+        arguments: JSON.stringify({ query: '春日影 人物', count: 6, page_urls: ['https://example.com/page'] }),
+      }],
+      responseId: 'response-search',
+    })
+
+    await submitAgentMessage()
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(callAgentResponsesApi).toHaveBeenCalledTimes(1)
+    const conversation = useStore.getState().agentConversations.find((item) => item.id === 'conversation-a')
+    const assistantMessage = conversation?.messages.find((message) => message.role === 'assistant')
+    expect(assistantMessage?.content).toContain('图片搜索没有返回可保存的参考图')
+    expect(useStore.getState().tasks).toHaveLength(0)
+  })
+
+  it('keeps collecting references after a research-only response', async () => {
+    vi.mocked(callAgentResponsesApi)
+      .mockResolvedValueOnce({
+        text: '先确认相关人物。',
+        images: [],
+        outputItems: [
+          { type: 'web_search_call', id: 'web-call', status: 'completed', action: { type: 'search' } },
+          { type: 'message', content: [{ type: 'output_text', text: '相关人物包括角色 A。' }] },
+        ],
+        responseId: 'response-research',
+      })
+      .mockResolvedValueOnce({
+        text: '',
+        images: [],
+        outputItems: [{
+          type: 'function_call',
+          name: 'search_images',
+          call_id: 'search-call',
+          arguments: JSON.stringify({ query: '角色 A 春日影', count: 6 }),
+        }],
+        responseId: 'response-search',
+      })
+      .mockResolvedValueOnce({
+        text: '',
+        images: [],
+        outputItems: [{
+          type: 'function_call',
+          name: 'save_images_for_reference',
+          call_id: 'save-call',
+          arguments: JSON.stringify({
+            images: [{
+              search_result_id: 'openverse:person-1',
+              image_url: '',
+              title: '角色 A',
+              page_url: '',
+            }],
+            purpose: '人物参考图',
+          }),
+        }],
+        responseId: 'response-save',
+      })
+      .mockResolvedValueOnce({
+        text: '完成',
+        images: [{
+          toolCallId: 'image-call',
+          dataUrl: 'data:image/png;base64,generated-image',
+          revisedPrompt: '参考 <ref id="round-1-saved-reference-1" /> 生成',
+        }],
+        outputItems: [{ type: 'image_generation_call', id: 'image-call', result: 'generated-image' }],
+        responseId: 'response-generate',
+      })
+
+    await submitAgentMessage()
+    for (let i = 0; i < 10 && vi.mocked(callAgentResponsesApi).mock.calls.length < 4; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
+    expect(callAgentResponsesApi).toHaveBeenCalledTimes(4)
+    expect(vi.mocked(callAgentResponsesApi).mock.calls[0][0].imageGenerationEnabled).toBe(false)
+    expect(vi.mocked(callAgentResponsesApi).mock.calls[1][0].imageGenerationEnabled).toBe(false)
+    expect(JSON.stringify(vi.mocked(callAgentResponsesApi).mock.calls[1][0].input)).toContain('Do not generate the final image yet')
+    expect(vi.mocked(callAgentResponsesApi).mock.calls[2][0].toolChoice).toEqual({ type: 'function', name: 'save_images_for_reference' })
+    expect(vi.mocked(callAgentResponsesApi).mock.calls[3][0].imageGenerationEnabled).toBe(true)
+    expect(JSON.stringify(vi.mocked(callAgentResponsesApi).mock.calls[3][0].input)).toContain('data:image/png;base64,reference-image')
   })
 })
 

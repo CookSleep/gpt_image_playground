@@ -35,10 +35,11 @@ const task = (id: string, outputImages: string[]): TaskRecord => ({
 })
 
 describe('agent image references', () => {
-  it('extracts generated and current input XML reference ids', () => {
-    expect(extractAgentReferenceIds('参考 <ref id="round-1-image-2" /> 和 <ref id="round-3-reference-1" />')).toEqual([
+  it('extracts generated, current input, and saved external XML reference ids', () => {
+    expect(extractAgentReferenceIds('参考 <ref id="round-1-image-2" />、<ref id="round-3-reference-1" /> 和 <ref id="round-2-saved-reference-1" />')).toEqual([
       'round-1-image-2',
       'round-3-reference-1',
+      'round-2-saved-reference-1',
     ])
   })
 

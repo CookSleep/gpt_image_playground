@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef, useCallback, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import type { AgentConversation, AgentMessage, AgentRound, ResponsesOutputItem, TaskRecord } from '../types'
-import { deleteAgentRoundFromConversation, editOutputs, getActiveAgentRounds, getAgentBranchLeafId, getAgentSiblingRounds, getCachedImage, ensureImageCached, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeMultipleTasks, removeTask, reuseConfig, updateTaskInStore, useStore } from '../store'
+import type { AgentConversation, AgentMessage, AgentRound, AgentSavedReferenceImage, ResponsesOutputItem, TaskRecord } from '../types'
+import { deleteAgentRoundFromConversation, deleteImageIfUnreferenced, editOutputs, getActiveAgentRounds, getAgentBranchLeafId, getAgentSiblingRounds, getCachedImage, ensureImageCached, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeMultipleTasks, removeTask, reuseConfig, updateTaskInStore, useStore } from '../store'
 import { getPromptMentionParts } from '../lib/promptImageMentions'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { collectWebSearchCalls, getAgentRoundOutputItems, getWebSearchStatusForCalls, type AgentWebSearchStatus } from '../lib/agentWebSearch'
@@ -106,6 +106,71 @@ function ChatImageThumb({ imageId, imageIndex, maskImageId }: { imageId: string;
   )
 }
 
+function AgentSavedReferenceImageThumb({ image, index, gallery }: { image: AgentSavedReferenceImage; index: number; gallery: string[] }) {
+  const [src, setSrc] = useState<string>(() => getCachedImage(image.imageId) || '')
+  const setLightboxImageId = useStore((s) => s.setLightboxImageId)
+  const sourceHref = image.pageUrl || image.sourceUrl
+
+  useEffect(() => {
+    let cancelled = false
+    const cached = getCachedImage(image.imageId)
+    if (cached) {
+      setSrc(cached)
+      return () => { cancelled = true }
+    }
+    ensureImageCached(image.imageId).then((url) => {
+      if (!cancelled && url) setSrc(url)
+    })
+    return () => { cancelled = true }
+  }, [image.imageId])
+
+  return (
+    <figure className="min-w-0">
+      <button
+        type="button"
+        className="relative block h-24 w-24 overflow-hidden rounded-lg border border-gray-200 bg-gray-100 text-left shadow-sm transition-opacity hover:opacity-90 dark:border-white/[0.08] dark:bg-white/[0.04]"
+        onClick={() => setLightboxImageId(image.imageId, gallery)}
+      >
+        {src ? <img src={src} className="h-full w-full object-cover" alt="" /> : <div className="h-full w-full bg-gray-100 dark:bg-white/[0.04]" />}
+        <span className="absolute bottom-1 left-1 z-10 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white backdrop-blur-sm">
+          参考图 {index + 1}
+        </span>
+      </button>
+      <figcaption className="mt-1 w-24 truncate text-[11px] leading-4">
+        {sourceHref ? (
+          <a
+            href={sourceHref}
+            target="_blank"
+            rel="noreferrer"
+            title={image.title}
+            className="text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {image.title || `参考图 ${index + 1}`}
+          </a>
+        ) : (
+          <span className="text-gray-500 dark:text-gray-400">{image.title || `参考图 ${index + 1}`}</span>
+        )}
+      </figcaption>
+    </figure>
+  )
+}
+
+function AgentSavedReferenceImagesBlock({ images }: { images: AgentSavedReferenceImage[] }) {
+  if (images.length === 0) return null
+  const gallery = images.map((image) => image.imageId)
+  return (
+    <div className="mt-3 max-w-full" onClick={(e) => e.stopPropagation()}>
+      <div className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">已选参考图</div>
+      <div className="flex max-w-full gap-2 overflow-x-auto pb-1">
+        {images.map((image, index) => (
+          <AgentSavedReferenceImageThumb key={image.id} image={image} index={index} gallery={gallery} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function AgentStreamingCursor() {
   return (
     <span
@@ -145,6 +210,8 @@ function AgentWebSearchStatusLines({ statuses }: { statuses: AgentWebSearchStatu
 type AgentAssistantBlock =
   | { type: 'web-search'; status: AgentWebSearchStatus; key: string }
   | { type: 'batch-params'; status: AgentWebSearchStatus; key: string }
+  | { type: 'image-search-tool'; status: AgentWebSearchStatus; key: string }
+  | { type: 'saved-reference-images'; images: AgentSavedReferenceImage[]; key: string }
   | { type: 'image-task'; task: TaskRecord; key: string }
   | { type: 'deleted-image-task'; taskId: string; key: string }
   | { type: 'text'; key: string; content?: string }
@@ -186,9 +253,11 @@ function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: AgentRound
   const outputItems = getAgentRoundOutputItems(round, allTasks)
   const tasksForRound = taskSlots.map((slot) => slot.task).filter(Boolean) as TaskRecord[]
   const roundInterrupted = isAgentRoundInterrupted(round)
+  const savedReferenceImages = round?.savedReferenceImages ?? []
   if (outputItems.length === 0) {
     return [
       ...(hasText ? [{ type: 'text' as const, key: 'text:fallback' }] : []),
+      ...(savedReferenceImages.length > 0 ? [{ type: 'saved-reference-images' as const, images: savedReferenceImages, key: 'saved-reference-images:fallback' }] : []),
       ...taskSlots.map((slot) => slot.task
         ? ({ type: 'image-task' as const, task: slot.task, key: `image:${slot.task.id}` })
         : ({ type: 'deleted-image-task' as const, taskId: slot.taskId, key: `deleted-image:${slot.taskId}` }),
@@ -198,8 +267,14 @@ function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: AgentRound
 
   const blocks: AgentAssistantBlock[] = []
   const renderedTaskIds = new Set<string>()
+  const renderedSavedReferenceImageIds = new Set<string>()
   let renderedTextBlocks = 0
   let webSearchGroup: ResponsesOutputItem[] = []
+  const completedFunctionCallIds = new Set(
+    outputItems
+      .filter((item) => item.type === 'function_call_output' && item.call_id)
+      .map((item) => item.call_id!),
+  )
 
   const flushWebSearchGroup = () => {
     if (webSearchGroup.length === 0) return
@@ -244,6 +319,37 @@ function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: AgentRound
       continue
     }
 
+    if (item.type === 'function_call' && (item.name === 'search_images' || item.name === 'save_images_for_reference')) {
+      const completed = Boolean(item.call_id && completedFunctionCallIds.has(item.call_id))
+      const runningText = item.name === 'search_images' ? '正在查找图片' : '正在保存参考图'
+      const completedText = item.name === 'search_images' ? '完成查找图片' : '完成保存参考图'
+      if (round?.status === 'running' || roundInterrupted) {
+        blocks.push({
+          type: 'image-search-tool',
+          status: roundInterrupted
+            ? markToolStatusStopped({ text: runningText, completed: false })
+            : { text: completed ? completedText : runningText, completed },
+          key: `image-search-tool:${item.call_id ?? item.id ?? blocks.length}`,
+        })
+      }
+      if (item.name === 'save_images_for_reference') {
+        const callId = item.call_id ?? item.id
+        const imagesForCall = savedReferenceImages.filter((image) => {
+          if (renderedSavedReferenceImageIds.has(image.id)) return false
+          return callId ? image.toolCallId === callId : true
+        })
+        for (const image of imagesForCall) renderedSavedReferenceImageIds.add(image.id)
+        if (imagesForCall.length > 0) {
+          blocks.push({
+            type: 'saved-reference-images',
+            images: imagesForCall,
+            key: `saved-reference-images:${callId ?? blocks.length}`,
+          })
+        }
+      }
+      continue
+    }
+
     if (item.type === 'message') {
       const content = getTextFromOutputItem(item)
       if (content) {
@@ -256,6 +362,10 @@ function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: AgentRound
   flushWebSearchGroup()
 
   if (hasText && renderedTextBlocks === 0) blocks.push({ type: 'text', key: 'text:fallback' })
+  const remainingSavedReferenceImages = savedReferenceImages.filter((image) => !renderedSavedReferenceImageIds.has(image.id))
+  if (remainingSavedReferenceImages.length > 0) {
+    blocks.push({ type: 'saved-reference-images', images: remainingSavedReferenceImages, key: 'saved-reference-images:remaining' })
+  }
   for (const slot of taskSlots) {
     if (slot.task) {
       if (!renderedTaskIds.has(slot.task.id)) blocks.push({ type: 'image-task', task: slot.task, key: `image:${slot.task.id}` })
@@ -591,6 +701,9 @@ export default function AgentWorkspace() {
     const targetConversation = conversations.find((item) => item.id === id) ?? null
     const roundIds = new Set(targetConversation?.rounds.map((round) => round.id) ?? [])
     const roundTaskIds = targetConversation?.rounds.flatMap((round) => round.outputTaskIds) ?? []
+    const savedReferenceImageIds = targetConversation?.rounds.flatMap((round) =>
+      round.savedReferenceImages?.map((image) => image.imageId) ?? [],
+    ) ?? []
     const relatedTasks = tasks.filter((task) =>
       task.agentConversationId === id || Boolean(task.agentRoundId && roundIds.has(task.agentRoundId)),
     )
@@ -616,6 +729,7 @@ export default function AgentWorkspace() {
       action: async (deleteGeneratedImages = false) => {
         deleteConversation(id)
         if (deleteGeneratedImages && relatedTaskIds.length > 0) await removeMultipleTasks(relatedTaskIds)
+        for (const imageId of savedReferenceImageIds) await deleteImageIfUnreferenced(imageId)
       },
     })
   }
@@ -699,6 +813,7 @@ export default function AgentWorkspace() {
         : '确定要删除这条消息吗？关联的图片任务不会从画廊中删除。',
       action: async () => {
         if (isUserMessage) {
+          const savedReferenceImageIds = round.savedReferenceImages?.map((image) => image.imageId) ?? []
           if (round.outputTaskIds.length > 0) await removeMultipleTasks(round.outputTaskIds)
 
           useStore.setState((state) => {
@@ -727,6 +842,7 @@ export default function AgentWorkspace() {
               agentEditingRoundId: state.agentEditingRoundId === round.id ? null : state.agentEditingRoundId,
             }
           })
+          for (const imageId of savedReferenceImageIds) await deleteImageIfUnreferenced(imageId)
           return
         }
 
@@ -1071,13 +1187,14 @@ export default function AgentWorkspace() {
                             {assistantBlocks.length > 0 ? assistantBlocks.map((block, index) => {
                               if (block.type === 'web-search') return <AgentWebSearchStatusLines key={block.key} statuses={[block.status]} />
                               if (block.type === 'text') return <div key={block.key} className={index > 0 ? 'mt-3' : undefined}><MarkdownRenderer content={block.content ?? message.content} streaming={isStreamingAssistant} /></div>
-                              if (block.type === 'batch-params') {
+                              if (block.type === 'batch-params' || block.type === 'image-search-tool') {
                                 return (
                                   <div key={block.key} className={index > 0 ? 'mt-3' : undefined}>
                                     <AgentWebSearchInlineStatus status={block.status} />
                                   </div>
                                 )
                               }
+                              if (block.type === 'saved-reference-images') return <AgentSavedReferenceImagesBlock key={block.key} images={block.images} />
                               if (block.type === 'deleted-image-task') {
                                 return (
                                   <div key={block.key} className="mt-4 w-full min-w-[16rem] max-w-sm rounded-xl bg-gray-50/50 dark:bg-white/[0.02] border border-dashed border-gray-200 dark:border-white/[0.08] p-4 flex min-h-[120px] flex-col items-center justify-center text-gray-400 dark:text-gray-500" onClick={e => e.stopPropagation()}>

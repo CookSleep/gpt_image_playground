@@ -2,7 +2,7 @@ import type { AgentRound, TaskRecord } from '../types'
 import { replaceImageMentionsForApi, stripImageMentionMarkers } from './promptImageMentions'
 
 const AGENT_ROUND_IMAGE_REFERENCE_RE = /@(?:第)?(\d+)轮图(\d+)/g
-const AGENT_REF_TAG_RE = /<ref\b[^>]*\bid=(["'])(round-(\d+)-(?:image|reference)-(\d+))\1[^>]*\/?>/g
+const AGENT_REF_TAG_RE = /<ref\b[^>]*\bid=(["'])(round-(\d+)-(?:saved-reference|image|reference)-(\d+))\1[^>]*\/?>/g
 
 export function getAgentCurrentReferenceId(round: AgentRound, index: number) {
   return `round-${round.index}-reference-${index + 1}`
@@ -10,6 +10,10 @@ export function getAgentCurrentReferenceId(round: AgentRound, index: number) {
 
 export function getAgentGeneratedImageReferenceId(round: AgentRound, index: number) {
   return `round-${round.index}-image-${index + 1}`
+}
+
+export function getAgentSavedReferenceId(round: AgentRound, index: number) {
+  return `round-${round.index}-saved-reference-${index + 1}`
 }
 
 export function getAgentReferenceTag(referenceId: string) {

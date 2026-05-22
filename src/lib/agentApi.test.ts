@@ -225,4 +225,74 @@ describe('callAgentResponsesApi', () => {
     expect(result.text).toBe('See [OpenAI docs](https://platform.openai.com/docs).')
     expect(result.outputItems?.[0]).toMatchObject({ type: 'web_search_call', status: 'completed' })
   })
+
+  it('enables image search tools with Agent network search', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_tools',
+      output: [{
+        type: 'message',
+        content: [{ type: 'output_text', text: 'OK' }],
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const profile = createDefaultOpenAIProfile({
+      apiKey: 'test-key',
+      apiMode: 'responses',
+    })
+
+    await callAgentResponsesApi({
+      settings: { ...DEFAULT_SETTINGS, agentWebSearch: true },
+      profile,
+      params: DEFAULT_PARAMS,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'find image refs' }] }],
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(String((init as RequestInit).body))
+    expect(body.tools).toEqual(expect.arrayContaining([
+      { type: 'web_search' },
+      expect.objectContaining({ type: 'function', name: 'search_images' }),
+      expect.objectContaining({ type: 'function', name: 'save_images_for_reference' }),
+    ]))
+    expect(body.tools.find((tool: { name?: string }) => tool.name === 'search_images').parameters.required).toEqual(['query', 'count', 'page_urls'])
+    expect(body.tools.find((tool: { name?: string }) => tool.name === 'save_images_for_reference').parameters.required).toEqual(['images', 'purpose'])
+  })
+
+  it('can force a reference-collection pass without image generation tools', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_reference_collection',
+      output: [{
+        type: 'function_call',
+        name: 'search_images',
+        call_id: 'call_search',
+        arguments: '{"query":"春日影 人物","count":6}',
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const profile = createDefaultOpenAIProfile({
+      apiKey: 'test-key',
+      apiMode: 'responses',
+    })
+
+    await callAgentResponsesApi({
+      settings: { ...DEFAULT_SETTINGS, agentWebSearch: true },
+      profile,
+      params: DEFAULT_PARAMS,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: '先搜索人物参考图' }] }],
+      imageGenerationEnabled: false,
+      toolChoice: { type: 'function', name: 'search_images' },
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(String((init as RequestInit).body))
+    expect(body.tool_choice).toEqual({ type: 'function', name: 'search_images' })
+    expect(body.instructions).toContain('collect reference images first')
+    expect(body.tools.some((tool: { type?: string }) => tool.type === 'image_generation')).toBe(false)
+    expect(body.tools.some((tool: { name?: string }) => tool.name === 'generate_image_batch')).toBe(false)
+    expect(body.tools.some((tool: { name?: string }) => tool.name === 'search_images')).toBe(true)
+  })
 })

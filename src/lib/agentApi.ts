@@ -44,25 +44,38 @@ const AGENT_IMAGE_INSTRUCTIONS = [
   '## Reference tags and generated images in context',
   'NEVER output `<ref>`, `<available_refs>`, `<removed_ref>`, or any XML reference tags in visible assistant text — the system injects them automatically and your raw output will be shown directly to the user.',
   '- Previously generated images are injected as user messages containing the actual image (input_image) followed by a `<ref id="round-N-image-M" prompt="..." />` tag identifying it.',
+  '- Images saved from image search are also injected as user messages with `<ref id="..." />` tags and can be used as reference images for later generation.',
   '- Deleted images appear as `<removed_ref id="..." />` without an accompanying image — do not reference them.',
   '- In user messages: `<ref id="..." />` may also point to user-attached/cited images.',
   '- In generate_image_batch tool arguments, include matching `<ref id="..." />` tags inside each image prompt when the prompt refers to a reference image. Do not use separate bare reference ids.',
   'Resolve user mentions ("the first image") to the matching id. Only use existing ids in image_generation prompts and generate_image_batch prompts.',
 ].join('\n')
 
-function createAgentInstructions(settings: AppSettings) {
+function createAgentInstructions(settings: AppSettings, options: { imageGenerationEnabled?: boolean } = {}) {
   const maxToolRounds = Number.isFinite(settings.agentMaxToolRounds)
     ? Math.max(1, Math.trunc(settings.agentMaxToolRounds))
     : DEFAULT_AGENT_MAX_TOOL_ROUNDS
-  return [
+  const lines = [
     AGENT_IMAGE_INSTRUCTIONS,
     '',
     '## Tool policy',
     `- Current maximum tool-use rounds for this Agent turn: ${maxToolRounds}.`,
     '- Call continue_generation ONLY when you have generated a prerequisite image and need another round to generate dependent images. Do NOT call it when the task is complete.',
     '- When web_search is available, use it only when current external information would improve the answer or the user asks for research/news/facts.',
+    '- When image search tools are available and the user asks to find, browse, download, save, or use external images as visual references, first use web_search to identify source pages when needed, then call search_images with page_urls when you have relevant pages, then call save_images_for_reference for the images you need. After saving, continue generation using the returned refs.',
+    '- Do not use searched images as references until save_images_for_reference has returned saved refs.',
     '- When the requested task is complete, stop calling tools and provide the final response.',
-  ].join('\n')
+  ]
+  if (options.imageGenerationEnabled === false) {
+    lines.push(
+      '',
+      '## Current phase: collect reference images first',
+      '- Image generation is temporarily unavailable in this response. Do not answer by generating an image yet.',
+      '- Use web_search when you need background/person/entity facts and source pages. Then call search_images with page_urls from official/wiki/source pages when available, and save_images_for_reference to save actual visual references.',
+      '- After save_images_for_reference returns refs, the app will continue this same turn with image generation enabled and the saved images attached as input_image references.',
+    )
+  }
+  return lines.join('\n')
 }
 
 const AGENT_TITLE_INSTRUCTIONS = [
@@ -110,75 +123,163 @@ function createImageTool(params: TaskParams, profile: ApiProfile, maskDataUrl?: 
   return tool
 }
 
-function createAgentTools(params: TaskParams, profile: ApiProfile, settings: AppSettings, maskDataUrl?: string): Array<Record<string, unknown>> {
-  const tools: Array<Record<string, unknown>> = [createImageTool(params, profile, maskDataUrl)]
+function createAgentTools(
+  params: TaskParams,
+  profile: ApiProfile,
+  settings: AppSettings,
+  maskDataUrl?: string,
+  options: { imageGenerationEnabled?: boolean } = {},
+): Array<Record<string, unknown>> {
+  const imageGenerationEnabled = options.imageGenerationEnabled !== false
+  const tools: Array<Record<string, unknown>> = imageGenerationEnabled ? [createImageTool(params, profile, maskDataUrl)] : []
 
-  // generate_image_batch: custom function tool for concurrent multi-image generation
-  tools.push({
-    type: 'function',
-    name: 'generate_image_batch',
-    description: [
-      'Generate multiple images concurrently. Use this ONLY when:',
-      '1. There are 2+ remaining images whose prerequisites (base references) are ALL already generated.',
-      '2. These images are independent of each other (none references another image in this same batch).',
-      'For single images or prerequisite/base images, use the built-in image_generation tool instead.',
-      'Each image prompt must be self-contained and include full visual style descriptions.',
-      'If an image needs to match a previously generated image, include the corresponding XML tag (e.g. <ref id="round-1-image-1" />) inside that image prompt so the app can attach the reference image automatically.',
-    ].join(' '),
-    parameters: {
-      type: 'object',
-      properties: {
-        images: {
-          type: 'array',
-          description: 'Array of images to generate concurrently.',
-          items: {
-            type: 'object',
-            properties: {
-              id: {
-                type: 'string',
-                description: 'Short stable identifier for this image, e.g. "slide_2_problem", "scene_3".',
+  if (imageGenerationEnabled) {
+    // generate_image_batch: custom function tool for concurrent multi-image generation
+    tools.push({
+      type: 'function',
+      name: 'generate_image_batch',
+      description: [
+        'Generate multiple images concurrently. Use this ONLY when:',
+        '1. There are 2+ remaining images whose prerequisites (base references) are ALL already generated.',
+        '2. These images are independent of each other (none references another image in this same batch).',
+        'For single images or prerequisite/base images, use the built-in image_generation tool instead.',
+        'Each image prompt must be self-contained and include full visual style descriptions.',
+        'If an image needs to match a previously generated image, include the corresponding XML tag (e.g. <ref id="round-1-image-1" />) inside that image prompt so the app can attach the reference image automatically.',
+      ].join(' '),
+      parameters: {
+        type: 'object',
+        properties: {
+          images: {
+            type: 'array',
+            description: 'Array of images to generate concurrently.',
+            items: {
+              type: 'object',
+              properties: {
+                id: {
+                  type: 'string',
+                  description: 'Short stable identifier for this image, e.g. "slide_2_problem", "scene_3".',
+                },
+                prompt: {
+                  type: 'string',
+                  description: 'Complete image generation prompt with all visual details. If it refers to a previous image, include the matching XML tag, e.g. <ref id="round-1-image-1" />.',
+                },
               },
-              prompt: {
-                type: 'string',
-                description: 'Complete image generation prompt with all visual details. If it refers to a previous image, include the matching XML tag, e.g. <ref id="round-1-image-1" />.',
-              },
+              required: ['id', 'prompt'],
+              additionalProperties: false,
             },
-            required: ['id', 'prompt'],
-            additionalProperties: false,
           },
         },
+        required: ['images'],
+        additionalProperties: false,
       },
-      required: ['images'],
-      additionalProperties: false,
-    },
-    strict: true,
-  })
+      strict: true,
+    })
 
-  // continue_generation: model calls this to request another round (e.g. after generating a prerequisite image)
-  tools.push({
-    type: 'function',
-    name: 'continue_generation',
-    description: [
-      'Request another round to continue generating images.',
-      'Call this ONLY when you have just generated a prerequisite/base image and still need to generate dependent images that reference it.',
-      'Do NOT call this when the task is already complete.',
-    ].join(' '),
-    parameters: {
-      type: 'object',
-      properties: {
-        reason: {
-          type: 'string',
-          description: 'Brief explanation of why another round is needed and what will be generated next.',
+    // continue_generation: model calls this to request another round (e.g. after generating a prerequisite image)
+    tools.push({
+      type: 'function',
+      name: 'continue_generation',
+      description: [
+        'Request another round to continue generating images.',
+        'Call this ONLY when you have just generated a prerequisite/base image and still need to generate dependent images that reference it.',
+        'Do NOT call this when the task is already complete.',
+      ].join(' '),
+      parameters: {
+        type: 'object',
+        properties: {
+          reason: {
+            type: 'string',
+            description: 'Brief explanation of why another round is needed and what will be generated next.',
+          },
         },
+        required: ['reason'],
+        additionalProperties: false,
       },
-      required: ['reason'],
-      additionalProperties: false,
-    },
-    strict: true,
-  })
+      strict: true,
+    })
+  }
 
   if (settings.agentWebSearch) {
     tools.push({ type: 'web_search' })
+    tools.push({
+      type: 'function',
+      name: 'search_images',
+      description: [
+        'Search visual reference candidates from specific web pages and openly available image sources.',
+        'Use this when the user asks to find/search images or when external images would help satisfy a generation request.',
+        'When web_search found official pages, wiki pages, articles, or source pages that likely contain the requested people/objects, pass those URLs in page_urls so the app can extract actual page images.',
+        'This returns metadata and image URLs only; call save_images_for_reference before using any result as a reference image.',
+      ].join(' '),
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Concise image search query. Use concrete visual terms, subject, style, location, or object names.',
+          },
+          count: {
+            type: 'number',
+            description: 'Number of candidate images to return, from 1 to 12. Use 6 when the user does not specify a count.',
+          },
+          page_urls: {
+            type: 'array',
+            description: 'Relevant web pages to extract images from, such as official character/product pages, wiki pages, or articles found via web_search. Use an empty array when unavailable.',
+            items: { type: 'string' },
+          },
+        },
+        required: ['query', 'count', 'page_urls'],
+        additionalProperties: false,
+      },
+      strict: true,
+    })
+    tools.push({
+      type: 'function',
+      name: 'save_images_for_reference',
+      description: [
+        'Download and save selected searched images into the current Agent turn as reference images.',
+        'Prefer passing search_result_id values returned by search_images. Pass direct image_url only when the image was provided by the user or search result metadata.',
+        'The tool returns <ref id="..." /> tags for saved images. Use those refs in later image_generation or generate_image_batch prompts.',
+      ].join(' '),
+      parameters: {
+        type: 'object',
+        properties: {
+          images: {
+            type: 'array',
+            description: 'Images to save for use as references.',
+            items: {
+              type: 'object',
+              properties: {
+                search_result_id: {
+                  type: 'string',
+                  description: 'ID from a previous search_images result.',
+                },
+                image_url: {
+                  type: 'string',
+                  description: 'Direct image URL to download when no search_result_id is available.',
+                },
+                title: {
+                  type: 'string',
+                  description: 'Short title or label for the saved image.',
+                },
+                page_url: {
+                  type: 'string',
+                  description: 'Source or landing page URL for attribution. Use an empty string when unavailable.',
+                },
+              },
+              required: ['search_result_id', 'image_url', 'title', 'page_url'],
+              additionalProperties: false,
+            },
+          },
+          purpose: {
+            type: 'string',
+            description: 'Brief note describing how the saved images will be used. Use an empty string when obvious.',
+          },
+        },
+        required: ['images', 'purpose'],
+        additionalProperties: false,
+      },
+      strict: true,
+    })
   }
   return tools
 }
@@ -607,6 +708,8 @@ export async function callAgentResponsesApi(opts: {
   params: TaskParams
   input: unknown
   maskDataUrl?: string
+  imageGenerationEnabled?: boolean
+  toolChoice?: unknown
   signal?: AbortSignal
   onTextDelta?: (delta: string) => void
   onOutputItems?: (outputItems: ResponsesOutputItem[]) => void
@@ -614,7 +717,7 @@ export async function callAgentResponsesApi(opts: {
   onImagePartialImage?: (event: { toolCallId: string; image: string; partialImageIndex?: number; outputIndex?: number }) => void | Promise<void>
   onImageToolCompleted?: (image: AgentApiResultImage) => void | Promise<void>
 }): Promise<AgentApiResult> {
-  const { settings, profile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted } = opts
+  const { settings, profile, params, input, maskDataUrl, imageGenerationEnabled = true, toolChoice, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
@@ -627,10 +730,11 @@ export async function callAgentResponsesApi(opts: {
   try {
     const body: Record<string, unknown> = {
       model: profile.model || settings.model,
-      instructions: createAgentInstructions(settings),
+      instructions: createAgentInstructions(settings, { imageGenerationEnabled }),
       input,
-      tools: createAgentTools(params, profile, settings, maskDataUrl),
+      tools: createAgentTools(params, profile, settings, maskDataUrl, { imageGenerationEnabled }),
     }
+    if (toolChoice != null) body.tool_choice = toolChoice
     if (profile.streamImages) {
       body.stream = true
     }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react'
-import { removeMultipleTasks, useStore } from '../store'
+import { deleteImageIfUnreferenced, removeMultipleTasks, useStore } from '../store'
 import type { AgentConversation } from '../types'
 import { useTooltip } from '../hooks/useTooltip'
 import { CloseIcon, EditIcon, TrashIcon } from './icons'
@@ -163,6 +163,9 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef }: History
     const targetConversation = conversations.find((item) => item.id === id) ?? null
     const roundIds = new Set(targetConversation?.rounds.map((round) => round.id) ?? [])
     const roundTaskIds = targetConversation?.rounds.flatMap((round) => round.outputTaskIds) ?? []
+    const savedReferenceImageIds = targetConversation?.rounds.flatMap((round) =>
+      round.savedReferenceImages?.map((image) => image.imageId) ?? [],
+    ) ?? []
     const relatedTasks = tasks.filter((task) =>
       task.agentConversationId === id || Boolean(task.agentRoundId && roundIds.has(task.agentRoundId)),
     )
@@ -188,6 +191,7 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef }: History
       action: async (deleteGeneratedImages = false) => {
         deleteConversation(id)
         if (deleteGeneratedImages && relatedTaskIds.length > 0) await removeMultipleTasks(relatedTaskIds)
+        for (const imageId of savedReferenceImageIds) await deleteImageIfUnreferenced(imageId)
         if (conversations.length <= 1) {
           onClose()
         }

@@ -4,6 +4,7 @@ import type {
   AgentConversation,
   AgentMessage,
   AgentRound,
+  AgentSavedReferenceImage,
   ApiMode,
   ApiProfile,
   AppSettings,
@@ -42,7 +43,8 @@ import {
 } from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage, type BatchImageCallResult } from './lib/agentApi'
-import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
+import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, getAgentSavedReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
+import { fetchAgentImageAsDataUrl, searchAgentImages, type AgentImageSearchResult } from './lib/agentImageSearch'
 import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
@@ -239,7 +241,7 @@ function scheduleThumbnailBackfillTick() {
     void processNextThumbnailBackfill()
   }
 
-  if ('requestIdleCallback' in window) {
+  if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
     window.requestIdleCallback(run, { timeout: 2_000 })
   } else {
     globalThis.setTimeout(run, 250)
@@ -381,6 +383,25 @@ function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
+function normalizeAgentSavedReferenceImage(value: unknown): AgentSavedReferenceImage | null {
+  if (!value || typeof value !== 'object') return null
+  const image = value as Partial<AgentSavedReferenceImage>
+  if (typeof image.id !== 'string' || !image.id) return null
+  if (typeof image.imageId !== 'string' || !image.imageId) return null
+  if (typeof image.sourceUrl !== 'string' || !image.sourceUrl) return null
+
+  return {
+    id: image.id,
+    imageId: image.imageId,
+    title: typeof image.title === 'string' && image.title.trim() ? image.title : '搜索保存的参考图',
+    sourceUrl: image.sourceUrl,
+    ...(typeof image.pageUrl === 'string' && image.pageUrl ? { pageUrl: image.pageUrl } : {}),
+    ...(typeof image.searchResultId === 'string' && image.searchResultId ? { searchResultId: image.searchResultId } : {}),
+    ...(typeof image.toolCallId === 'string' && image.toolCallId ? { toolCallId: image.toolCallId } : {}),
+    createdAt: typeof image.createdAt === 'number' ? image.createdAt : Date.now(),
+  }
+}
+
 function normalizeAgentRound(value: unknown, fallbackIndex: number): AgentRound | null {
   if (!value || typeof value !== 'object') return null
   const round = value as Partial<AgentRound>
@@ -404,6 +425,9 @@ function normalizeAgentRound(value: unknown, fallbackIndex: number): AgentRound 
     maskTargetImageId: typeof round.maskTargetImageId === 'string' ? round.maskTargetImageId : null,
     maskImageId: typeof round.maskImageId === 'string' ? round.maskImageId : null,
     outputTaskIds: normalizeStringArray(round.outputTaskIds),
+    ...(Array.isArray(round.savedReferenceImages)
+      ? { savedReferenceImages: round.savedReferenceImages.map(normalizeAgentSavedReferenceImage).filter((image): image is AgentSavedReferenceImage => Boolean(image)) }
+      : {}),
     ...(typeof round.responseId === 'string' ? { responseId: round.responseId } : {}),
     ...(Array.isArray(round.responseOutput) ? { responseOutput: round.responseOutput } : {}),
     status,
@@ -837,13 +861,14 @@ function isImageReferencedByState(state: AppState, imageId: string) {
   return state.agentConversations.some((conversation) =>
     conversation.rounds.some((round) =>
       round.inputImageIds.includes(imageId) ||
+      round.savedReferenceImages?.some((image) => image.imageId === imageId) ||
       round.maskTargetImageId === imageId ||
-      round.maskImageId === imageId
+      round.maskImageId === imageId,
     ) ||
     conversation.messages.some((message) =>
       message.inputImageIds?.includes(imageId) ||
       message.maskTargetImageId === imageId ||
-      message.maskImageId === imageId
+      message.maskImageId === imageId,
     ),
   )
 }
@@ -1956,14 +1981,7 @@ export async function initStore() {
   if (galleryInputDraft) {
     for (const img of galleryInputDraft.inputImages) referencedIds.add(img.id)
   }
-  for (const draft of Object.values(agentInputDrafts)) {
-    for (const img of draft.inputImages) referencedIds.add(img.id)
-  }
-  for (const conversation of agentConversations) {
-    for (const round of conversation.rounds) {
-      for (const id of round.inputImageIds) referencedIds.add(id)
-    }
-  }
+  addAgentReferencedImageIds(referencedIds, agentConversations, agentInputDrafts)
   for (const t of tasks) {
     addTaskReferencedImageIds(referencedIds, t)
   }
@@ -2495,6 +2513,7 @@ function addAgentReferencedImageIds(target: Set<string>, conversations = useStor
   for (const conversation of conversations) {
     for (const round of conversation.rounds) {
       for (const id of round.inputImageIds) target.add(id)
+      for (const image of round.savedReferenceImages ?? []) target.add(image.imageId)
       if (round.maskImageId) target.add(round.maskImageId)
     }
     for (const message of conversation.messages) {
@@ -2632,6 +2651,24 @@ async function createAgentBatchImagesInputItem(round: AgentRound, tasks: TaskRec
       imageIndex += 1
     }
   }
+  if (contentParts.length === 0) return null
+  return { role: 'user', content: contentParts }
+}
+
+async function createAgentSavedReferenceImagesInputItem(round: AgentRound, savedImages: AgentSavedReferenceImage[]) {
+  const contentParts: Array<{ type: string; text?: string; image_url?: string }> = []
+  for (let imageIndex = 0; imageIndex < savedImages.length; imageIndex++) {
+    const image = savedImages[imageIndex]
+    const dataUrl = await ensureImageCached(image.imageId)
+    if (dataUrl) {
+      contentParts.push({ type: 'input_image', image_url: dataUrl })
+    }
+    const refId = getAgentSavedReferenceId(round, imageIndex)
+    const title = truncateAgentReferencePrompt(image.title || '')
+    const titleAttribute = title ? ` title="${escapeXmlAttribute(title)}"` : ''
+    contentParts.push({ type: 'input_text', text: `<ref id="${refId}"${titleAttribute} />` })
+  }
+
   if (contentParts.length === 0) return null
   return { role: 'user', content: contentParts }
 }
@@ -2835,6 +2872,58 @@ function createAgentContinuationInputItem(newImageRefs: string[], toolCallsUsed:
   }
 }
 
+function createAgentSavedReferencesContinuationInputItem(savedRefs: string[], toolCallsUsed: number, maxToolCalls: number) {
+  const lines = [
+    '[System] The app has saved external images for reference and is continuing the same Agent turn.',
+  ]
+  if (savedRefs.length > 0) {
+    lines.push(`The following saved image ref ids are now available for you to reference in image_generation prompts: ${savedRefs.join(', ')}`)
+  }
+  lines.push(
+    'Continue the user request. If the user asked to generate from these references, generate now using the saved refs.',
+    `Tool-call budget: ${toolCallsUsed}/${maxToolCalls} used.`,
+  )
+  return {
+    role: 'user',
+    content: [{
+      type: 'input_text',
+      text: lines.join('\n'),
+    }],
+  }
+}
+
+function createAgentReferenceCollectionContinuationInputItem(toolCallsUsed: number, maxToolCalls: number) {
+  return {
+    role: 'user',
+    content: [{
+      type: 'input_text',
+      text: [
+        '[System] The user explicitly requested external images to be saved and used as references.',
+        'Do not generate the final image yet.',
+        'Use the research so far to call search_images for the relevant people/characters. If web_search found official, wiki, encyclopedia, article, or other source pages, pass their URLs in page_urls so the app can extract actual page images.',
+        'Then call save_images_for_reference with selected image results.',
+        `Tool-call budget: ${toolCallsUsed}/${maxToolCalls} used.`,
+      ].join('\n'),
+    }],
+  }
+}
+
+function createAgentReferenceCollectionRetryInputItem(toolCallsUsed: number, maxToolCalls: number) {
+  return {
+    role: 'user',
+    content: [{
+      type: 'input_text',
+      text: [
+        '[System] The previous image search returned no savable reference images.',
+        'Do not generate the final image yet.',
+        'Use web_search to find official/wiki/source pages for the relevant people, characters, or objects, then call search_images again with those URLs in page_urls.',
+        'If the topic is BanG Dream! MyGO / 春日影, look for official MyGO character pages and pass those character page URLs.',
+        `Tool-call budget: ${toolCallsUsed}/${maxToolCalls} used.`,
+      ].join('\n'),
+    }],
+  }
+}
+
 function buildAgentContinuationInput(baseInput: unknown[], round: AgentRound, tasks: TaskRecord[], currentRoundOutput: ResponsesOutputItem[], toolCallsUsed: number, maxToolCalls: number) {
   const input = [...baseInput, ...sanitizeResponseOutputForInput(currentRoundOutput, { allowPendingFunctionCalls: true })]
   const newImageRefs = collectAgentRoundOutputImageSlots(round, tasks)
@@ -2854,6 +2943,86 @@ function getAgentRoundResponseOutput(round: AgentRound, tasks: TaskRecord[]): Re
   }
 
   return null
+}
+
+function parseSearchImagesCallArguments(args: string): { query: string; count?: number; pageUrls?: string[] } | null {
+  try {
+    const parsed = JSON.parse(args) as unknown
+    if (!isRecord(parsed)) return null
+    const query = typeof parsed.query === 'string' ? parsed.query.trim() : ''
+    if (!query) return null
+    const count = typeof parsed.count === 'number' && Number.isFinite(parsed.count) ? parsed.count : undefined
+    const pageUrls = Array.isArray(parsed.page_urls)
+      ? parsed.page_urls
+          .filter((item): item is string => typeof item === 'string')
+          .map((item) => item.trim())
+          .filter((item) => /^https?:\/\//i.test(item))
+      : []
+    return { query, ...(count != null ? { count } : {}), ...(pageUrls.length > 0 ? { pageUrls } : {}) }
+  } catch {
+    return null
+  }
+}
+
+interface SaveImagesForReferenceItem {
+  searchResultId?: string
+  imageUrl?: string
+  title?: string
+  pageUrl?: string
+}
+
+const AGENT_REFERENCE_COLLECTION_KEYWORDS = [
+  '参考图',
+  '传入参考图',
+  '作为参考',
+  '作为生图参考',
+  '搜图',
+  '找图',
+  '查找图片',
+  '搜索图片',
+  '保存图片',
+  '下载图片',
+  'reference image',
+  'reference images',
+  'use as reference',
+  'image reference',
+]
+
+function shouldCollectAgentReferenceImagesFirst(prompt: string) {
+  const normalized = prompt.toLocaleLowerCase()
+  const wantsExternalImages = /(搜索|检索|查找|找|整理|下载|保存|search|find|collect|download|save)/i.test(prompt)
+  const wantsReferenceImages = AGENT_REFERENCE_COLLECTION_KEYWORDS.some((keyword) => normalized.includes(keyword.toLocaleLowerCase()))
+  return wantsExternalImages && wantsReferenceImages
+}
+
+function parseSaveImagesForReferenceCallArguments(args: string): { images: SaveImagesForReferenceItem[]; purpose?: string } | null {
+  try {
+    const parsed = JSON.parse(args) as unknown
+    if (!isRecord(parsed) || !Array.isArray(parsed.images)) return null
+
+    const images = parsed.images
+      .filter(isRecord)
+      .map((item): SaveImagesForReferenceItem | null => {
+        const searchResultId = typeof item.search_result_id === 'string' ? item.search_result_id.trim() : ''
+        const imageUrl = typeof item.image_url === 'string' ? item.image_url.trim() : ''
+        const title = typeof item.title === 'string' ? item.title.trim() : ''
+        const pageUrl = typeof item.page_url === 'string' ? item.page_url.trim() : ''
+        if (!searchResultId && !imageUrl) return null
+        return {
+          ...(searchResultId ? { searchResultId } : {}),
+          ...(imageUrl ? { imageUrl } : {}),
+          ...(title ? { title } : {}),
+          ...(pageUrl ? { pageUrl } : {}),
+        }
+      })
+      .filter((item): item is SaveImagesForReferenceItem => Boolean(item))
+
+    if (images.length === 0) return null
+    const purpose = typeof parsed.purpose === 'string' ? parsed.purpose.trim() : ''
+    return { images, ...(purpose ? { purpose } : {}) }
+  } catch {
+    return null
+  }
 }
 
 async function buildAgentApiInput(conversation: AgentConversation, currentRound: AgentRound, tasks: TaskRecord[]): Promise<unknown[]> {
@@ -2894,6 +3063,10 @@ async function buildAgentApiInput(conversation: AgentConversation, currentRound:
     if (round.outputTaskIds.length > 0) {
       const imagesItem = await createAgentGeneratedImagesInputItem(round, tasks)
       if (imagesItem) input.push(imagesItem)
+    }
+    if (round.savedReferenceImages?.length) {
+      const savedReferenceImagesItem = await createAgentSavedReferenceImagesInputItem(round, round.savedReferenceImages)
+      if (savedReferenceImagesItem) input.push(savedReferenceImagesItem)
     }
   }
 
@@ -2994,6 +3167,7 @@ export async function submitAgentMessage() {
     maskTargetImageId,
     maskImageId,
     outputTaskIds: [],
+    savedReferenceImages: [],
     status: 'running',
     error: null,
     createdAt: now,
@@ -3101,6 +3275,7 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
           ? {
               ...round,
               outputTaskIds: [],
+              savedReferenceImages: [],
               responseId: undefined,
               responseOutput: undefined,
               status: 'running',
@@ -3132,6 +3307,7 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
     maskTargetImageId: sourceRound.maskTargetImageId ?? sourceUserMessage.maskTargetImageId ?? null,
     maskImageId: sourceRound.maskImageId ?? sourceUserMessage.maskImageId ?? null,
     outputTaskIds: [],
+    savedReferenceImages: [],
     status: 'running',
     error: null,
     createdAt: now,
@@ -3189,6 +3365,13 @@ async function executeAgentRound(
     const shouldStreamAssistantMessage = activeProfile.streamImages === true
     const streamingTaskIds: string[] = []
     const taskIdByToolCallId = new Map<string, string>()
+    const imageSearchResultsById = new Map<string, AgentImageSearchResult>()
+    const savedReferenceImages: AgentSavedReferenceImage[] = [...(round.savedReferenceImages ?? [])]
+    const requiresReferenceCollection = shouldCollectAgentReferenceImagesFirst(userMessage.content)
+    if (requiresReferenceCollection && !requestSettings.agentWebSearch) {
+      throw new Error('此请求需要先联网搜索并保存参考图。请在设置的 Agent 配置中开启“网络搜索”，否则不会直接生成，以免漏传参考图。')
+    }
+    let referenceCollectionPhase = requiresReferenceCollection
 
     const attachTaskToAgentRound = (taskId: string) => {
       if (streamingTaskIds.includes(taskId)) return
@@ -3266,12 +3449,15 @@ async function executeAgentRound(
 
       const imgId = await storeImage(image.dataUrl, 'generated')
       cacheImage(imgId, image.dataUrl)
+      const savedReferenceImageIds = getSavedReferenceImageIds()
+      const nextInputImageIds = uniqueIds([...(latestTask?.inputImageIds ?? []), ...savedReferenceImageIds])
       const actualParams: Partial<TaskParams> = {
         ...(Object.keys(image.actualParams ?? {}).length ? image.actualParams : {}),
         n: 1,
       }
       updateTaskInStore(taskId, {
         prompt: image.revisedPrompt ?? latestTask?.prompt ?? '',
+        inputImageIds: nextInputImageIds,
         outputImages: [imgId],
         actualParams,
         actualParamsByImage: { [imgId]: actualParams },
@@ -3285,6 +3471,43 @@ async function executeAgentRound(
       })
       useStore.getState().setTaskStreamPreview(taskId)
       return taskId
+    }
+
+    const getSavedReferenceImageIds = () => {
+      return uniqueIds(savedReferenceImages.map((image) => image.imageId))
+    }
+
+    const saveAgentReferenceImage = async (opts: {
+      title: string
+      dataUrl: string
+      sourceUrl: string
+      pageUrl?: string
+      searchResultId?: string
+      toolCallId?: string
+    }) => {
+      const imgId = await storeImage(opts.dataUrl, 'upload')
+      cacheImage(imgId, opts.dataUrl)
+      const now = Date.now()
+      const savedImage: AgentSavedReferenceImage = {
+        id: genId(),
+        imageId: imgId,
+        title: opts.title || '搜索保存的参考图',
+        sourceUrl: opts.sourceUrl,
+        ...(opts.pageUrl ? { pageUrl: opts.pageUrl } : {}),
+        ...(opts.searchResultId ? { searchResultId: opts.searchResultId } : {}),
+        ...(opts.toolCallId ? { toolCallId: opts.toolCallId } : {}),
+        createdAt: now,
+      }
+
+      savedReferenceImages.push(savedImage)
+      updateAgentConversation(conversationId, (current) => ({
+        ...current,
+        updatedAt: Date.now(),
+        rounds: current.rounds.map((item) =>
+          item.id === roundId ? { ...item, savedReferenceImages: [...savedReferenceImages] } : item,
+        ),
+      }))
+      return savedImage
     }
 
     if (shouldStreamAssistantMessage) {
@@ -3319,6 +3542,8 @@ async function executeAgentRound(
     let toolCallsUsed = 0
     let reachedToolLimit = false
     let pendingToolTextSeparator = false
+    let emptyReferenceSearchWithoutSourcePagesCount = 0
+    let emptyReferenceSearchWithSourcePagesCount = 0
 
     // Helper: resolve reference image ids to data URLs for batch image calls
     const resolveReferenceImages = async (referenceIds: string[]): Promise<{ dataUrls: string[]; imageIds: string[] }> => {
@@ -3349,6 +3574,16 @@ async function executeAgentRound(
               imageIds.push(imageId)
             }
           }
+          const savedImages = r.savedReferenceImages ?? []
+          for (let imgIdx = 0; imgIdx < savedImages.length; imgIdx++) {
+            const savedRefId = getAgentSavedReferenceId(r, imgIdx)
+            if (savedRefId === refId) {
+              const imageId = savedImages[imgIdx].imageId
+              const dataUrl = await ensureImageCached(imageId)
+              if (dataUrl) dataUrls.push(dataUrl)
+              imageIds.push(imageId)
+            }
+          }
         }
       }
       return { dataUrls, imageIds }
@@ -3369,8 +3604,9 @@ async function executeAgentRound(
       for (const item of batchItems) {
         const referenceIds = uniqueIds(extractAgentReferenceIds(item.prompt))
         const references = await resolveReferenceImages(referenceIds)
+        const inputImageIds = uniqueIds([...references.imageIds, ...getSavedReferenceImageIds()])
         const batchToolCallId = genId()
-        await ensureStreamingAgentTask(batchToolCallId, item.prompt, references.imageIds, {
+        await ensureStreamingAgentTask(batchToolCallId, item.prompt, inputImageIds, {
           createdAt: Date.now(),
           maskTargetImageId: null,
           maskImageId: null,
@@ -3452,16 +3688,157 @@ async function executeAgentRound(
       return JSON.stringify({ images: outputImages })
     }
 
+    const executeSearchImagesFunctionCall = async (functionCallItem: ResponsesOutputItem): Promise<string> => {
+      const args = parseSearchImagesCallArguments(functionCallItem.arguments ?? '')
+      if (!args) return JSON.stringify({ error: 'Invalid search_images arguments' })
+
+      try {
+        const result = await searchAgentImages({
+          query: args.query,
+          count: args.count,
+          pageUrls: args.pageUrls,
+          signal: controller.signal,
+        })
+        for (const item of result.results) imageSearchResultsById.set(item.id, item)
+        if (referenceCollectionPhase && result.results.length === 0) {
+          if (args.pageUrls?.length) emptyReferenceSearchWithSourcePagesCount += 1
+          else emptyReferenceSearchWithoutSourcePagesCount += 1
+        }
+        return JSON.stringify({
+          query: result.query,
+          source: result.source,
+          page_urls: result.pageUrls,
+          results: result.results.map((item) => ({
+            id: item.id,
+            title: item.title,
+            image_url: item.imageUrl,
+            thumbnail_url: item.thumbnailUrl,
+            page_url: item.pageUrl,
+            creator: item.creator,
+            license: item.license,
+            license_url: item.licenseUrl,
+            source: item.source,
+            provider: item.provider,
+            width: item.width,
+            height: item.height,
+            attribution: item.attribution,
+          })),
+          warnings: result.warnings,
+          next_step: result.results.length > 0
+            ? 'Call save_images_for_reference with selected search_result_id values before using images as references.'
+            : args.pageUrls?.length
+              ? 'No page images were extracted. Try different official/wiki/source page URLs, or ask the user to upload references.'
+              : 'No images were found from generic image indexes. Use web_search to find official/wiki/source pages, then call search_images again with those URLs in page_urls.',
+        })
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+      }
+    }
+
+    const executeSaveImagesForReferenceFunctionCall = async (functionCallItem: ResponsesOutputItem): Promise<string> => {
+      const args = parseSaveImagesForReferenceCallArguments(functionCallItem.arguments ?? '')
+      if (!args) return JSON.stringify({ error: 'Invalid save_images_for_reference arguments' })
+
+      const saved: Array<{
+        status: 'done' | 'error'
+        search_result_id?: string
+        image_url?: string
+        title?: string
+        ref?: string
+        image_id?: string
+        page_url?: string
+        error?: string
+      }> = []
+
+      for (const item of args.images) {
+        if (controller.signal.aborted) throw createAgentAbortError()
+
+        const searchResult = item.searchResultId ? imageSearchResultsById.get(item.searchResultId) : undefined
+        const imageUrl = searchResult?.imageUrl ?? item.imageUrl ?? ''
+        const title = item.title ?? searchResult?.title ?? '搜索保存的参考图'
+        const pageUrl = item.pageUrl ?? searchResult?.pageUrl
+
+        if (!imageUrl) {
+          saved.push({
+            status: 'error',
+            search_result_id: item.searchResultId,
+            title,
+            error: 'Missing image URL',
+          })
+          continue
+        }
+
+        try {
+          let dataUrl: string
+          let downloadedUrl = imageUrl
+          try {
+            dataUrl = await fetchAgentImageAsDataUrl(imageUrl, controller.signal)
+          } catch (err) {
+            if (!searchResult?.thumbnailUrl) throw err
+            dataUrl = await fetchAgentImageAsDataUrl(searchResult.thumbnailUrl, controller.signal)
+            downloadedUrl = searchResult.thumbnailUrl
+          }
+          const savedImage = await saveAgentReferenceImage({
+            title,
+            dataUrl,
+            sourceUrl: downloadedUrl,
+            pageUrl,
+            searchResultId: item.searchResultId,
+            toolCallId: functionCallItem.call_id ?? functionCallItem.id,
+          })
+          const savedIndex = savedReferenceImages.findIndex((image) => image.id === savedImage.id)
+          const ref = savedIndex >= 0 ? `<ref id="${getAgentSavedReferenceId(round, savedIndex)}" />` : undefined
+          saved.push({
+            status: 'done',
+            search_result_id: item.searchResultId,
+            image_url: downloadedUrl,
+            title,
+            ref,
+            image_id: savedImage.imageId,
+            page_url: pageUrl,
+          })
+        } catch (err) {
+          saved.push({
+            status: 'error',
+            search_result_id: item.searchResultId,
+            image_url: imageUrl,
+            title,
+            page_url: pageUrl,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+
+      const done = saved.filter((item) => item.status === 'done')
+      toolCallsUsed += done.length
+      return JSON.stringify({
+        purpose: args.purpose,
+        images: saved,
+        saved_refs: done.map((item) => item.ref).filter(Boolean),
+        next_step: done.length > 0
+          ? 'Use the returned refs in image_generation or generate_image_batch prompts when generating from these references.'
+          : 'No images were saved; search again or choose different image URLs.',
+      })
+    }
+
     while (true) {
       if (controller.signal.aborted) throw createAgentAbortError()
       const textBeforeResponse = accumulatedText
       let currentResponseOutputItems: ResponsesOutputItem[] = []
+      const imageGenerationEnabled = !referenceCollectionPhase
+      const referenceCollectionToolChoice = referenceCollectionPhase
+        ? imageSearchResultsById.size > 0 && savedReferenceImages.length === 0
+          ? { type: 'function', name: 'save_images_for_reference' }
+          : undefined
+        : undefined
       const result = await callAgentResponsesApi({
         settings: requestSettings,
         profile: activeProfile,
         params,
         input: apiInputForTurn,
         maskDataUrl,
+        imageGenerationEnabled,
+        toolChoice: referenceCollectionToolChoice,
         signal: controller.signal,
         onTextDelta: shouldStreamAssistantMessage
           ? (delta) => {
@@ -3545,6 +3922,7 @@ async function executeAgentRound(
         }
         const promptRefIds = uniqueIds(extractAgentReferenceIds(image.revisedPrompt ?? ''))
         const promptRefs = await resolveReferenceImages(promptRefIds)
+        const savedReferenceImageIds = getSavedReferenceImageIds()
         const imgId = await storeImage(image.dataUrl, 'generated')
         cacheImage(imgId, image.dataUrl)
         const actualParams: Partial<TaskParams> = {
@@ -3560,7 +3938,7 @@ async function executeAgentRound(
           apiProfileName: activeProfile.name,
           apiMode: activeProfile.apiMode,
           apiModel: activeProfile.model,
-          inputImageIds: uniqueIds([...(round?.inputImageIds ?? []), ...promptRefs.imageIds]),
+          inputImageIds: uniqueIds([...(round?.inputImageIds ?? []), ...promptRefs.imageIds, ...savedReferenceImageIds]),
           maskTargetImageId: round?.maskTargetImageId ?? null,
           maskImageId: round?.maskImageId ?? null,
           outputImages: [imgId],
@@ -3596,6 +3974,12 @@ async function executeAgentRound(
       const batchFunctionCalls = currentResponseOutputItems.filter(
         (item) => item.type === 'function_call' && item.name === 'generate_image_batch',
       )
+      const searchImageFunctionCalls = currentResponseOutputItems.filter(
+        (item) => item.type === 'function_call' && item.name === 'search_images',
+      )
+      const saveImageFunctionCalls = currentResponseOutputItems.filter(
+        (item) => item.type === 'function_call' && item.name === 'save_images_for_reference',
+      )
       const continueFunctionCalls = currentResponseOutputItems.filter(
         (item) => item.type === 'function_call' && item.name === 'continue_generation',
       )
@@ -3618,6 +4002,41 @@ async function executeAgentRound(
         }
       }
 
+      if (searchImageFunctionCalls.length > 0) {
+        for (const fc of searchImageFunctionCalls) {
+          const output = await executeSearchImagesFunctionCall(fc)
+          functionCallOutputs.push({
+            type: 'function_call_output',
+            call_id: fc.call_id,
+            output,
+          })
+        }
+      }
+      if (referenceCollectionPhase && searchImageFunctionCalls.length > 0 && imageSearchResultsById.size === 0) {
+        if (emptyReferenceSearchWithSourcePagesCount > 0 || emptyReferenceSearchWithoutSourcePagesCount >= 2) {
+          throw new Error('图片搜索没有返回可保存的参考图，已停止生成。已尝试图片搜索但没有得到可下载图片；请检查网页来源是否可访问，换用更具体的关键词，或手动上传参考图后再生成。')
+        }
+      }
+
+      if (saveImageFunctionCalls.length > 0) {
+        for (const fc of saveImageFunctionCalls) {
+          const output = await executeSaveImagesForReferenceFunctionCall(fc)
+          functionCallOutputs.push({
+            type: 'function_call_output',
+            call_id: fc.call_id,
+            output,
+          })
+        }
+      }
+
+      if (referenceCollectionPhase && saveImageFunctionCalls.length > 0 && savedReferenceImages.length === 0) {
+        throw new Error('参考图下载或保存失败，已停止生成。请检查图片源是否允许访问，或手动上传参考图后再生成。')
+      }
+
+      if (referenceCollectionPhase && savedReferenceImages.length > 0) {
+        referenceCollectionPhase = false
+      }
+
       for (const fc of continueFunctionCalls) {
         functionCallOutputs.push({
           type: 'function_call_output',
@@ -3628,6 +4047,19 @@ async function executeAgentRound(
 
       // If no function calls need output → model decided the task is done → break
       if (functionCallOutputs.length === 0) {
+        if (referenceCollectionPhase) {
+          accumulatedOutputItems = currentResponseOutputItems
+          const latestConversation = useStore.getState().agentConversations.find((item) => item.id === conversationId)
+          const latestRound = latestConversation?.rounds.find((item) => item.id === roundId)
+          if (!latestRound) break
+          apiInputForTurn = [
+            ...apiInput,
+            ...sanitizeResponseOutputForInput(accumulatedOutputItems, { allowPendingFunctionCalls: true }),
+            createAgentReferenceCollectionContinuationInputItem(toolCallsUsed, maxToolCalls),
+          ]
+          pendingToolTextSeparator = true
+          continue
+        }
         updateAgentConversation(conversationId, (current) => ({
           ...current,
           updatedAt: Date.now(),
@@ -3664,9 +4096,19 @@ async function executeAgentRound(
       )
       // Insert function_call_output items before the continuation system message
       continuationBase.splice(continuationBase.length - 1, 0, ...functionCallOutputs)
+      if (referenceCollectionPhase && imageSearchResultsById.size === 0 && searchImageFunctionCalls.length > 0) {
+        continuationBase[continuationBase.length - 1] = createAgentReferenceCollectionRetryInputItem(toolCallsUsed, maxToolCalls)
+      }
       // Inject batch-generated images as input_image user message for model visibility
       const batchImagesItem = await createAgentBatchImagesInputItem(latestRound, useStore.getState().tasks, streamingTaskIds)
       if (batchImagesItem) continuationBase.splice(continuationBase.length - 1, 0, batchImagesItem)
+      const latestSavedReferenceImages = latestRound.savedReferenceImages ?? savedReferenceImages
+      const savedReferenceImagesItem = await createAgentSavedReferenceImagesInputItem(latestRound, latestSavedReferenceImages)
+      if (savedReferenceImagesItem) continuationBase.splice(continuationBase.length - 1, 0, savedReferenceImagesItem)
+      if (latestSavedReferenceImages.length > 0) {
+        const savedRefs = latestSavedReferenceImages.map((_, index) => `<ref id="${getAgentSavedReferenceId(latestRound, index)}" />`)
+        continuationBase[continuationBase.length - 1] = createAgentSavedReferencesContinuationInputItem(savedRefs, toolCallsUsed, maxToolCalls)
+      }
       apiInputForTurn = continuationBase
       accumulatedOutputItems = accumulatedOutputItemsWithFunctionOutputs
       pendingToolTextSeparator = true

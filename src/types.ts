@@ -221,6 +221,17 @@ export interface AgentMessage {
   createdAt: number
 }
 
+export interface AgentSavedReferenceImage {
+  id: string
+  imageId: string
+  title: string
+  sourceUrl: string
+  pageUrl?: string
+  searchResultId?: string
+  toolCallId?: string
+  createdAt: number
+}
+
 export interface AgentRound {
   id: string
   index: number
@@ -232,6 +243,7 @@ export interface AgentRound {
   maskTargetImageId?: string | null
   maskImageId?: string | null
   outputTaskIds: string[]
+  savedReferenceImages?: AgentSavedReferenceImage[]
   responseId?: string
   responseOutput?: ResponsesOutputItem[]
   status: AgentRoundStatus
