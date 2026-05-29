@@ -551,8 +551,9 @@ function stripPersistedAgentConversations(value: unknown): unknown {
 
 export function migratePersistedState(persistedState: unknown): unknown {
   if (!isRecord(persistedState)) return persistedState
+  const { filterFavorite, ...rest } = persistedState
   return {
-    ...persistedState,
+    ...rest,
     agentConversations: stripPersistedAgentConversations(persistedState.agentConversations),
   }
 }
@@ -614,6 +615,8 @@ export function getPersistedState(state: AppState) {
     agentSidebarCollapsed: state.agentSidebarCollapsed,
     agentAssetTab: state.agentAssetTab,
     agentAssetPanelCollapsed: state.agentAssetPanelCollapsed,
+    taskFolders: state.taskFolders,
+    activeFolder: state.activeFolder,
     supportPromptDismissed: state.supportPromptDismissed,
     supportPromptOpen: state.supportPromptOpen,
     supportPromptSkippedForImportedData: state.supportPromptSkippedForImportedData,
@@ -683,6 +686,10 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
     agentSidebarCollapsed: Boolean(persisted.agentSidebarCollapsed),
     agentAssetTab: persisted.agentAssetTab === 'references' ? 'references' : 'outputs',
     agentAssetPanelCollapsed: Boolean(persisted.agentAssetPanelCollapsed),
+    taskFolders: Array.isArray(persisted.taskFolders) ? persisted.taskFolders.map(String) : currentState.taskFolders,
+    activeFolder: typeof persisted.activeFolder === 'string' ? persisted.activeFolder : null,
+    showFolderManager: false,
+    filterFavorite: false,
     supportPromptDismissed: Boolean(persisted.supportPromptDismissed),
     supportPromptOpen: Boolean(persisted.supportPromptOpen),
     supportPromptSkippedForImportedData: Boolean(persisted.supportPromptSkippedForImportedData),
@@ -758,6 +765,12 @@ interface AppState {
   // 任务列表
   tasks: TaskRecord[]
   setTasks: (t: TaskRecord[]) => void
+  taskFolders: string[]
+  setTaskFolders: (folders: string[]) => void
+  activeFolder: string | null
+  setActiveFolder: (folder: string | null) => void
+  showFolderManager: boolean
+  setShowFolderManager: (show: boolean) => void
   streamPreviews: Record<string, string>
   streamPreviewSlots: Record<string, Record<string, string>>
   setTaskStreamPreview: (taskId: string, image?: string, requestIndex?: number) => void
@@ -1363,6 +1376,19 @@ export const useStore = create<AppState>()(
           ? { supportPromptSkippedForImportedData: false }
           : {}),
       })),
+      taskFolders: [],
+      setTaskFolders: (taskFolders) => set({
+        taskFolders: Array.from(new Set(taskFolders.map(normalizeTaskFolderName).filter(Boolean))).sort((a, b) =>
+          a.localeCompare(b, 'zh-Hans-CN'),
+        ),
+      }),
+      activeFolder: null,
+      setActiveFolder: (activeFolder) => set({ activeFolder, selectedTaskIds: [] }),
+      showFolderManager: false,
+      setShowFolderManager: (showFolderManager) => {
+        if (showFolderManager) dismissAllTooltips()
+        set({ showFolderManager })
+      },
       streamPreviews: {},
       streamPreviewSlots: {},
       setTaskStreamPreview: (taskId, image, requestIndex = 0) => set((s) => {
@@ -2080,7 +2106,7 @@ export async function initStore() {
 
 /** 提交新任务 */
 export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean } = {}) {
-  const { settings, prompt, inputImages, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, showToast, setConfirmDialog } =
+  const { settings, prompt, inputImages, maskDraft, params, activeFolder, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, showToast, setConfirmDialog } =
     useStore.getState()
 
   const normalizedSettings = normalizeSettings(settings)
@@ -2168,6 +2194,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     id: taskId,
     prompt: prompt.trim(),
     params: normalizedParams,
+    folder: activeFolder || '',
     apiProvider: activeProfile.provider,
     apiProfileId: activeProfile.id,
     apiProfileName: activeProfile.name,
@@ -3996,6 +4023,91 @@ export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
   if (task) putTask(task)
 }
 
+export function getFolderTaskCounts(tasks: TaskRecord[]) {
+  const counts = new Map<string, number>()
+  for (const task of tasks) {
+    const folder = task.folder || ''
+    counts.set(folder, (counts.get(folder) ?? 0) + 1)
+  }
+  return counts
+}
+
+export function getTaskFolders(tasks: TaskRecord[]) {
+  return Array.from(new Set(tasks.map((task) => task.folder || '').filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b, 'zh-Hans-CN'),
+  )
+}
+
+export function normalizeTaskFolderName(value: string) {
+  return value.trim().replace(/\s+/g, ' ')
+}
+
+function mergeFolderNames(...groups: string[][]) {
+  return Array.from(new Set(groups.flat().map(normalizeTaskFolderName).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b, 'zh-Hans-CN'),
+  )
+}
+
+export async function createTaskFolder(folder: string) {
+  const normalizedFolder = normalizeTaskFolderName(folder)
+  if (!normalizedFolder) return
+  if (normalizedFolder.length > 60) {
+    useStore.getState().showToast('文件夹名称最多 60 个字符', 'error')
+    return
+  }
+  const { taskFolders, setTaskFolders, showToast } = useStore.getState()
+  setTaskFolders(mergeFolderNames(taskFolders, [normalizedFolder]))
+  showToast(`已创建「${normalizedFolder}」`, 'success')
+}
+
+export async function moveTasksToFolder(taskIds: string[], folder: string) {
+  const normalizedFolder = normalizeTaskFolderName(folder)
+  if (normalizedFolder.length > 60) {
+    useStore.getState().showToast('文件夹名称最多 60 个字符', 'error')
+    return
+  }
+  const uniqueTaskIds = Array.from(new Set(taskIds)).filter(Boolean)
+  if (!uniqueTaskIds.length) return
+
+  const { tasks, taskFolders, setTasks, setTaskFolders, showToast, clearSelection } = useStore.getState()
+  const idSet = new Set(uniqueTaskIds)
+  const updatedTasks = tasks.map((task) => idSet.has(task.id) ? { ...task, folder: normalizedFolder } : task)
+  setTasks(updatedTasks)
+  if (normalizedFolder) setTaskFolders(mergeFolderNames(taskFolders, [normalizedFolder]))
+  await Promise.all(updatedTasks.filter((task) => idSet.has(task.id)).map((task) => putTask(task)))
+  clearSelection()
+  showToast(normalizedFolder ? `已移动到「${normalizedFolder}」` : '已移出文件夹', 'success')
+}
+
+export async function renameTaskFolder(folder: string, nextFolder: string) {
+  const normalizedFolder = normalizeTaskFolderName(folder)
+  const normalizedNextFolder = normalizeTaskFolderName(nextFolder)
+  if (!normalizedFolder || !normalizedNextFolder) return
+  if (normalizedNextFolder.length > 60) {
+    useStore.getState().showToast('文件夹名称最多 60 个字符', 'error')
+    return
+  }
+  const { tasks, taskFolders, setTasks, setTaskFolders, activeFolder, setActiveFolder, showToast } = useStore.getState()
+  const updatedTasks = tasks.map((task) => (task.folder || '') === normalizedFolder ? { ...task, folder: normalizedNextFolder } : task)
+  setTasks(updatedTasks)
+  setTaskFolders(mergeFolderNames(taskFolders.filter((name) => name !== normalizedFolder), [normalizedNextFolder]))
+  await Promise.all(updatedTasks.filter((task) => (task.folder || '') === normalizedNextFolder).map((task) => putTask(task)))
+  if (activeFolder === normalizedFolder) setActiveFolder(normalizedNextFolder)
+  showToast('文件夹已重命名', 'success')
+}
+
+export async function deleteTaskFolder(folder: string) {
+  const normalizedFolder = normalizeTaskFolderName(folder)
+  if (!normalizedFolder) return
+  const { tasks, taskFolders, setTasks, setTaskFolders, activeFolder, setActiveFolder, showToast } = useStore.getState()
+  const updatedTasks = tasks.map((task) => (task.folder || '') === normalizedFolder ? { ...task, folder: '' } : task)
+  setTasks(updatedTasks)
+  setTaskFolders(taskFolders.filter((name) => name !== normalizedFolder))
+  await Promise.all(updatedTasks.filter((task, index) => tasks[index]?.folder !== task.folder).map((task) => putTask(task)))
+  if (activeFolder === normalizedFolder) setActiveFolder(null)
+  showToast('文件夹已清空', 'success')
+}
+
 /** 重试失败的任务：创建新任务并执行 */
 export async function retryTask(task: TaskRecord) {
   const { settings } = useStore.getState()
@@ -4006,6 +4118,7 @@ export async function retryTask(task: TaskRecord) {
     id: taskId,
     prompt: task.prompt,
     params: normalizedParams,
+    folder: task.folder || '',
     apiProvider: activeProfile.provider,
     apiProfileId: activeProfile.id,
     apiProfileName: activeProfile.name,

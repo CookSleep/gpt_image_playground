@@ -142,6 +142,8 @@ export interface TaskRecord {
   id: string
   prompt: string
   params: TaskParams
+  /** 用户归档文件夹，空字符串表示未归类 */
+  folder?: string
   /** 生成时使用的 Provider 类型 */
   apiProvider?: ApiProvider
   /** 生成时使用的 API 配置 ID */
