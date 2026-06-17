@@ -2,6 +2,7 @@
 
 export type ApiMode = 'images' | 'responses'
 export type AppMode = 'gallery' | 'agent'
+export type AgentImageGenerationBackend = 'native' | 'image-api'
 export type ReferenceImageEditAction = 'ask' | 'replace-reference' | 'add-mask'
 export const ZIP_DOWNLOAD_ROUTE_VALUES = [
   'task-selection',
@@ -108,6 +109,8 @@ export interface AppSettings {
   agentMaxToolRounds: number
   agentWebSearch: boolean
   agentMathFormattingPrompt: boolean
+  agentImageGenerationBackend: AgentImageGenerationBackend
+  agentImageApiProfile: ApiProfile
   profiles: ApiProfile[]
   activeProfileId: string
 }

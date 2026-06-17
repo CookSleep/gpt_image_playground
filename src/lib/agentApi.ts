@@ -23,32 +23,6 @@ export interface AgentApiResult {
   rawResponsePayload?: string
 }
 
-const AGENT_IMAGE_INSTRUCTIONS = [
-  'You are an image-generation assistant in a multi-turn gallery app.',
-  '',
-  '## Progressive Batch Generation',
-  'For multi-image requests, use a progressive batching strategy to ensure consistency:',
-  '  1. **Base Reference First:** If the images need to share a consistent style, character, or layout (e.g. PPT slides, storyboards), generate ONE primary image first to establish the visual baseline, then call continue_generation to get another round.',
-  '  2. **Batch Remaining Tasks:** Once the base reference is available, list all remaining images to be generated. The app will generate them concurrently for you. In your descriptions, explicitly instruct to reference the base image to maintain consistency.',
-  '  3. **Independent Images:** If the requested images are completely independent (e.g. "3 different cats"), generate them together in ONE response. Do NOT generate them one by one across multiple responses.',
-  'As the turn continues, output a brief progress note before each tool call.',
-  'For single-image requests, generate directly without any listing.',
-  '',
-  '## Generating images',
-  '- One image_generation call per distinct image. Never collage.',
-  '- Dependent images (a later image needs to reference an earlier one) → generate the prerequisite first, then call continue_generation. The next round will have the result available as `<ref id="..." />`.',
-  '- Only generate when explicitly requested; otherwise reply with text.',
-  '- Preserve the user\'s original intent faithfully. Never substitute requested subjects for copyright/trademark reasons.',
-  '',
-  '## Reference tags and generated images in context',
-  'NEVER output `<ref>`, `<available_refs>`, `<removed_ref>`, or any XML reference tags in visible assistant text — the system injects them automatically and your raw output will be shown directly to the user.',
-  '- Previously generated images are injected as user messages containing the actual image (input_image) followed by a `<ref id="round-N-image-M" prompt="..." />` tag identifying it.',
-  '- Deleted images appear as `<removed_ref id="..." />` without an accompanying image — do not reference them.',
-  '- In user messages: `<ref id="..." />` may also point to user-attached/cited images.',
-  '- In generate_image_batch tool arguments, include matching `<ref id="..." />` tags inside each image prompt when the prompt refers to a reference image. Do not use separate bare reference ids.',
-  'Resolve user mentions ("the first image") to the matching id. Only use existing ids in image_generation prompts and generate_image_batch prompts.',
-].join('\n')
-
 const AGENT_MATH_FORMATTING_INSTRUCTIONS = [
   '## Math formatting',
   '- When a response contains mathematical formulas, output them using Markdown math delimiters supported by this app.',
@@ -57,12 +31,45 @@ const AGENT_MATH_FORMATTING_INSTRUCTIONS = [
   '- Do not use LaTeX delimiters like `\\(...\\)` or `\\[...\\]` in visible assistant text.',
 ].join('\n')
 
+function getAgentImageToolName(settings: AppSettings) {
+  return settings.agentImageGenerationBackend === 'image-api' ? 'generate_image' : 'image_generation'
+}
+
+function createAgentImageInstructions(settings: AppSettings) {
+  const imageToolName = getAgentImageToolName(settings)
+  return [
+    'You are an image-generation assistant in a multi-turn gallery app.',
+    '',
+    '## Progressive Batch Generation',
+    'For multi-image requests, use a progressive batching strategy to ensure consistency:',
+    '  1. **Base Reference First:** If the images need to share a consistent style, character, or layout (e.g. PPT slides, storyboards), generate ONE primary image first to establish the visual baseline, then call continue_generation to get another round.',
+    '  2. **Batch Remaining Tasks:** Once the base reference is available, list all remaining images to be generated. The app will generate them concurrently for you. In your descriptions, explicitly instruct to reference the base image to maintain consistency.',
+    '  3. **Independent Images:** If the requested images are completely independent (e.g. "3 different cats"), generate them together in ONE response. Do NOT generate them one by one across multiple responses.',
+    'As the turn continues, output a brief progress note before each tool call.',
+    'For single-image requests, generate directly without any listing.',
+    '',
+    '## Generating images',
+    `- One ${imageToolName} call per distinct image. Never collage.`,
+    `- Dependent images (a later image needs to reference an earlier one) → generate the prerequisite first with ${imageToolName}, then call continue_generation. The next round will have the result available as \`<ref id="..." />\`.`,
+    '- Only generate when explicitly requested; otherwise reply with text.',
+    '- Preserve the user\'s original intent faithfully. Never substitute requested subjects for copyright/trademark reasons.',
+    '',
+    '## Reference tags and generated images in context',
+    'NEVER output `<ref>`, `<available_refs>`, `<removed_ref>`, or any XML reference tags in visible assistant text — the system injects them automatically and your raw output will be shown directly to the user.',
+    '- Previously generated images are injected as user messages containing the actual image (input_image) followed by a `<ref id="round-N-image-M" prompt="..." />` tag identifying it.',
+    '- Deleted images appear as `<removed_ref id="..." />` without an accompanying image — do not reference them.',
+    '- In user messages: `<ref id="..." />` may also point to user-attached/cited images.',
+    '- In generate_image and generate_image_batch tool arguments, include matching `<ref id="..." />` tags inside each image prompt when the prompt refers to a reference image. Do not use separate bare reference ids.',
+    `Resolve user mentions ("the first image") to the matching id. Only use existing ids in ${imageToolName} prompts and generate_image_batch prompts.`,
+  ].join('\n')
+}
+
 function createAgentInstructions(settings: AppSettings) {
   const maxToolRounds = Number.isFinite(settings.agentMaxToolRounds)
     ? Math.max(1, Math.trunc(settings.agentMaxToolRounds))
     : DEFAULT_AGENT_MAX_TOOL_ROUNDS
   const instructions = [
-    AGENT_IMAGE_INSTRUCTIONS,
+    createAgentImageInstructions(settings),
     '',
     '## Tool policy',
     `- Current maximum tool-use rounds for this Agent turn: ${maxToolRounds}.`,
@@ -122,7 +129,34 @@ function createImageTool(params: TaskParams, profile: ApiProfile, maskDataUrl?: 
 }
 
 function createAgentTools(params: TaskParams, profile: ApiProfile, settings: AppSettings, maskDataUrl?: string): Array<Record<string, unknown>> {
-  const tools: Array<Record<string, unknown>> = [createImageTool(params, profile, maskDataUrl)]
+  const tools: Array<Record<string, unknown>> = settings.agentImageGenerationBackend === 'image-api'
+    ? []
+    : [createImageTool(params, profile, maskDataUrl)]
+
+  if (settings.agentImageGenerationBackend === 'image-api') {
+    tools.push({
+      type: 'function',
+      name: 'generate_image',
+      description: [
+        'Generate one image using the app configured Image API backend.',
+        'Use this for single-image requests or prerequisite/base images that later images must reference.',
+        'The prompt must be self-contained and include full visual details.',
+        'If the image needs to match a previous image, include the corresponding XML tag (e.g. <ref id="round-1-image-1" />) inside the prompt so the app can attach the reference image automatically.',
+      ].join(' '),
+      parameters: {
+        type: 'object',
+        properties: {
+          prompt: {
+            type: 'string',
+            description: 'Complete image generation prompt with all visual details and any needed <ref id="..." /> tags.',
+          },
+        },
+        required: ['prompt'],
+        additionalProperties: false,
+      },
+      strict: true,
+    })
+  }
 
   // generate_image_batch: custom function tool for concurrent multi-image generation
   tools.push({
@@ -132,7 +166,9 @@ function createAgentTools(params: TaskParams, profile: ApiProfile, settings: App
       'Generate multiple images concurrently. Use this ONLY when:',
       '1. There are 2+ remaining images whose prerequisites (base references) are ALL already generated.',
       '2. These images are independent of each other (none references another image in this same batch).',
-      'For single images or prerequisite/base images, use the built-in image_generation tool instead.',
+      settings.agentImageGenerationBackend === 'image-api'
+        ? 'For single images or prerequisite/base images, use generate_image instead.'
+        : 'For single images or prerequisite/base images, use the built-in image_generation tool instead.',
       'Each image prompt must be self-contained and include full visual style descriptions.',
       'If an image needs to match a previously generated image, include the corresponding XML tag (e.g. <ref id="round-1-image-1" />) inside that image prompt so the app can attach the reference image automatically.',
     ].join(' '),

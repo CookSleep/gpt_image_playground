@@ -3,6 +3,7 @@ import type {
   ApiProfile,
   ApiProvider,
   AppSettings,
+  AgentImageGenerationBackend,
   CustomProviderContentType,
   CustomProviderDefinition,
   CustomProviderFileMapping,
@@ -472,6 +473,28 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
   }
 }
 
+function normalizeAgentImageGenerationBackend(value: unknown): AgentImageGenerationBackend {
+  return value === 'image-api' ? 'image-api' : 'native'
+}
+
+function normalizeAgentImageApiProfile(input: unknown, customProviderIds: Set<string>): ApiProfile {
+  const profile = normalizeApiProfile(input, {
+    id: 'agent-image-api',
+    name: 'Agent 图像生成',
+    apiMode: 'images',
+    model: DEFAULT_IMAGES_MODEL,
+    streamImages: false,
+  }, customProviderIds)
+
+  return {
+    ...profile,
+    id: profile.id || 'agent-image-api',
+    name: profile.name || 'Agent 图像生成',
+    apiMode: 'images',
+    streamImages: false,
+  }
+}
+
 function validateImportedProfileRecord(input: unknown) {
   if (!isRecord(input)) return
 
@@ -509,6 +532,8 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     ? record.activeProfileId
     : profiles[0].id
   const active = profiles.find((p) => p.id === activeProfileId) ?? profiles[0]
+  const agentImageGenerationBackend = normalizeAgentImageGenerationBackend(record.agentImageGenerationBackend)
+  const agentImageApiProfile = normalizeAgentImageApiProfile(record.agentImageApiProfile, customProviderIds)
 
   return {
     baseUrl: active.baseUrl,
@@ -534,6 +559,8 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     agentMaxToolRounds: normalizeAgentMaxToolRounds(record.agentMaxToolRounds),
     agentWebSearch: typeof record.agentWebSearch === 'boolean' ? record.agentWebSearch : false,
     agentMathFormattingPrompt: typeof record.agentMathFormattingPrompt === 'boolean' ? record.agentMathFormattingPrompt : true,
+    agentImageGenerationBackend,
+    agentImageApiProfile,
     profiles,
     activeProfileId,
   }
@@ -826,4 +853,11 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   agentMaxToolRounds: DEFAULT_AGENT_MAX_TOOL_ROUNDS,
   agentWebSearch: false,
   agentMathFormattingPrompt: true,
+  agentImageGenerationBackend: 'native',
+  agentImageApiProfile: createDefaultOpenAIProfile({
+    id: 'agent-image-api',
+    name: 'Agent 图像生成',
+    apiMode: 'images',
+    streamImages: false,
+  }),
 })

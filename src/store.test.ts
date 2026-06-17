@@ -129,6 +129,7 @@ vi.mock('./lib/agentApi', () => ({
 }))
 import { clearAgentConversations, clearImages, clearTasks, getAllAgentConversations, getAllTasks, getImage, putAgentConversation, putImage, putTask as putDbTask } from './lib/db'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
+import { callImageApi } from './lib/api'
 import { getFalQueuedImageResult } from './lib/falAiImageApi'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { cleanStaleAgentInputDrafts, clearFailedTasks, deleteAgentRoundFromConversation, deleteFavoriteCollection, editOutputs, getActiveAgentRounds, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, reuseConfig, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
@@ -2079,6 +2080,69 @@ describe('agent batch reference resolution', () => {
     const batchArgs = vi.mocked(callBatchImageSingle).mock.calls[0][0]
     expect(batchArgs.referenceImageDataUrls).toEqual([imageA.dataUrl])
     expect(batchArgs.referenceIds).toEqual(['round-3-reference-1'])
+  })
+
+  it('uses configured Image API profile for Agent client image tools', async () => {
+    const imageProfile = createDefaultOpenAIProfile({
+      id: 'agent-image-profile',
+      name: 'Agent Images',
+      apiKey: 'image-key',
+      apiMode: 'images',
+      model: 'image-model',
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        ...useStore.getState().settings,
+        agentImageGenerationBackend: 'image-api',
+        agentImageApiProfile: imageProfile,
+      }),
+    })
+    vi.mocked(callImageApi).mockClear()
+    vi.mocked(callImageApi).mockResolvedValueOnce({
+      images: ['data:image/png;base64,agent-image-api-output'],
+      actualParams: { size: '1024x1024' },
+      actualParamsList: [{ size: '1024x1024' }],
+      revisedPrompts: ['image api prompt'],
+    })
+    vi.mocked(callBatchImageSingle).mockClear()
+    vi.mocked(callAgentResponsesApi)
+      .mockResolvedValueOnce({
+        text: '',
+        images: [],
+        outputItems: [{
+          type: 'function_call',
+          name: 'generate_image',
+          call_id: 'single-image-call',
+          arguments: JSON.stringify({ prompt: '参考 <ref id="round-3-reference-1" /> 生成单图' }),
+        }],
+        responseId: 'response-1',
+      })
+      .mockResolvedValueOnce({
+        text: '完成',
+        images: [],
+        outputItems: [{ type: 'message', content: [{ type: 'output_text', text: '完成' }] }],
+        responseId: 'response-2',
+      })
+    useStore.setState({ inputImages: [imageA] })
+
+    await submitAgentMessage()
+
+    for (let i = 0; i < 10 && vi.mocked(callImageApi).mock.calls.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    expect(callImageApi).toHaveBeenCalled()
+    expect(callBatchImageSingle).not.toHaveBeenCalled()
+    const imageCallArgs = vi.mocked(callImageApi).mock.calls[0][0]
+    expect(imageCallArgs.settings.activeProfileId).toBe(imageProfile.id)
+    expect(imageCallArgs.settings.model).toBe('image-model')
+    expect(imageCallArgs.inputImageDataUrls).toEqual([imageA.dataUrl])
+    const generatedTask = useStore.getState().tasks.find((item) => item.apiProfileId === imageProfile.id)
+    expect(generatedTask).toMatchObject({
+      apiProfileName: 'Agent Images',
+      apiMode: 'images',
+      apiModel: 'image-model',
+      status: 'done',
+    })
   })
 })
 
