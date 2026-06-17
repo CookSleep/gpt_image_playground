@@ -720,7 +720,7 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
     typeof persisted.activeAgentConversationId === 'string' && (!hasPersistedAgentConversations || agentConversations.some((conversation) => conversation.id === persisted.activeAgentConversationId))
       ? persisted.activeAgentConversationId
       : agentConversations[0]?.id ?? null
-  const appMode = persisted.appMode === 'agent' ? 'agent' : 'gallery'
+  const appMode = persisted.appMode === 'agent' ? 'agent' : persisted.appMode === 'cases' ? 'cases' : 'gallery'
   const galleryInputDraft = settings.persistInputOnRestart
     ? normalizeAgentInputDraft(persisted.galleryInputDraft ?? {
         prompt: persisted.prompt,
@@ -857,6 +857,16 @@ interface AppState {
   streamPreviews: Record<string, string>
   streamPreviewSlots: Record<string, Record<string, string>>
   setTaskStreamPreview: (taskId: string, image?: string, requestIndex?: number) => void
+
+  // 案例筛选
+  caseSearchQuery: string
+  setCaseSearchQuery: (q: string) => void
+  caseFilterCategory: string | null
+  setCaseFilterCategory: (c: string | null) => void
+  caseFilterStyle: string | null
+  setCaseFilterStyle: (s: string | null) => void
+  caseFilterScene: string | null
+  setCaseFilterScene: (s: string | null) => void
 
   // 搜索和筛选
   searchQuery: string
@@ -1162,6 +1172,11 @@ export const useStore = create<AppState>()(
             agentEditingRoundId: null,
             ...(state.appMode === 'agent' ? restoreGalleryInputDraftState(galleryInputDraft) : {}),
           }))
+          return
+        }
+
+        if (appMode === 'cases') {
+          set({ appMode, selectedTaskIds: [], selectedFavoriteCollectionIds: [] })
           return
         }
 
@@ -1555,6 +1570,16 @@ export const useStore = create<AppState>()(
         }
       }),
       clearFavoriteCollectionSelection: () => set({ selectedFavoriteCollectionIds: [] }),
+
+      // Case filters
+      caseSearchQuery: '',
+      setCaseSearchQuery: (caseSearchQuery) => set({ caseSearchQuery }),
+      caseFilterCategory: null,
+      setCaseFilterCategory: (caseFilterCategory) => set({ caseFilterCategory }),
+      caseFilterStyle: null,
+      setCaseFilterStyle: (caseFilterStyle) => set({ caseFilterStyle }),
+      caseFilterScene: null,
+      setCaseFilterScene: (caseFilterScene) => set({ caseFilterScene }),
 
       // UI
       detailTaskId: null,

@@ -1,7 +1,7 @@
 // ===== 设置 =====
 
 export type ApiMode = 'images' | 'responses'
-export type AppMode = 'gallery' | 'agent'
+export type AppMode = 'gallery' | 'agent' | 'cases'
 export type ReferenceImageEditAction = 'ask' | 'replace-reference' | 'add-mask'
 export const ZIP_DOWNLOAD_ROUTE_VALUES = [
   'task-selection',
@@ -435,4 +435,61 @@ export interface ExportData {
     height?: number
     thumbnailVersion?: number
   }>
+}
+
+// ===== 提示词案例 =====
+
+export interface CaseRecord {
+  id: number
+  title: string
+  image: string
+  imageAlt: string
+  sourceLabel: string
+  sourceUrl: string
+  prompt: string
+  promptPreview: string
+  category: string
+  styles: string[]
+  scenes: string[]
+  featured: boolean
+  githubUrl: string
+}
+
+export interface CaseStyleLibrary {
+  version: number
+  repository: string
+  tagLabels: Record<string, { en: string; zh: string }>
+  categories: CaseCategoryDef[]
+  styles: CaseFilterDef[]
+  scenes: CaseFilterDef[]
+  templates: CaseTemplateDef[]
+}
+
+export interface CaseCategoryDef {
+  id: string
+  value: string
+  title: { en: string; zh: string }
+  description: { en: string; zh: string }
+}
+
+export interface CaseFilterDef {
+  id: string
+  value: string
+  title: { en: string; zh: string }
+  keywords: string[]
+}
+
+export interface CaseTemplateDef {
+  id: string
+  anchor: string
+  title: { en: string; zh: string }
+  description: { en: string; zh: string }
+  category: string
+  styles: string[]
+  scenes: string[]
+  tags: string[]
+  useWhen: { en: string; zh: string }
+  guidance: { en: string[]; zh: string[] }
+  pitfalls: { en: string[]; zh: string[] }
+  exampleCases: number[]
 }
