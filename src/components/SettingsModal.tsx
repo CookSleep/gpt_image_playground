@@ -205,6 +205,18 @@ function isProfileApiProxyEligible(settings: AppSettings, profile: ApiProfile) {
   return !isAsyncCustomProvider(customProvider)
 }
 
+function toAgentResponsesProfile(profile: ApiProfile): ApiProfile {
+  const switched = switchApiProfileProvider(profile, 'openai')
+  return {
+    ...switched,
+    id: profile.id,
+    name: profile.name,
+    apiKey: profile.apiKey,
+    apiMode: 'responses',
+    model: profile.provider === 'openai' && profile.apiMode === 'responses' ? profile.model : DEFAULT_RESPONSES_MODEL,
+  }
+}
+
 const CUSTOM_PROVIDER_LLM_PROMPT = `# 角色
 你是 API 文档解析助手。你的任务是根据用户提供的图像生成 API 文档，生成本应用可导入的自定义服务商配置 JSON。
 
@@ -394,20 +406,13 @@ export default function SettingsModal() {
     })),
   ]
 
-  const providerOptions = [
+  const agentImageProviderOptions = [
     { label: '创建自定义服务商', value: ADD_CUSTOM_PROVIDER_VALUE, variant: 'action' as const },
-    ...unorderedProviderOptions.sort((a, b) => {
-      const aIndex = providerOrder.indexOf(String(a.value))
-      const bIndex = providerOrder.indexOf(String(b.value))
-      const validA = aIndex !== -1 ? aIndex : defaultProviderOrder.indexOf(String(a.value))
-      const validB = bIndex !== -1 ? bIndex : defaultProviderOrder.indexOf(String(b.value))
-      return validA - validB
-    })
+    ...unorderedProviderOptions,
   ]
-
-  const agentImageProviderOptions = unorderedProviderOptions
-    .map(({ label, value }) => ({ label, value }))
     .sort((a, b) => {
+      if (a.value === ADD_CUSTOM_PROVIDER_VALUE) return -1
+      if (b.value === ADD_CUSTOM_PROVIDER_VALUE) return 1
       const aIndex = providerOrder.indexOf(String(a.value))
       const bIndex = providerOrder.indexOf(String(b.value))
       const validA = aIndex !== -1 ? aIndex : defaultProviderOrder.indexOf(String(a.value))
@@ -444,6 +449,7 @@ export default function SettingsModal() {
       ...displaySettings,
       profiles: displaySettings.profiles.map((profile) => ({
         ...profile,
+        ...(profile.id === displaySettings.activeProfileId ? toAgentResponsesProfile(profile) : profile),
         apiProxy: isProfileApiProxyEligible(displaySettings, profile) && apiProxyAvailable
           ? (apiProxyLocked || profile.apiProxy)
           : false,
@@ -459,7 +465,8 @@ export default function SettingsModal() {
   }, [activeProfile.id, activeProfile.timeout])
 
   useEffect(() => {
-    if (showSettings && settingsTabRequest) setActiveTab(settingsTabRequest)
+    if (!showSettings || !settingsTabRequest) return
+    setActiveTab(settingsTabRequest)
   }, [settingsTabRequest, showSettings])
 
   const updateProfileMenuMaxHeight = useCallback(() => {
@@ -658,7 +665,7 @@ export default function SettingsModal() {
 
   const getDraftWithActiveProfilePatch = (patch: Partial<ApiProfile>) => ({
       ...draft,
-      profiles: draft.profiles.map((profile) => profile.id === activeProfile.id ? { ...profile, ...patch } : profile),
+      profiles: draft.profiles.map((profile) => profile.id === activeProfile.id ? { ...profile, ...patch, apiMode: 'responses' as const } : profile),
     })
 
   const updateActiveProfile = (patch: Partial<ApiProfile>, commit = false) => {
@@ -687,6 +694,14 @@ export default function SettingsModal() {
   }
 
   const handleAgentImageProviderChange = (provider: string | number) => {
+    if (provider === ADD_CUSTOM_PROVIDER_VALUE) {
+      setEditingCustomProviderId(null)
+      setCustomProviderForm(createDefaultCustomProviderForm())
+      setShowCustomProviderImport(true)
+      setCustomProviderImportError(null)
+      return
+    }
+
     const providerId = String(provider)
     const customProvider = draft.customProviders.find((item) => item.id === providerId)
     const nextProfile = switchApiProfileProvider(draft.agentImageApiProfile, providerId, customProvider)
@@ -806,7 +821,7 @@ export default function SettingsModal() {
   const createNewProfile = () => {
     if (defaultConfigOnly) return
     setReusedTaskApiProfile(null)
-    const profile = createDefaultOpenAIProfile({ id: newId('openai'), name: '新配置' })
+    const profile = toAgentResponsesProfile(createDefaultOpenAIProfile({ id: newId('openai'), name: '新配置', apiMode: 'responses' }))
     const nextDraft = normalizeSettings({ 
         ...draft, 
         profiles: [...draft.profiles, profile],
@@ -821,9 +836,10 @@ export default function SettingsModal() {
     setReusedTaskApiProfile(null)
     setDuplicateProfileTooltipVisible(false)
     const profile: ApiProfile = {
-      ...activeProfile,
+      ...toAgentResponsesProfile(activeProfile),
       id: newId(activeProfile.provider === 'openai' ? 'openai' : 'profile'),
       name: `${activeProfile.name}（复制）`,
+      apiMode: 'responses',
     }
     const nextDraft = normalizeSettings({
       ...draft,
@@ -837,7 +853,11 @@ export default function SettingsModal() {
   const switchProfile = (id: string) => {
     if (defaultConfigOnly) return
     setReusedTaskApiProfile(null)
-    const nextDraft = normalizeSettings({ ...draft, activeProfileId: id })
+    const nextDraft = normalizeSettings({
+      ...draft,
+      profiles: draft.profiles.map((profile) => profile.id === id ? toAgentResponsesProfile(profile) : profile),
+      activeProfileId: id,
+    })
     commitSettings(nextDraft)
     setShowProfileMenu(false)
   }
@@ -991,40 +1011,6 @@ export default function SettingsModal() {
     commitSettings(nextDraft)
   }
 
-  const handleProviderReorder = (sourceValue: string | number, targetValue: string | number, position: 'before' | 'after' | null) => {
-    const currentOrder = draft.providerOrder || ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
-    const sourceIndex = currentOrder.indexOf(String(sourceValue))
-    const targetIndex = currentOrder.indexOf(String(targetValue))
-    if (sourceIndex < 0 || targetIndex < 0) return
-
-    const newOrder = [...currentOrder]
-    const [removed] = newOrder.splice(sourceIndex, 1)
-
-    let newTargetIndex = targetIndex
-    if (position === 'after') newTargetIndex++
-    if (sourceIndex < targetIndex) newTargetIndex--
-
-    newOrder.splice(newTargetIndex, 0, removed)
-
-    const nextDraft = normalizeSettings({ ...draft, providerOrder: newOrder })
-    commitSettings(nextDraft)
-  }
-
-  const handleProviderTypeChange = (value: string | number) => {
-    if (defaultConfigOnly) return
-    if (value === ADD_CUSTOM_PROVIDER_VALUE) {
-      setEditingCustomProviderId(null)
-      setCustomProviderForm(createDefaultCustomProviderForm())
-      setShowCustomProviderImport(true)
-      setCustomProviderImportError(null)
-      return
-    }
-
-    const provider = String(value) as ApiProfile['provider']
-    const customProvider = draft.customProviders.find((item) => item.id === provider)
-    updateActiveProfile(switchApiProfileProvider(activeProfile, provider, customProvider), true)
-  }
-
   const updateCustomProviderForm = (patch: Partial<CustomProviderForm>) => {
     setCustomProviderForm((current) => ({ ...current, ...patch }))
     setCustomProviderImportError(null)
@@ -1103,6 +1089,9 @@ export default function SettingsModal() {
       profiles: draft.profiles.map((profile) =>
         profile.provider === providerId ? switchApiProfileProvider(profile, 'openai') : profile,
       ),
+      agentImageApiProfile: draft.agentImageApiProfile.provider === providerId
+        ? switchApiProfileProvider(draft.agentImageApiProfile, 'openai')
+        : draft.agentImageApiProfile,
     })
     commitSettings(nextDraft)
     showToast('服务商已删除', 'success')
@@ -1137,11 +1126,12 @@ export default function SettingsModal() {
               ...mergedDraft,
               profiles: mergedDraft.profiles
                 .filter((profile) => profile.id === activeProfile.id || profile.id !== importedProfile.id)
-                .map((profile) => profile.id === activeProfile.id ? { ...importedProfile, id: activeProfile.id } : profile),
+                .map((profile) => profile.id === activeProfile.id ? toAgentResponsesProfile({ ...importedProfile, id: activeProfile.id }) : profile),
               activeProfileId: activeProfile.id,
             })
           : normalizeSettings({
               ...mergedDraft,
+              profiles: mergedDraft.profiles.map((profile) => profile.id === importedProfile.id ? toAgentResponsesProfile(profile) : profile),
               activeProfileId: importedProfile.id,
             })
         setDraft(nextDraft)
@@ -1223,17 +1213,6 @@ export default function SettingsModal() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6l4 2m6-2a10 10 0 11-20 0 10 10 0 0120 0z" />
                 </svg>
                 习惯配置
-              </button>
-              <button
-                onClick={() => setActiveTab('agent')}
-                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-xl transition-colors ${activeTab === 'agent' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8V4H8" />
-                  <rect width="16" height="12" x="4" y="8" rx="2" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 14h2M20 14h2M15 13v2M9 13v2" />
-                </svg>
-                Agent 配置
               </button>
               <button
                 onClick={() => setActiveTab('data')}
@@ -1462,183 +1441,6 @@ export default function SettingsModal() {
                 </div>
               </div>
             )}
-
-            {activeTab === 'agent' && (
-              <div className="space-y-4">
-                <div className="block">
-                  <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">图像生成方式</span>
-                  <Select
-                    value={draft.agentImageGenerationBackend}
-                    onChange={(value) => commitSettings({ ...draft, agentImageGenerationBackend: value === 'image-api' ? 'image-api' : 'native' })}
-                    options={[
-                      { label: 'Responses 原生 image_generation', value: 'native' },
-                      { label: '独立 Image API 配置', value: 'image-api' },
-                    ]}
-                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                  />
-                  <div data-selectable-text className="mt-1.5 text-xs leading-relaxed text-gray-500 dark:text-gray-500">
-                    原生模式要求当前 Responses 模型支持 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">image_generation</code> 工具；独立 Image API 模式会让 Agent 调用客户端函数工具，再由下方图像配置生成图片。
-                  </div>
-                </div>
-                {draft.agentImageGenerationBackend === 'image-api' && (
-                  <div className="space-y-4 rounded-2xl border border-gray-200/70 bg-gray-50/70 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
-                    <div>
-                      <div className="text-sm font-medium text-gray-700 dark:text-gray-200">Agent 图像生成配置</div>
-                      <div data-selectable-text className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-500">
-                        这套配置只用于 Agent 工具生成图片；对话仍使用 API 配置页里当前的 Responses 配置。
-                      </div>
-                    </div>
-                    <div className="block">
-                      <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">服务商类型</span>
-                      <Select
-                        value={agentImageProfile.provider}
-                        onChange={handleAgentImageProviderChange}
-                        options={agentImageProviderOptions}
-                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                      />
-                    </div>
-                    {agentImageProviderUsesApiUrl && (
-                      <label className="block">
-                        <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API URL</span>
-                        <input
-                          value={agentImageProfile.baseUrl}
-                          onChange={(e) => updateAgentImageProfile({ baseUrl: e.target.value })}
-                          onBlur={(e) => updateAgentImageProfile({ baseUrl: e.target.value }, true)}
-                          type="text"
-                          disabled={agentImageApiProxyEnabled}
-                          placeholder={agentImageProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : DEFAULT_SETTINGS.baseUrl}
-                          className={`w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 ${agentImageApiProxyEnabled ? 'cursor-not-allowed opacity-50' : ''}`}
-                        />
-                        {agentImageApiProxyEnabled && (
-                          <div data-selectable-text className="mt-1.5 text-xs text-yellow-600 dark:text-yellow-500">已开启代理，实际请求目标由部署端决定，此处设置被忽略。</div>
-                        )}
-                      </label>
-                    )}
-                    {apiProxyAvailable && agentImageProviderIsOpenAICompatible && !agentImageCustomProviderAsync && (
-                      <div className="block">
-                        <div className="mb-1.5 flex items-center justify-between">
-                          <span className="block text-sm text-gray-600 dark:text-gray-300">API 代理</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (!apiProxyLocked) updateAgentImageProfile({ apiProxy: !agentImageProfile.apiProxy }, true)
-                            }}
-                            disabled={apiProxyLocked}
-                            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${agentImageApiProxyChecked ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${apiProxyLocked ? 'cursor-not-allowed opacity-70' : ''}`}
-                            role="switch"
-                            aria-checked={agentImageApiProxyChecked}
-                            aria-label="Agent 图像生成 API 代理"
-                          >
-                            <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${agentImageApiProxyChecked ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                          </button>
-                        </div>
-                        <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                          {apiProxyLocked ? '部署端已锁定代理开启，请求经服务器转发到上游 API。' : '开启后图片生成请求经服务器转发到上游 API，可绕过浏览器跨域限制。'}
-                        </div>
-                      </div>
-                    )}
-                    <label className="block">
-                      <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API Key</span>
-                      <input
-                        value={agentImageProfile.apiKey}
-                        onChange={(e) => updateAgentImageProfile({ apiKey: e.target.value })}
-                        onBlur={(e) => updateAgentImageProfile({ apiKey: e.target.value }, true)}
-                        type={showApiKey ? 'text' : 'password'}
-                        placeholder={agentImageProfile.provider === 'fal' ? 'FAL_KEY' : 'sk-...'}
-                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">模型 ID</span>
-                      <input
-                        value={agentImageProfile.model}
-                        onChange={(e) => updateAgentImageProfile({ model: e.target.value })}
-                        onBlur={(e) => updateAgentImageProfile({ model: e.target.value }, true)}
-                        type="text"
-                        placeholder={agentImageProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : DEFAULT_IMAGES_MODEL}
-                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                      />
-                      <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
-                        {agentImageCustomProvider ? <>当前使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{agentImageCustomProvider.name}</code>。</> : <>Images API 通常使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_IMAGES_MODEL}</code>。</>}
-                      </div>
-                    </label>
-                    {agentImageProviderIsOpenAICompatible && (
-                      <div className="block">
-                        <div className="mb-1.5 flex items-center justify-between">
-                          <span className="block text-sm text-gray-600 dark:text-gray-300">返回 Base64 图片数据</span>
-                          <button
-                            type="button"
-                            onClick={() => updateAgentImageProfile({ responseFormatB64Json: !agentImageProfile.responseFormatB64Json }, true)}
-                            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${agentImageProfile.responseFormatB64Json ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                            role="switch"
-                            aria-checked={!!agentImageProfile.responseFormatB64Json}
-                            aria-label="Agent 图像生成返回 Base64 图片数据"
-                          >
-                            <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${agentImageProfile.responseFormatB64Json ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                          </button>
-                        </div>
-                        <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                          开启后在图片生成请求体中追加 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">response_format: b64_json</code>。
-                        </div>
-                      </div>
-                    )}
-                    {agentImageProviderIsOpenAICompatible && (
-                      <label className="block">
-                        <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">请求超时 (秒)</span>
-                        <input
-                          value={agentImageProfile.timeout}
-                          onChange={(e) => updateAgentImageProfile({ timeout: Number(e.target.value) || agentImageProfile.timeout })}
-                          onBlur={(e) => updateAgentImageProfile({ timeout: Number(e.target.value) || DEFAULT_SETTINGS.timeout }, true)}
-                          type="number"
-                          min={10}
-                          max={600}
-                          className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                        />
-                      </label>
-                    )}
-                  </div>
-                )}
-                <label className="block">
-                  <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">最大工具调用轮数</span>
-                  <input
-                    value={agentMaxToolRoundsInput}
-                    onChange={(e) => setAgentMaxToolRoundsInput(e.target.value)}
-                    onBlur={commitAgentMaxToolRounds}
-                    type="number"
-                    min={1}
-                    max={50}
-                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                  />
-                  <div data-selectable-text className="mt-1.5 text-xs leading-relaxed text-gray-500 dark:text-gray-500">
-                    默认 15。用于限制 Agent 连续调用工具时的最大轮数，防止无限循环。
-                  </div>
-                </label>
-                <div className="block">
-                  <div className="mb-1 flex items-center justify-between gap-3">
-                    <span className="block text-sm text-gray-600 dark:text-gray-300">网络搜索</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const agentMaxToolRounds = agentMaxToolRoundsInput.trim() === ''
-                          ? DEFAULT_AGENT_MAX_TOOL_ROUNDS
-                          : normalizeAgentMaxToolRounds(agentMaxToolRoundsInput, draft.agentMaxToolRounds)
-                        setAgentMaxToolRoundsInput(String(agentMaxToolRounds))
-                        commitSettings({ ...draft, agentMaxToolRounds, agentWebSearch: !draft.agentWebSearch })
-                      }}
-                      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${draft.agentWebSearch ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                      role="switch"
-                      aria-checked={draft.agentWebSearch}
-                      aria-label="网络搜索"
-                    >
-                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${draft.agentWebSearch ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                    </button>
-                  </div>
-                  <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    启用 Responses API 的 <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] dark:bg-white/[0.06]">web_search</code> 工具。模型每次调用此工具会产生少量固定价格的额外计费。
-                  </div>
-                </div>
-              </div>
-            )}
             
             {activeTab === 'api' && (
               <div className="space-y-4">
@@ -1825,7 +1627,6 @@ export default function SettingsModal() {
                   </div>
                 </div>
 
-              {/* 1. 配置名称 */}
               <label className="block">
                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">配置名称</span>
                 <input
@@ -1837,265 +1638,341 @@ export default function SettingsModal() {
                 />
               </label>
 
-              {/* 2. 服务商类型 */}
-              <div className="block">
-                <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">服务商类型</span>
-                <Select
-                  value={activeProfile.provider}
-                  onChange={handleProviderTypeChange}
-                  onReorder={handleProviderReorder}
-                  options={providerOptions}
-                  disabled={defaultConfigOnly}
-                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                />
-              </div>
-
-              {/* 3. API URL */}
-              {activeProviderUsesApiUrl && (
-                <label className="block">
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="block text-sm text-gray-600 dark:text-gray-300">API URL</span>
+              <div className="space-y-4 rounded-2xl border border-gray-200/70 bg-gray-50/70 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                <div>
+                  <div className="text-sm font-medium text-gray-700 dark:text-gray-200">Agent 配置</div>
+                  <div data-selectable-text className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-500">
+                    当前配置用于 Agent 对话请求。这里固定使用 Responses API；是否具备原生图像生成能力由下方图片生成方式决定。
                   </div>
-                  <input
-                    value={activeProfile.baseUrl}
-                    onChange={(e) => updateActiveProfile({ baseUrl: e.target.value })}
-                    onBlur={(e) => commitActiveProfilePatch({ baseUrl: e.target.value })}
-                    type="text"
-                    disabled={apiProxyEnabled}
-                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : DEFAULT_SETTINGS.baseUrl}
-                    className={`w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 ${apiProxyEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  />
-                  <div data-selectable-text className="mt-1.5 min-h-[22px] flex items-center text-xs text-gray-500 dark:text-gray-500">
-                    {apiProxyEnabled ? (
-                      <span className="text-yellow-600 dark:text-yellow-500">已开启代理，实际请求目标由部署端决定，此处设置被忽略。</span>
-                    ) : activeProfile.provider === 'fal' ? (
-                      <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_FAL_BASE_URL}</code>；填写自定义地址时将作为 fal.ai 代理 URL。</span>
-                    ) : (
-                      <span>支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code></span>
-                    )}
-                  </div>
-                </label>
-              )}
-
-              {/* 4. API 代理（紧跟 URL） */}
-              {apiProxyAvailable && activeProviderIsOpenAICompatible && !activeCustomProviderAsync && (
+                </div>
                 <div className="block">
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="block text-sm text-gray-600 dark:text-gray-300">API 代理</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!apiProxyLocked) updateActiveProfile({ apiProxy: !activeProfile.apiProxy }, true)
-                      }}
-                      disabled={apiProxyLocked}
-                      className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${apiProxyChecked ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${apiProxyLocked ? 'cursor-not-allowed opacity-70' : ''}`}
-                      role="switch"
-                      aria-checked={apiProxyChecked}
-                      aria-label="API 代理"
-                    >
-                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${apiProxyChecked ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                    </button>
+                  <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">服务商类型</span>
+                  <div className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200">
+                    OpenAI 兼容接口
                   </div>
-                  <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    {apiProxyLocked ? '部署端已锁定代理开启，请求经服务器转发到上游 API，上方 URL 设置将失效。' : '开启后请求经服务器转发到上游 API，可绕过浏览器跨域限制，上方 URL 设置将失效。'}
-                  </div>
-                </div>
-              )}
-
-              {/* 5. API Key */}
-              <div className="block">
-                <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API Key</span>
-                <div className="relative">
-                  <input
-                    value={activeProfile.apiKey}
-                    onChange={(e) => updateActiveProfile({ apiKey: e.target.value })}
-                    onBlur={(e) => commitActiveProfilePatch({ apiKey: e.target.value })}
-                    type={showApiKey ? 'text' : 'password'}
-                    placeholder={activeProfile.provider === 'fal' ? 'FAL_KEY' : 'sk-...'}
-                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 pr-10 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowApiKey((v) => !v)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 transition-colors"
-                    tabIndex={-1}
-                  >
-                    {showApiKey ? (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-                        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
-                        <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
-                        <line x1="1" y1="1" x2="23" y2="23" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-                <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
-                  支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiKey=</code>
-                </div>
-              </div>
-
-              {/* 6. API 接口（Images/Responses） */}
-              {activeProfile.provider === 'openai' && (
-                <div className="block">
-                  <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API 接口</span>
-                  <Select
-                    value={activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode}
-                    onChange={(value) => {
-                      const apiMode = value as AppSettings['apiMode']
-                      const nextModel =
-                        activeProfile.model === DEFAULT_IMAGES_MODEL || activeProfile.model === DEFAULT_RESPONSES_MODEL
-                          ? getDefaultModelForMode(apiMode)
-                          : activeProfile.model
-                      updateActiveProfile({ apiMode, model: nextModel }, true)
-                    }}
-                    options={[
-                      { label: 'Images API (/v1/images)', value: 'images' },
-                      { label: 'Responses API (/v1/responses)', value: 'responses' },
-                    ]}
-                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                  />
                   <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
-                    支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">apiMode=images</code> 或 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">apiMode=responses</code>。
+                    Agent 对话固定使用 OpenAI-compatible Responses API；其他图片服务商请在下方“独立 Images API”中配置。
                   </div>
                 </div>
-              )}
-
-              {/* 7. 模型 ID（紧跟接口选择） */}
-              <label className="block">
-                <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">
-                  模型 ID
-                </span>
-                <input
-                  value={activeProfile.model}
-                  onChange={(e) => updateActiveProfile({ model: e.target.value })}
-                  onBlur={(e) => commitActiveProfilePatch({ model: e.target.value })}
-                  type="text"
-                  placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
-                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                />
-                <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
-                  {activeProfile.provider === 'fal' ? (
-                    <>当前适配 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_FAL_MODEL}</code>。</>
-                  ) : activeCustomProvider ? (
-                    <>当前使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{activeCustomProvider.name}</code>。</>
-                  ) : (activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses' ? (
-                    <>Responses API 需要使用支持 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">image_generation</code> 工具的文本模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_RESPONSES_MODEL}</code>。</>
-                  ) : (
-                    <>Images API 需要使用 GPT Image 模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_IMAGES_MODEL}</code>。</>
-                  )}
-                  {activeProfile.provider === 'openai' && (
-                    <>支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">?model=</code>。</>
-                  )}
-                </div>
-              </label>
-
-              {/* 8. 流式传输 + 中间步骤图像数 */}
-              {activeProfile.provider === 'openai' && (
-                <div className="block space-y-3">
-                  <div>
-                    <div className="mb-1.5 flex items-center justify-between gap-3">
-                      <span className="block text-sm text-gray-600 dark:text-gray-300">流式传输</span>
+                {activeProviderUsesApiUrl && (
+                  <label className="block">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="block text-sm text-gray-600 dark:text-gray-300">API URL</span>
+                    </div>
+                    <input
+                      value={activeProfile.baseUrl}
+                      onChange={(e) => updateActiveProfile({ baseUrl: e.target.value })}
+                      onBlur={(e) => commitActiveProfilePatch({ baseUrl: e.target.value })}
+                      type="text"
+                      disabled={apiProxyEnabled}
+                      placeholder={DEFAULT_SETTINGS.baseUrl}
+                      className={`w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 ${apiProxyEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    />
+                    <div data-selectable-text className="mt-1.5 min-h-[22px] flex items-center text-xs text-gray-500 dark:text-gray-500">
+                      {apiProxyEnabled ? (
+                        <span className="text-yellow-600 dark:text-yellow-500">已开启代理，实际请求目标由部署端决定，此处设置被忽略。</span>
+                      ) : (
+                        <span>支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code></span>
+                      )}
+                    </div>
+                  </label>
+                )}
+                {apiProxyAvailable && activeProviderIsOpenAICompatible && !activeCustomProviderAsync && (
+                  <div className="block">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="block text-sm text-gray-600 dark:text-gray-300">API 代理</span>
                       <button
                         type="button"
-                        onClick={() => updateActiveProfile({ streamImages: !activeProfile.streamImages }, true)}
-                        className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${activeProfile.streamImages ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                        onClick={() => {
+                          if (!apiProxyLocked) updateActiveProfile({ apiProxy: !activeProfile.apiProxy }, true)
+                        }}
+                        disabled={apiProxyLocked}
+                        className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${apiProxyChecked ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${apiProxyLocked ? 'cursor-not-allowed opacity-70' : ''}`}
                         role="switch"
-                        aria-checked={!!activeProfile.streamImages}
-                        aria-label="流式传输"
+                        aria-checked={apiProxyChecked}
+                        aria-label="API 代理"
                       >
-                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${activeProfile.streamImages ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${apiProxyChecked ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
                       </button>
                     </div>
                     <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                      开启后请求以流式传输，并非所有服务商和网关都支持此功能。官方接口在流式模式下不发送心跳，需要配合请求中间步骤图像来维持连接，避免超时断开。官方接口仅支持单图流式传输，因此数量大于 1 时会将多图生成拆分为并发单图。
+                      {apiProxyLocked ? '部署端已锁定代理开启，请求经服务器转发到上游 API，上方 URL 设置将失效。' : '开启后请求经服务器转发到上游 API，可绕过浏览器跨域限制，上方 URL 设置将失效。'}
                     </div>
                   </div>
-                  <label className={`block ${activeProfile.streamImages ? '' : 'opacity-60'}`}>
-                    <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">请求中间步骤图像数</span>
-                    <Select
-                      value={normalizeStreamPartialImages(activeProfile.streamPartialImages)}
-                      onChange={(value) => updateActiveProfile({ streamPartialImages: normalizeStreamPartialImages(value) }, true)}
-                      disabled={!activeProfile.streamImages}
-                      options={[
-                        { label: '0，不请求', value: 0 },
-                        { label: '1 张', value: 1 },
-                        { label: '2 张', value: 2 },
-                        { label: '3 张', value: 3 },
-                      ]}
-                      className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                )}
+                <div className="block">
+                  <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API Key</span>
+                  <div className="relative">
+                    <input
+                      value={activeProfile.apiKey}
+                      onChange={(e) => updateActiveProfile({ apiKey: e.target.value })}
+                      onBlur={(e) => commitActiveProfilePatch({ apiKey: e.target.value })}
+                      type={showApiKey ? 'text' : 'password'}
+                      placeholder="sk-..."
+                      className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 pr-10 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                     />
-                    <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
-                      对应 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">partial_images</code> 参数（0-3）。建议设为 2 或 3 以避免长时间生成时连接超时断开。实际返回的每张中间图像会产生少量额外计费。设为 0 时不请求中间步骤图像，连接可能因无数据传输而被断开。
-                    </div>
-                  </label>
-                </div>
-              )}
-
-              {/* 9. 返回 Base64 图片数据 */}
-              {activeProviderIsOpenAICompatible && (
-                <div className="block">
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="block text-sm text-gray-600 dark:text-gray-300">返回 Base64 图片数据</span>
                     <button
                       type="button"
-                      onClick={() => updateActiveProfile({ responseFormatB64Json: !activeProfile.responseFormatB64Json }, true)}
-                      className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${activeProfile.responseFormatB64Json ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                      role="switch"
-                      aria-checked={!!activeProfile.responseFormatB64Json}
-                      aria-label="返回 Base64 图片数据"
+                      onClick={() => setShowApiKey((v) => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 transition-colors"
+                      tabIndex={-1}
                     >
-                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${activeProfile.responseFormatB64Json ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+                      {showApiKey ? (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                          <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                        </svg>
+                      )}
                     </button>
                   </div>
-                  <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    开启后在请求体中追加 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">response_format: b64_json</code>，使接口直接返回 Base64 编码的图片数据而非 URL。并非所有服务商和网关都支持此功能。
+                  <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
+                    支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiKey=</code>
                   </div>
                 </div>
-              )}
-
-              {/* 10. Codex CLI 兼容模式 */}
-              {activeProfile.provider === 'openai' && (
                 <div className="block">
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="block text-sm text-gray-600 dark:text-gray-300">Codex CLI 兼容模式</span>
-                    <button
-                      type="button"
-                      onClick={() => updateActiveProfile({ codexCli: !activeProfile.codexCli }, true)}
-                      className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${activeProfile.codexCli ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                      role="switch"
-                      aria-checked={activeProfile.codexCli}
-                      aria-label="Codex CLI 兼容模式"
-                    >
-                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${activeProfile.codexCli ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                    </button>
+                  <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API 接口</span>
+                  <div className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200">
+                    Responses API (/v1/responses)
                   </div>
-                  <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    开启后应用 Codex CLI 实际支持的参数。支持查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">codexCli=true</code>。
+                  <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
+                    Agent 对话固定使用 Responses API，但不要求模型本身支持原生图像生成工具。
                   </div>
                 </div>
-              )}
-
-              {/* 11. 请求超时 */}
-              {activeProviderIsOpenAICompatible && (
                 <label className="block">
-                  <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">请求超时 (秒)</span>
+                  <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">模型 ID</span>
                   <input
-                    value={timeoutInput}
-                    onChange={(e) => setTimeoutInput(e.target.value)}
-                    onBlur={commitTimeout}
-                    type="number"
-                    min={10}
-                    max={600}
+                    value={activeProfile.model}
+                    onChange={(e) => updateActiveProfile({ model: e.target.value })}
+                    onBlur={(e) => commitActiveProfilePatch({ model: e.target.value })}
+                    type="text"
+                    placeholder={DEFAULT_RESPONSES_MODEL}
                     className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                   />
+                  <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
+                    {activeCustomProvider ? <>当前使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{activeCustomProvider.name}</code>。</> : <>文本或多模态 Responses 模型均可；只有选择“使用 Agent 图像生成工具”时才需要模型支持 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">image_generation</code>。</>}
+                    {activeProfile.provider === 'openai' && <>支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">?model=</code>。</>}
+                  </div>
                 </label>
-              )}
+                <label className="block">
+                  <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">最大工具调用轮数</span>
+                  <input
+                    value={agentMaxToolRoundsInput}
+                    onChange={(e) => setAgentMaxToolRoundsInput(e.target.value)}
+                    onBlur={commitAgentMaxToolRounds}
+                    type="number"
+                    min={1}
+                    max={50}
+                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                  />
+                  <div data-selectable-text className="mt-1.5 text-xs leading-relaxed text-gray-500 dark:text-gray-500">
+                    默认 15。用于限制 Agent 连续调用工具时的最大轮数，防止无限循环。
+                  </div>
+                </label>
+                <div className="block">
+                  <div className="mb-1 flex items-center justify-between gap-3">
+                    <span className="block text-sm text-gray-600 dark:text-gray-300">网络搜索</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const agentMaxToolRounds = agentMaxToolRoundsInput.trim() === ''
+                          ? DEFAULT_AGENT_MAX_TOOL_ROUNDS
+                          : normalizeAgentMaxToolRounds(agentMaxToolRoundsInput, draft.agentMaxToolRounds)
+                        setAgentMaxToolRoundsInput(String(agentMaxToolRounds))
+                        commitSettings({ ...draft, agentMaxToolRounds, agentWebSearch: !draft.agentWebSearch })
+                      }}
+                      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${draft.agentWebSearch ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                      role="switch"
+                      aria-checked={draft.agentWebSearch}
+                      aria-label="网络搜索"
+                    >
+                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${draft.agentWebSearch ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+                    </button>
+                  </div>
+                  <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+                    启用 Responses API 的 <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] dark:bg-white/[0.06]">web_search</code> 工具。模型每次调用此工具会产生少量固定价格的额外计费。
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4 rounded-2xl border border-gray-200/70 bg-gray-50/70 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                <div>
+                  <div className="text-sm font-medium text-gray-700 dark:text-gray-200">图片生成配置</div>
+                  <div data-selectable-text className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-500">
+                    控制 Agent 需要生成图片时使用的后端。独立 Images API 会通过客户端函数工具调用下方配置。
+                  </div>
+                </div>
+                <div className="block">
+                  <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">图片生成方式</span>
+                  <Select
+                    value={draft.agentImageGenerationBackend}
+                    onChange={(value) => commitSettings({ ...draft, agentImageGenerationBackend: value === 'image-api' ? 'image-api' : 'native' })}
+                    options={[
+                      { label: '使用 Agent 图像生成工具', value: 'native' },
+                      { label: '独立 Images API', value: 'image-api' },
+                    ]}
+                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                  />
+                  <div data-selectable-text className="mt-1.5 text-xs leading-relaxed text-gray-500 dark:text-gray-500">
+                    使用 Agent 图像生成工具时沿用上方 Responses 配置，并要求模型支持 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">image_generation</code>；独立 Images API 不要求对话模型具备生图能力。
+                  </div>
+                </div>
+                {draft.agentImageGenerationBackend === 'native' && activeProfile.provider === 'openai' && (
+                  <div className="block space-y-3">
+                    <div>
+                      <div className="mb-1.5 flex items-center justify-between gap-3">
+                        <span className="block text-sm text-gray-600 dark:text-gray-300">流式传输</span>
+                        <button
+                          type="button"
+                          onClick={() => updateActiveProfile({ streamImages: !activeProfile.streamImages }, true)}
+                          className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${activeProfile.streamImages ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                          role="switch"
+                          aria-checked={!!activeProfile.streamImages}
+                          aria-label="流式传输"
+                        >
+                          <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${activeProfile.streamImages ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+                        </button>
+                      </div>
+                      <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+                        原生 image_generation 工具支持流式返回中间图像，并非所有兼容服务商都支持。
+                      </div>
+                    </div>
+                    <label className={`block ${activeProfile.streamImages ? '' : 'opacity-60'}`}>
+                      <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">请求中间步骤图像数</span>
+                      <Select
+                        value={normalizeStreamPartialImages(activeProfile.streamPartialImages)}
+                        onChange={(value) => updateActiveProfile({ streamPartialImages: normalizeStreamPartialImages(value) }, true)}
+                        disabled={!activeProfile.streamImages}
+                        options={[
+                          { label: '0，不请求', value: 0 },
+                          { label: '1 张', value: 1 },
+                          { label: '2 张', value: 2 },
+                          { label: '3 张', value: 3 },
+                        ]}
+                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                      />
+                    </label>
+                  </div>
+                )}
+                {draft.agentImageGenerationBackend === 'image-api' && (
+                  <div className="space-y-4 rounded-2xl border border-gray-200/70 bg-white/60 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                    <div className="block">
+                      <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">服务商类型</span>
+                      <Select
+                        value={agentImageProfile.provider}
+                        onChange={handleAgentImageProviderChange}
+                        options={agentImageProviderOptions}
+                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                      />
+                    </div>
+                    {agentImageProviderUsesApiUrl && (
+                      <label className="block">
+                        <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API URL</span>
+                        <input
+                          value={agentImageProfile.baseUrl}
+                          onChange={(e) => updateAgentImageProfile({ baseUrl: e.target.value })}
+                          onBlur={(e) => updateAgentImageProfile({ baseUrl: e.target.value }, true)}
+                          type="text"
+                          disabled={agentImageApiProxyEnabled}
+                          placeholder={agentImageProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : DEFAULT_SETTINGS.baseUrl}
+                          className={`w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 ${agentImageApiProxyEnabled ? 'cursor-not-allowed opacity-50' : ''}`}
+                        />
+                        {agentImageApiProxyEnabled && (
+                          <div data-selectable-text className="mt-1.5 text-xs text-yellow-600 dark:text-yellow-500">已开启代理，实际请求目标由部署端决定，此处设置被忽略。</div>
+                        )}
+                      </label>
+                    )}
+                    {apiProxyAvailable && agentImageProviderIsOpenAICompatible && !agentImageCustomProviderAsync && (
+                      <div className="block">
+                        <div className="mb-1.5 flex items-center justify-between">
+                          <span className="block text-sm text-gray-600 dark:text-gray-300">API 代理</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!apiProxyLocked) updateAgentImageProfile({ apiProxy: !agentImageProfile.apiProxy }, true)
+                            }}
+                            disabled={apiProxyLocked}
+                            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${agentImageApiProxyChecked ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${apiProxyLocked ? 'cursor-not-allowed opacity-70' : ''}`}
+                            role="switch"
+                            aria-checked={agentImageApiProxyChecked}
+                            aria-label="Agent 图像生成 API 代理"
+                          >
+                            <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${agentImageApiProxyChecked ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+                          </button>
+                        </div>
+                        <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+                          {apiProxyLocked ? '部署端已锁定代理开启，请求经服务器转发到上游 API。' : '开启后图片生成请求经服务器转发到上游 API，可绕过浏览器跨域限制。'}
+                        </div>
+                      </div>
+                    )}
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API Key</span>
+                      <input
+                        value={agentImageProfile.apiKey}
+                        onChange={(e) => updateAgentImageProfile({ apiKey: e.target.value })}
+                        onBlur={(e) => updateAgentImageProfile({ apiKey: e.target.value }, true)}
+                        type={showApiKey ? 'text' : 'password'}
+                        placeholder={agentImageProfile.provider === 'fal' ? 'FAL_KEY' : 'sk-...'}
+                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">模型 ID</span>
+                      <input
+                        value={agentImageProfile.model}
+                        onChange={(e) => updateAgentImageProfile({ model: e.target.value })}
+                        onBlur={(e) => updateAgentImageProfile({ model: e.target.value }, true)}
+                        type="text"
+                        placeholder={agentImageProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : DEFAULT_IMAGES_MODEL}
+                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                      />
+                      <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
+                        {agentImageCustomProvider ? <>当前使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{agentImageCustomProvider.name}</code>。</> : <>Images API 通常使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_IMAGES_MODEL}</code>。</>}
+                      </div>
+                    </label>
+                    {agentImageProviderIsOpenAICompatible && (
+                      <div className="block">
+                        <div className="mb-1.5 flex items-center justify-between">
+                          <span className="block text-sm text-gray-600 dark:text-gray-300">返回 Base64 图片数据</span>
+                          <button
+                            type="button"
+                            onClick={() => updateAgentImageProfile({ responseFormatB64Json: !agentImageProfile.responseFormatB64Json }, true)}
+                            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${agentImageProfile.responseFormatB64Json ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                            role="switch"
+                            aria-checked={!!agentImageProfile.responseFormatB64Json}
+                            aria-label="Agent 图像生成返回 Base64 图片数据"
+                          >
+                            <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${agentImageProfile.responseFormatB64Json ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+                          </button>
+                        </div>
+                        <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+                          开启后在图片生成请求体中追加 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">response_format: b64_json</code>。
+                        </div>
+                      </div>
+                    )}
+                    {agentImageProviderIsOpenAICompatible && (
+                      <label className="block">
+                        <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">请求超时 (秒)</span>
+                        <input
+                          value={agentImageProfile.timeout}
+                          onChange={(e) => updateAgentImageProfile({ timeout: Number(e.target.value) || agentImageProfile.timeout })}
+                          onBlur={(e) => updateAgentImageProfile({ timeout: Number(e.target.value) || DEFAULT_SETTINGS.timeout }, true)}
+                          type="number"
+                          min={10}
+                          max={600}
+                          className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
             )}
             
