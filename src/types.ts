@@ -82,6 +82,8 @@ export interface ApiProfile {
   streamImages?: boolean
   streamPartialImages?: number
   providerDrafts?: Partial<Record<ApiProvider, Partial<Pick<ApiProfile, 'baseUrl' | 'model' | 'apiMode' | 'codexCli' | 'apiProxy' | 'responseFormatB64Json' | 'streamImages' | 'streamPartialImages'>>>>
+  agentImageGenerationBackend: AgentImageGenerationBackend
+  imageApiProfile?: ApiProfile
 }
 
 export interface AppSettings {
@@ -109,8 +111,6 @@ export interface AppSettings {
   agentMaxToolRounds: number
   agentWebSearch: boolean
   agentMathFormattingPrompt: boolean
-  agentImageGenerationBackend: AgentImageGenerationBackend
-  imageApiProfile: ApiProfile
   profiles: ApiProfile[]
   activeProfileId: string
 }

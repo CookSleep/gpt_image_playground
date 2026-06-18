@@ -1,4 +1,4 @@
-import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
+import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type AgentImageGenerationBackend, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { appendStreamingFormatHint, maybeAppendStreamingHint, getApiErrorMessage, MIME_MAP, normalizeBase64Image, pickActualParams } from './imageApiShared'
 
@@ -31,12 +31,12 @@ const AGENT_MATH_FORMATTING_INSTRUCTIONS = [
   '- Do not use LaTeX delimiters like `\\(...\\)` or `\\[...\\]` in visible assistant text.',
 ].join('\n')
 
-function getAgentImageToolName(settings: AppSettings) {
-  return settings.agentImageGenerationBackend === 'image-api' ? 'generate_image' : 'image_generation'
+function getAgentImageToolName(backend: AgentImageGenerationBackend) {
+  return backend === 'image-api' ? 'generate_image' : 'image_generation'
 }
 
-function createAgentImageInstructions(settings: AppSettings) {
-  const imageToolName = getAgentImageToolName(settings)
+function createAgentImageInstructions(backend: AgentImageGenerationBackend) {
+  const imageToolName = getAgentImageToolName(backend)
   return [
     'You are an image-generation assistant in a multi-turn gallery app.',
     '',
@@ -64,12 +64,12 @@ function createAgentImageInstructions(settings: AppSettings) {
   ].join('\n')
 }
 
-function createAgentInstructions(settings: AppSettings) {
+function createAgentInstructions(settings: AppSettings, backend: AgentImageGenerationBackend) {
   const maxToolRounds = Number.isFinite(settings.agentMaxToolRounds)
     ? Math.max(1, Math.trunc(settings.agentMaxToolRounds))
     : DEFAULT_AGENT_MAX_TOOL_ROUNDS
   const instructions = [
-    createAgentImageInstructions(settings),
+    createAgentImageInstructions(backend),
     '',
     '## Tool policy',
     `- Current maximum tool-use rounds for this Agent turn: ${maxToolRounds}.`,
@@ -129,11 +129,12 @@ function createImageTool(params: TaskParams, profile: ApiProfile, maskDataUrl?: 
 }
 
 function createAgentTools(params: TaskParams, profile: ApiProfile, settings: AppSettings, maskDataUrl?: string): Array<Record<string, unknown>> {
-  const tools: Array<Record<string, unknown>> = settings.agentImageGenerationBackend === 'image-api'
+  const backend = profile.agentImageGenerationBackend
+  const tools: Array<Record<string, unknown>> = backend === 'image-api'
     ? []
     : [createImageTool(params, profile, maskDataUrl)]
 
-  if (settings.agentImageGenerationBackend === 'image-api') {
+  if (backend === 'image-api') {
     tools.push({
       type: 'function',
       name: 'generate_image',
@@ -166,7 +167,7 @@ function createAgentTools(params: TaskParams, profile: ApiProfile, settings: App
       'Generate multiple images concurrently. Use this ONLY when:',
       '1. There are 2+ remaining images whose prerequisites (base references) are ALL already generated.',
       '2. These images are independent of each other (none references another image in this same batch).',
-      settings.agentImageGenerationBackend === 'image-api'
+      backend === 'image-api'
         ? 'For single images or prerequisite/base images, use generate_image instead.'
         : 'For single images or prerequisite/base images, use the built-in image_generation tool instead.',
       'Each image prompt must be self-contained and include full visual style descriptions.',
@@ -710,7 +711,7 @@ export async function callAgentResponsesApi(opts: {
   try {
     const body: Record<string, unknown> = {
       model: profile.model || settings.model,
-      instructions: createAgentInstructions(settings),
+      instructions: createAgentInstructions(settings, profile.agentImageGenerationBackend),
       input,
       tools: createAgentTools(params, profile, settings, maskDataUrl),
     }

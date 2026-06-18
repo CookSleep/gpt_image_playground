@@ -1675,7 +1675,7 @@ function putTask(task: TaskRecord): Promise<IDBValidKey> {
 }
 
 export function getCodexCliPromptKey(settings: AppSettings): string {
-  const profile = normalizeSettings(settings).imageApiProfile
+  const profile = getImageApiProfile(settings)
   return `${profile.baseUrl}\n${profile.apiKey}`
 }
 
@@ -1838,9 +1838,15 @@ function createSettingsForApiProfile(settings: AppSettings, profile: ApiProfile)
   })
 }
 
+function getImageApiProfile(settings: AppSettings): ApiProfile {
+  return getActiveApiProfile(settings).imageApiProfile
+    ?? normalizeSettings(settings).profiles[0]?.imageApiProfile
+    ?? normalizeSettings({}).profiles[0].imageApiProfile!
+}
+
 function createSettingsForImageApiProfile(settings: AppSettings): AppSettings {
   const normalized = normalizeSettings(settings)
-  return createSettingsForApiProfile(normalized, normalized.imageApiProfile)
+  return createSettingsForApiProfile(normalized, getImageApiProfile(normalized))
 }
 
 function getReusedTaskApiProfile(settings: AppSettings, profileId: string | null): ApiProfile | null {
@@ -2296,11 +2302,12 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     useStore.getState()
 
   const normalizedSettings = normalizeSettings(settings)
-  let activeProfile: ApiProfile = normalizedSettings.imageApiProfile
+  const imageProfile = getImageApiProfile(normalizedSettings)
+  let activeProfile: ApiProfile = imageProfile
   let requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
   if (normalizedSettings.reuseTaskApiProfileTemporarily && (reusedTaskApiProfileId || reusedTaskApiProfileMissing)) {
-    const reusedProfile = reusedTaskApiProfileId === normalizedSettings.imageApiProfile.id
-      ? normalizedSettings.imageApiProfile
+    const reusedProfile = reusedTaskApiProfileId === imageProfile.id
+      ? imageProfile
       : getReusedTaskApiProfile(normalizedSettings, reusedTaskApiProfileId)
     if (!reusedProfile) {
       if (options.useCurrentApiProfileWhenReusedMissing) {
@@ -3227,8 +3234,8 @@ export async function submitAgentMessage() {
     return
   }
 
-  if (normalizedSettings.agentImageGenerationBackend === 'image-api') {
-    const imageProfileError = validateApiProfile(normalizedSettings.imageApiProfile)
+  if (activeProfile.agentImageGenerationBackend === 'image-api') {
+    const imageProfileError = validateApiProfile(activeProfile.imageApiProfile!)
     if (imageProfileError) {
       showToast(`请先完善图像生成配置：${imageProfileError}`, 'error')
       state.setShowSettings(true, 'api')
@@ -3387,8 +3394,8 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
     return
   }
 
-  if (normalizedSettings.agentImageGenerationBackend === 'image-api') {
-    const imageProfileError = validateApiProfile(normalizedSettings.imageApiProfile)
+  if (activeProfile.agentImageGenerationBackend === 'image-api') {
+    const imageProfileError = validateApiProfile(activeProfile.imageApiProfile!)
     if (imageProfileError) {
       showToast(`请先完善图像生成配置：${imageProfileError}`, 'error')
       state.setShowSettings(true, 'api')
@@ -3661,7 +3668,7 @@ async function executeAgentRound(
     const maxToolCalls = Number.isFinite(requestSettings.agentMaxToolRounds)
       ? Math.max(1, Math.trunc(requestSettings.agentMaxToolRounds))
       : DEFAULT_AGENT_MAX_TOOL_ROUNDS
-    const useAgentImageApi = requestSettings.agentImageGenerationBackend === 'image-api'
+    const useAgentImageApi = activeProfile.agentImageGenerationBackend === 'image-api'
     const imageApiSettings = useAgentImageApi ? createSettingsForImageApiProfile(requestSettings) : null
     const imageApiProfile = imageApiSettings ? getActiveApiProfile(imageApiSettings) : null
     let apiInputForTurn = apiInput
@@ -4276,8 +4283,9 @@ async function executeTask(taskId: string) {
   const { settings } = useStore.getState()
   const task = useStore.getState().tasks.find((t) => t.id === taskId)
   if (!task) return
+  const imageProfile = getImageApiProfile(settings)
   const taskProfile = getTaskApiProfile(settings, task)
-    ?? (task.apiProfileId === normalizeSettings(settings).imageApiProfile.id ? normalizeSettings(settings).imageApiProfile : null)
+    ?? (task.apiProfileId === imageProfile.id ? imageProfile : null)
   if (!taskProfile && task.apiProfileId) {
     updateTaskInStore(taskId, {
       status: 'error',
@@ -4289,7 +4297,7 @@ async function executeTask(taskId: string) {
     })
     return
   }
-  const activeProfile = taskProfile ?? normalizeSettings(settings).imageApiProfile
+  const activeProfile = taskProfile ?? imageProfile
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
   const taskProvider = task.apiProvider ?? activeProfile.provider
   let falRequestInfo: { requestId: string; endpoint: string } | null = task.falRequestId && task.falEndpoint
@@ -4469,10 +4477,10 @@ async function executeTask(taskId: string) {
     } else {
       let errorMessage = err instanceof Error ? err.message : String(err)
       const settings = useStore.getState().settings
+      const imageProfile = getImageApiProfile(settings)
       const profile = getTaskApiProfile(settings, latestTask)
-        ?? (latestTask.apiProfileId === normalizeSettings(settings).imageApiProfile.id ? normalizeSettings(settings).imageApiProfile : null)
+        ?? (latestTask.apiProfileId === imageProfile.id ? imageProfile : null)
       const usesApiProxy = profile?.apiProxy ?? settings.apiProxy
-      const imageProfile = normalizeSettings(settings).imageApiProfile
       const hintProfile = profile ?? {
         provider: latestTask.apiProvider ?? imageProfile.provider,
         apiMode: settings.apiMode,
@@ -4690,9 +4698,10 @@ export async function deleteFavoriteCollection(collectionId: string, deleteTasks
 export async function retryTask(task: TaskRecord) {
   const { settings } = useStore.getState()
   const normalizedSettings = normalizeSettings(settings)
-  const activeProfile = task.apiProfileId === normalizedSettings.imageApiProfile.id
-    ? normalizedSettings.imageApiProfile
-    : getTaskApiProfile(normalizedSettings, task) ?? normalizedSettings.imageApiProfile
+  const imageProfile = getImageApiProfile(normalizedSettings)
+  const activeProfile = task.apiProfileId === imageProfile.id
+    ? imageProfile
+    : getTaskApiProfile(normalizedSettings, task) ?? imageProfile
   const normalizedParams = normalizeParamsForSettings(task.params, settings, { hasInputImages: task.inputImageIds.length > 0 })
   const shouldUseTransparentOutput = normalizedParams.output_format === 'png' && normalizedParams.transparent_output
   const taskParams = shouldUseTransparentOutput
@@ -4735,10 +4744,10 @@ export async function retryTask(task: TaskRecord) {
 export async function reuseConfig(task: TaskRecord) {
   const { settings, setPrompt, setParams, setInputImages, setMaskDraft, clearMaskDraft, showToast, setConfirmDialog, setReusedTaskApiProfile } = useStore.getState()
   const normalizedSettings = normalizeSettings(settings)
-  const currentProfile = normalizedSettings.imageApiProfile
+  const currentProfile = getImageApiProfile(normalizedSettings)
   const matchedProfile = normalizedSettings.reuseTaskApiProfileTemporarily
-    ? (task.apiProfileId === normalizedSettings.imageApiProfile.id
-      ? normalizedSettings.imageApiProfile
+    ? (task.apiProfileId === currentProfile.id
+      ? currentProfile
       : getTaskApiProfile(normalizedSettings, task))
     : null
   const shouldTemporarilyReuseProfile = Boolean(matchedProfile && matchedProfile.id !== currentProfile.id)

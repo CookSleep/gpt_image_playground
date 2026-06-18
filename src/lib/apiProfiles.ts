@@ -313,6 +313,7 @@ export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}):
     codexCli: false,
     apiProxy: DEFAULT_OPENAI_API_PROXY,
     streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
+    agentImageGenerationBackend: 'native',
     ...overrides,
     apiMode,
     streamImages,
@@ -333,6 +334,7 @@ export function createDefaultFalProfile(overrides: Partial<ApiProfile> = {}): Ap
     apiProxy: false,
     streamImages: false,
     streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
+    agentImageGenerationBackend: 'native',
     ...overrides,
   }
 }
@@ -453,6 +455,7 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
   const streamImages = provider === 'openai'
     ? typeof record.streamImages === 'boolean' ? record.streamImages : defaults.streamImages
     : false
+  const hasImageApiProfile = 'imageApiProfile' in record
 
   return {
     ...defaults,
@@ -470,6 +473,8 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
     streamImages,
     streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages, defaults.streamPartialImages),
     providerDrafts: normalizeProviderDrafts(record.providerDrafts, customProviderIds),
+    agentImageGenerationBackend: normalizeAgentImageGenerationBackend(record.agentImageGenerationBackend),
+    ...(hasImageApiProfile ? { imageApiProfile: normalizeImageApiProfile(record.imageApiProfile, customProviderIds) } : {}),
   }
 }
 
@@ -478,20 +483,30 @@ function normalizeAgentImageGenerationBackend(value: unknown): AgentImageGenerat
 }
 
 function normalizeImageApiProfile(input: unknown, customProviderIds: Set<string>): ApiProfile {
-  const profile = normalizeApiProfile(input, {
-    id: 'image-api',
-    name: '图像生成',
-    apiMode: 'images',
-    model: DEFAULT_IMAGES_MODEL,
-    streamImages: false,
-  }, customProviderIds)
+  const record = input && typeof input === 'object' ? input as Record<string, unknown> : {}
+  const rawProvider = typeof record.provider === 'string' ? record.provider : ''
+  const provider: ApiProvider = rawProvider === 'fal' || customProviderIds.has(rawProvider) ? rawProvider : 'openai'
+  const defaults = provider === 'fal'
+    ? createDefaultFalProfile({ apiMode: 'images', streamImages: false })
+    : createDefaultOpenAIProfile({ apiMode: 'images', streamImages: false })
+  const rawBaseUrl = typeof record.baseUrl === 'string' ? record.baseUrl : defaults.baseUrl
 
   return {
-    ...profile,
-    id: profile.id || 'image-api',
-    name: profile.name || '图像生成',
+    ...defaults,
+    id: typeof record.id === 'string' && record.id.trim() ? record.id : 'image-api',
+    name: typeof record.name === 'string' && record.name.trim() ? record.name : '图像生成',
+    provider,
+    baseUrl: provider === 'fal' ? rawBaseUrl.trim().replace(/\/+$/, '') || DEFAULT_FAL_BASE_URL : rawBaseUrl,
+    apiKey: typeof record.apiKey === 'string' ? record.apiKey : defaults.apiKey,
+    model: typeof record.model === 'string' && record.model.trim() ? record.model : DEFAULT_IMAGES_MODEL,
+    timeout: typeof record.timeout === 'number' && Number.isFinite(record.timeout) ? record.timeout : defaults.timeout,
     apiMode: 'images',
+    codexCli: false,
+    apiProxy: typeof record.apiProxy === 'boolean' ? record.apiProxy : false,
+    responseFormatB64Json: record.responseFormatB64Json === true ? true : undefined,
     streamImages: false,
+    streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
+    agentImageGenerationBackend: 'native' as const,
   }
 }
 
@@ -524,16 +539,32 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     responseFormatB64Json: record.responseFormatB64Json === true ? true : undefined,
     streamImages: typeof record.streamImages === 'boolean' ? record.streamImages : undefined,
     streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages),
+    // 确保有默认 imageApiProfile
+    imageApiProfile: {} as ApiProfile,
   })
   const profiles = Array.isArray(record.profiles) && record.profiles.length
     ? record.profiles.map((profile) => normalizeApiProfile(profile, undefined, customProviderIds))
-    : [legacyProfile]
+    : [normalizeApiProfile(legacyProfile, undefined, customProviderIds)]
   const activeProfileId = typeof record.activeProfileId === 'string' && profiles.some((p) => p.id === record.activeProfileId)
     ? record.activeProfileId
     : profiles[0].id
   const active = profiles.find((p) => p.id === activeProfileId) ?? profiles[0]
-  const agentImageGenerationBackend = normalizeAgentImageGenerationBackend(record.agentImageGenerationBackend)
-  const imageApiProfile = normalizeImageApiProfile(record.imageApiProfile, customProviderIds)
+
+  // 迁移旧格式：顶层 imageApiProfile / agentImageGenerationBackend → 注入当前活跃 profile
+  if (isRecord(record)) {
+    const hasLegacyImageApiProfile = record.imageApiProfile && typeof record.imageApiProfile === 'object'
+    const hasLegacyBackend = typeof record.agentImageGenerationBackend === 'string'
+    if (hasLegacyImageApiProfile || hasLegacyBackend) {
+      const activeIndex = profiles.findIndex((p) => p.id === activeProfileId)
+      if (activeIndex >= 0) {
+        profiles[activeIndex] = {
+          ...profiles[activeIndex],
+          ...(hasLegacyBackend ? { agentImageGenerationBackend: normalizeAgentImageGenerationBackend(record.agentImageGenerationBackend) } : {}),
+          ...(hasLegacyImageApiProfile ? { imageApiProfile: normalizeImageApiProfile(record.imageApiProfile, customProviderIds) } : {}),
+        }
+      }
+    }
+  }
 
   return {
     baseUrl: active.baseUrl,
@@ -559,8 +590,6 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     agentMaxToolRounds: normalizeAgentMaxToolRounds(record.agentMaxToolRounds),
     agentWebSearch: typeof record.agentWebSearch === 'boolean' ? record.agentWebSearch : false,
     agentMathFormattingPrompt: typeof record.agentMathFormattingPrompt === 'boolean' ? record.agentMathFormattingPrompt : true,
-    agentImageGenerationBackend,
-    imageApiProfile,
     profiles,
     activeProfileId,
   }
@@ -822,20 +851,11 @@ export function mergeImportedSettings(currentSettings: Partial<AppSettings> | un
     }))
   const profiles = [...current.profiles, ...importedProfiles]
 
-  const imageApiProfile = imported.imageApiProfile?.apiKey?.trim()
-    ? imported.imageApiProfile
-    : current.imageApiProfile
-  const agentImageGenerationBackend = imported.agentImageGenerationBackend === 'image-api'
-    ? 'image-api' as const
-    : current.agentImageGenerationBackend
-
   return normalizeSettings({
     ...current,
     customProviders,
     profiles,
     activeProfileId: current.activeProfileId,
-    imageApiProfile,
-    agentImageGenerationBackend,
   })
 }
 
@@ -862,11 +882,4 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   agentMaxToolRounds: DEFAULT_AGENT_MAX_TOOL_ROUNDS,
   agentWebSearch: false,
   agentMathFormattingPrompt: true,
-  agentImageGenerationBackend: 'native',
-  imageApiProfile: createDefaultOpenAIProfile({
-    id: 'image-api',
-    name: '图像生成',
-    apiMode: 'images',
-    streamImages: false,
-  }),
 })

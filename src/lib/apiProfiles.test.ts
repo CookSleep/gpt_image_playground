@@ -665,8 +665,9 @@ describe('custom providers', () => {
       },
     })
 
-    expect(settings.agentImageGenerationBackend).toBe('image-api')
-    expect(settings.imageApiProfile).toMatchObject({
+    const profile = settings.profiles[0]
+    expect(profile.agentImageGenerationBackend).toBe('image-api')
+    expect(profile.imageApiProfile).toMatchObject({
       id: 'image-api',
       name: 'Agent Images',
       baseUrl: 'https://images.example.com/v1',

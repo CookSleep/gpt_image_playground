@@ -1,4 +1,4 @@
-import type { ApiMode, AppSettings } from '../types'
+import type { ApiMode, ApiProfile, AppSettings } from '../types'
 import { normalizeBaseUrl } from './devProxy'
 import {
   createDefaultOpenAIProfile,
@@ -138,22 +138,20 @@ function buildDefaultConfigOnlySettingsFromUrlParams(currentSettings: Partial<Ap
     if (streamPartialImagesParam !== null) patch.streamPartialImages = normalizeStreamPartialImages(streamPartialImagesParam)
   }
 
-  // 从 ?settings= JSON 中提取 imageApiProfile 和 agentImageGenerationBackend
+  // 从 ?settings= JSON 中提取 imageApiProfile 和 agentImageGenerationBackend，注入到活跃 profile
   const imported = importedSettings as Record<string, unknown> | null
-  const settingsPatch: Partial<AppSettings> = {}
   if (imported?.agentImageGenerationBackend === 'image-api') {
-    settingsPatch.agentImageGenerationBackend = 'image-api'
+    patch.agentImageGenerationBackend = 'image-api'
   }
   const rawImageProfile = imported?.imageApiProfile
   if (rawImageProfile && typeof rawImageProfile === 'object' && !Array.isArray(rawImageProfile)) {
-    settingsPatch.imageApiProfile = rawImageProfile as AppSettings['imageApiProfile']
+    patch.imageApiProfile = rawImageProfile as ApiProfile
   }
 
-  if (Object.keys(patch).length === 0 && Object.keys(settingsPatch).length === 0) return {}
+  if (Object.keys(patch).length === 0) return {}
 
   return normalizeSettings({
     ...settings,
-    ...settingsPatch,
     profiles: settings.profiles.map((profile) =>
       profile.id === activeProfile.id ? { ...profile, ...patch, provider: profile.provider } : profile,
     ),

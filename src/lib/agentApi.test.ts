@@ -138,8 +138,8 @@ describe('callAgentResponsesApi', () => {
     })
 
     await callAgentResponsesApi({
-      settings: { ...DEFAULT_SETTINGS, agentImageGenerationBackend: 'image-api' },
-      profile,
+      settings: DEFAULT_SETTINGS,
+      profile: { ...profile, agentImageGenerationBackend: 'image-api' },
       params: DEFAULT_PARAMS,
       input: [{ role: 'user', content: [{ type: 'input_text', text: 'edit' }] }],
       maskDataUrl: 'data:image/png;base64,bWFzaw==',

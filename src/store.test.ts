@@ -238,11 +238,12 @@ describe('favorite collection deletion', () => {
 
 describe('mask draft lifecycle in store actions', () => {
   beforeEach(() => {
+    const imageProfile = { ...DEFAULT_SETTINGS.profiles[0].imageApiProfile!, apiKey: 'test-key' }
     useStore.setState({
       settings: normalizeSettings({
         ...DEFAULT_SETTINGS,
         apiKey: 'test-key',
-        imageApiProfile: { ...DEFAULT_SETTINGS.imageApiProfile, apiKey: 'test-key' },
+        profiles: DEFAULT_SETTINGS.profiles.map((p) => ({ ...p, imageApiProfile: imageProfile })),
       }),
       prompt: 'prompt',
       inputImages: [],
@@ -452,9 +453,7 @@ describe('mask draft lifecycle in store actions', () => {
     useStore.setState({
       settings: normalizeSettings({
         ...DEFAULT_SETTINGS,
-        profiles: [falProfile],
-        activeProfileId: falProfile.id,
-        imageApiProfile: { ...falProfile, apiMode: 'images' as const, streamImages: false },
+        profiles: [{ ...falProfile, imageApiProfile: { ...falProfile, apiMode: 'images' as const, streamImages: false } }],
       }),
       prompt: '单主体图标素材',
       params: {
@@ -2098,8 +2097,11 @@ describe('agent batch reference resolution', () => {
     useStore.setState({
       settings: normalizeSettings({
         ...useStore.getState().settings,
-        agentImageGenerationBackend: 'image-api',
-        imageApiProfile: imageProfile,
+        profiles: useStore.getState().settings.profiles.map((p) => ({
+          ...p,
+          agentImageGenerationBackend: 'image-api' as const,
+          imageApiProfile: imageProfile,
+        })),
       }),
     })
     vi.mocked(callImageApi).mockClear()

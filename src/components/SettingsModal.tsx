@@ -361,7 +361,7 @@ export default function SettingsModal() {
   const activeProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, activeProfile.provider)
   const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal'
   const activeCustomProvider = draft.customProviders.find((provider) => provider.id === activeProfile.provider)
-  const imageProfile = draft.imageApiProfile
+  const imageProfile: ApiProfile = activeProfile.imageApiProfile!
   const imageProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, imageProfile.provider)
   const imageProviderUsesApiUrl = imageProviderIsOpenAICompatible || imageProfile.provider === 'fal'
   const imageCustomProvider = draft.customProviders.find((provider) => provider.id === imageProfile.provider)
@@ -588,11 +588,11 @@ export default function SettingsModal() {
 
     // 构建图像配置的 settings JSON
     const imageSettings: Record<string, unknown> = {}
-    if (draft.agentImageGenerationBackend === 'image-api') {
+    if (activeProfile.agentImageGenerationBackend === 'image-api') {
       imageSettings.agentImageGenerationBackend = 'image-api'
       const imageExport: ApiProfile = {
-        ...draft.imageApiProfile,
-        apiKey: options.includeApiKey ? draft.imageApiProfile.apiKey : '',
+        ...imageProfile,
+        apiKey: options.includeApiKey ? (imageProfile.apiKey) : '',
       }
       if (!options.includeApiKey) {
         if (options.useNewApiAddress) imageExport.baseUrl = '{address}'
@@ -691,17 +691,14 @@ export default function SettingsModal() {
   }
 
   const updateImageProfile = (patch: Partial<ApiProfile>, commit = false) => {
-    const nextDraft = {
-      ...draft,
+    updateActiveProfile({
       imageApiProfile: {
-        ...draft.imageApiProfile,
+        ...imageProfile,
         ...patch,
         apiMode: 'images' as const,
         streamImages: false,
       },
-    }
-    setDraft(nextDraft)
-    if (commit) commitSettings(nextDraft)
+    }, commit)
   }
 
   const handleImageProviderChange = (provider: string | number) => {
@@ -715,15 +712,11 @@ export default function SettingsModal() {
 
     const providerId = String(provider)
     const customProvider = draft.customProviders.find((item) => item.id === providerId)
-    const nextProfile = switchApiProfileProvider(draft.imageApiProfile, providerId, customProvider)
-    commitSettings({
-      ...draft,
-      imageApiProfile: {
-        ...nextProfile,
-        apiMode: 'images',
-        streamImages: false,
-      },
-    })
+    const nextProfile = switchApiProfileProvider(imageProfile, providerId, customProvider)
+    updateActiveProfile({
+      imageApiProfile: { ...nextProfile, apiMode: 'images' as const, streamImages: false } as ApiProfile,
+      agentImageGenerationBackend: 'image-api' as const,
+    }, true)
   }
 
   const handleChatProviderChange = (provider: string | number) => {
@@ -1110,13 +1103,14 @@ export default function SettingsModal() {
     const providerId = provider.id
     const nextDraft = normalizeSettings({
       ...draft,
-      customProviders: draft.customProviders.filter((provider) => provider.id !== providerId),
-      profiles: draft.profiles.map((profile) =>
-        profile.provider === providerId ? switchApiProfileProvider(profile, 'openai') : profile,
-      ),
-      imageApiProfile: draft.imageApiProfile.provider === providerId
-        ? switchApiProfileProvider(draft.imageApiProfile, 'openai')
-        : draft.imageApiProfile,
+      customProviders: draft.customProviders.filter((p) => p.id !== providerId),
+      profiles: draft.profiles.map((p) => {
+        if (p.provider === providerId) return switchApiProfileProvider(p, 'openai')
+        if (p.id === activeProfile.id && p.imageApiProfile?.provider === providerId) {
+          return { ...p, imageApiProfile: switchApiProfileProvider(p.imageApiProfile!, 'openai') }
+        }
+        return p
+      }),
     })
     commitSettings(nextDraft)
     showToast('服务商已删除', 'success')
@@ -1839,8 +1833,8 @@ export default function SettingsModal() {
                 <div className="block">
                   <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">图片生成方式</span>
                   <Select
-                    value={draft.agentImageGenerationBackend}
-                    onChange={(value) => commitSettings({ ...draft, agentImageGenerationBackend: value === 'image-api' ? 'image-api' : 'native' })}
+                    value={activeProfile.agentImageGenerationBackend}
+                    onChange={(value) => updateActiveProfile({ agentImageGenerationBackend: value === 'image-api' ? 'image-api' as const : 'native' as const }, true)}
                     options={[
                       { label: '使用 Agent 图像生成工具', value: 'native' },
                       { label: '独立 Images API', value: 'image-api' },
@@ -1851,7 +1845,7 @@ export default function SettingsModal() {
                     使用 Agent 图像生成工具时沿用上方 Responses 配置，并要求模型支持 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">image_generation</code>；独立 Images API 不要求对话模型具备生图能力。
                   </div>
                 </div>
-                {draft.agentImageGenerationBackend === 'native' && activeProfile.provider === 'openai' && (
+                {activeProfile.agentImageGenerationBackend === 'native' && activeProfile.provider === 'openai' && (
                   <div className="block space-y-3">
                     <div>
                       <div className="mb-1.5 flex items-center justify-between gap-3">
@@ -1888,7 +1882,7 @@ export default function SettingsModal() {
                     </label>
                   </div>
                 )}
-                {draft.agentImageGenerationBackend === 'image-api' && (
+                {activeProfile.agentImageGenerationBackend === 'image-api' && (
                   <div className="space-y-4 rounded-2xl border border-gray-200/70 bg-white/60 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
                     <div className="block">
                       <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">服务商类型</span>
