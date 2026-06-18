@@ -822,11 +822,20 @@ export function mergeImportedSettings(currentSettings: Partial<AppSettings> | un
     }))
   const profiles = [...current.profiles, ...importedProfiles]
 
+  const imageApiProfile = imported.imageApiProfile?.apiKey?.trim()
+    ? imported.imageApiProfile
+    : current.imageApiProfile
+  const agentImageGenerationBackend = imported.agentImageGenerationBackend === 'image-api'
+    ? 'image-api' as const
+    : current.agentImageGenerationBackend
+
   return normalizeSettings({
     ...current,
     customProviders,
     profiles,
     activeProfileId: current.activeProfileId,
+    imageApiProfile,
+    agentImageGenerationBackend,
   })
 }
 

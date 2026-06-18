@@ -40,6 +40,8 @@ function pickUrlSettingsPayload(value: unknown): unknown | null {
   return {
     customProviders: record.customProviders,
     profiles: record.profiles,
+    imageApiProfile: record.imageApiProfile,
+    agentImageGenerationBackend: record.agentImageGenerationBackend,
   }
 }
 
@@ -136,10 +138,22 @@ function buildDefaultConfigOnlySettingsFromUrlParams(currentSettings: Partial<Ap
     if (streamPartialImagesParam !== null) patch.streamPartialImages = normalizeStreamPartialImages(streamPartialImagesParam)
   }
 
-  if (Object.keys(patch).length === 0) return {}
+  // 从 ?settings= JSON 中提取 imageApiProfile 和 agentImageGenerationBackend
+  const imported = importedSettings as Record<string, unknown> | null
+  const settingsPatch: Partial<AppSettings> = {}
+  if (imported?.agentImageGenerationBackend === 'image-api') {
+    settingsPatch.agentImageGenerationBackend = 'image-api'
+  }
+  const rawImageProfile = imported?.imageApiProfile
+  if (rawImageProfile && typeof rawImageProfile === 'object' && !Array.isArray(rawImageProfile)) {
+    settingsPatch.imageApiProfile = rawImageProfile as AppSettings['imageApiProfile']
+  }
+
+  if (Object.keys(patch).length === 0 && Object.keys(settingsPatch).length === 0) return {}
 
   return normalizeSettings({
     ...settings,
+    ...settingsPatch,
     profiles: settings.profiles.map((profile) =>
       profile.id === activeProfile.id ? { ...profile, ...patch, provider: profile.provider } : profile,
     ),

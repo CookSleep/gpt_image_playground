@@ -586,6 +586,22 @@ export default function SettingsModal() {
     url.search = ''
     url.hash = ''
 
+    // 构建图像配置的 settings JSON
+    const imageSettings: Record<string, unknown> = {}
+    if (draft.agentImageGenerationBackend === 'image-api') {
+      imageSettings.agentImageGenerationBackend = 'image-api'
+      const imageExport: ApiProfile = {
+        ...draft.imageApiProfile,
+        apiKey: options.includeApiKey ? draft.imageApiProfile.apiKey : '',
+      }
+      if (!options.includeApiKey) {
+        if (options.useNewApiAddress) imageExport.baseUrl = '{address}'
+        if (options.useNewApiKey) imageExport.apiKey = '{key}'
+        if (options.useNewApiModel) imageExport.model = '{model}'
+      }
+      imageSettings.imageApiProfile = imageExport
+    }
+
     if (profile.provider === 'openai') {
       const baseUrl = profile.baseUrl.trim() || DEFAULT_SETTINGS.baseUrl
       url.searchParams.set('apiUrl', options.useNewApiAddress && !options.includeApiKey ? '{address}' : normalizeBaseUrl(baseUrl))
@@ -601,6 +617,11 @@ export default function SettingsModal() {
       if (profile.codexCli) url.searchParams.set('codexCli', 'true')
       if (profile.streamImages !== DEFAULT_SETTINGS.streamImages) url.searchParams.set('streamImages', String(Boolean(profile.streamImages)))
       if (profile.streamPartialImages !== DEFAULT_STREAM_PARTIAL_IMAGES) url.searchParams.set('streamPartialImages', String(normalizeStreamPartialImages(profile.streamPartialImages)))
+
+      // 追加图像配置
+      if (Object.keys(imageSettings).length > 0) {
+        url.searchParams.set('settings', JSON.stringify(imageSettings))
+      }
 
       let result = url.toString()
       if (!options.includeApiKey) {
@@ -624,6 +645,7 @@ export default function SettingsModal() {
     url.searchParams.set('settings', JSON.stringify({
       customProviders: provider ? [provider] : [],
       profiles: [importProfile],
+      ...imageSettings,
     }))
 
     let result = url.toString()
