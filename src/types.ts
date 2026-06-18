@@ -110,7 +110,7 @@ export interface AppSettings {
   agentWebSearch: boolean
   agentMathFormattingPrompt: boolean
   agentImageGenerationBackend: AgentImageGenerationBackend
-  agentImageApiProfile: ApiProfile
+  imageApiProfile: ApiProfile
   profiles: ApiProfile[]
   activeProfileId: string
 }

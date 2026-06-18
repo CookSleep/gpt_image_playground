@@ -477,10 +477,10 @@ function normalizeAgentImageGenerationBackend(value: unknown): AgentImageGenerat
   return value === 'image-api' ? 'image-api' : 'native'
 }
 
-function normalizeAgentImageApiProfile(input: unknown, customProviderIds: Set<string>): ApiProfile {
+function normalizeImageApiProfile(input: unknown, customProviderIds: Set<string>): ApiProfile {
   const profile = normalizeApiProfile(input, {
-    id: 'agent-image-api',
-    name: 'Agent 图像生成',
+    id: 'image-api',
+    name: '图像生成',
     apiMode: 'images',
     model: DEFAULT_IMAGES_MODEL,
     streamImages: false,
@@ -488,8 +488,8 @@ function normalizeAgentImageApiProfile(input: unknown, customProviderIds: Set<st
 
   return {
     ...profile,
-    id: profile.id || 'agent-image-api',
-    name: profile.name || 'Agent 图像生成',
+    id: profile.id || 'image-api',
+    name: profile.name || '图像生成',
     apiMode: 'images',
     streamImages: false,
   }
@@ -533,7 +533,7 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     : profiles[0].id
   const active = profiles.find((p) => p.id === activeProfileId) ?? profiles[0]
   const agentImageGenerationBackend = normalizeAgentImageGenerationBackend(record.agentImageGenerationBackend)
-  const agentImageApiProfile = normalizeAgentImageApiProfile(record.agentImageApiProfile, customProviderIds)
+  const imageApiProfile = normalizeImageApiProfile(record.imageApiProfile, customProviderIds)
 
   return {
     baseUrl: active.baseUrl,
@@ -560,7 +560,7 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     agentWebSearch: typeof record.agentWebSearch === 'boolean' ? record.agentWebSearch : false,
     agentMathFormattingPrompt: typeof record.agentMathFormattingPrompt === 'boolean' ? record.agentMathFormattingPrompt : true,
     agentImageGenerationBackend,
-    agentImageApiProfile,
+    imageApiProfile,
     profiles,
     activeProfileId,
   }
@@ -854,9 +854,9 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   agentWebSearch: false,
   agentMathFormattingPrompt: true,
   agentImageGenerationBackend: 'native',
-  agentImageApiProfile: createDefaultOpenAIProfile({
-    id: 'agent-image-api',
-    name: 'Agent 图像生成',
+  imageApiProfile: createDefaultOpenAIProfile({
+    id: 'image-api',
+    name: '图像生成',
     apiMode: 'images',
     streamImages: false,
   }),

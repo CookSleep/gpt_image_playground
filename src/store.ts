@@ -1675,7 +1675,7 @@ function putTask(task: TaskRecord): Promise<IDBValidKey> {
 }
 
 export function getCodexCliPromptKey(settings: AppSettings): string {
-  const profile = getActiveApiProfile(settings)
+  const profile = normalizeSettings(settings).imageApiProfile
   return `${profile.baseUrl}\n${profile.apiKey}`
 }
 
@@ -1838,9 +1838,9 @@ function createSettingsForApiProfile(settings: AppSettings, profile: ApiProfile)
   })
 }
 
-function createSettingsForAgentImageApiProfile(settings: AppSettings): AppSettings {
+function createSettingsForImageApiProfile(settings: AppSettings): AppSettings {
   const normalized = normalizeSettings(settings)
-  return createSettingsForApiProfile(normalized, normalized.agentImageApiProfile)
+  return createSettingsForApiProfile(normalized, normalized.imageApiProfile)
 }
 
 function getReusedTaskApiProfile(settings: AppSettings, profileId: string | null): ApiProfile | null {
@@ -2296,17 +2296,19 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     useStore.getState()
 
   const normalizedSettings = normalizeSettings(settings)
-  let activeProfile = getActiveApiProfile(settings)
+  let activeProfile: ApiProfile = normalizedSettings.imageApiProfile
   let requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
   if (normalizedSettings.reuseTaskApiProfileTemporarily && (reusedTaskApiProfileId || reusedTaskApiProfileMissing)) {
-    const reusedProfile = getReusedTaskApiProfile(normalizedSettings, reusedTaskApiProfileId)
+    const reusedProfile = reusedTaskApiProfileId === normalizedSettings.imageApiProfile.id
+      ? normalizedSettings.imageApiProfile
+      : getReusedTaskApiProfile(normalizedSettings, reusedTaskApiProfileId)
     if (!reusedProfile) {
       if (options.useCurrentApiProfileWhenReusedMissing) {
         useStore.getState().setReusedTaskApiProfile(null)
       } else {
         setConfirmDialog({
           title: '找不到 API 配置',
-      message: `找不到复用任务所使用的 API 配置「${reusedTaskApiProfileName || '未知配置'}」，要使用当前的 API 配置「${activeProfile.name}」提交任务吗？`,
+      message: `找不到复用任务所使用的 API 配置「${reusedTaskApiProfileName || '未知配置'}」，要使用当前的图像生成配置「${activeProfile.name}」提交任务吗？`,
       confirmText: '使用当前配置提交',
       cancelText: '放弃提交',
       action: () => {
@@ -3226,9 +3228,9 @@ export async function submitAgentMessage() {
   }
 
   if (normalizedSettings.agentImageGenerationBackend === 'image-api') {
-    const imageProfileError = validateApiProfile(normalizedSettings.agentImageApiProfile)
+    const imageProfileError = validateApiProfile(normalizedSettings.imageApiProfile)
     if (imageProfileError) {
-      showToast(`请先完善 Agent 图像生成配置：${imageProfileError}`, 'error')
+      showToast(`请先完善图像生成配置：${imageProfileError}`, 'error')
       state.setShowSettings(true, 'api')
       return
     }
@@ -3386,9 +3388,9 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
   }
 
   if (normalizedSettings.agentImageGenerationBackend === 'image-api') {
-    const imageProfileError = validateApiProfile(normalizedSettings.agentImageApiProfile)
+    const imageProfileError = validateApiProfile(normalizedSettings.imageApiProfile)
     if (imageProfileError) {
-      showToast(`请先完善 Agent 图像生成配置：${imageProfileError}`, 'error')
+      showToast(`请先完善图像生成配置：${imageProfileError}`, 'error')
       state.setShowSettings(true, 'api')
       return
     }
@@ -3660,8 +3662,8 @@ async function executeAgentRound(
       ? Math.max(1, Math.trunc(requestSettings.agentMaxToolRounds))
       : DEFAULT_AGENT_MAX_TOOL_ROUNDS
     const useAgentImageApi = requestSettings.agentImageGenerationBackend === 'image-api'
-    const agentImageApiSettings = useAgentImageApi ? createSettingsForAgentImageApiProfile(requestSettings) : null
-    const agentImageApiProfile = agentImageApiSettings ? getActiveApiProfile(agentImageApiSettings) : null
+    const imageApiSettings = useAgentImageApi ? createSettingsForImageApiProfile(requestSettings) : null
+    const imageApiProfile = imageApiSettings ? getActiveApiProfile(imageApiSettings) : null
     let apiInputForTurn = apiInput
     let accumulatedOutputItems: ResponsesOutputItem[] = []
     let accumulatedText = ''
@@ -3712,23 +3714,23 @@ async function executeAgentRound(
       agentBatchCallId?: string
       createdAt?: number
     }): Promise<AgentApiResultImage> => {
-      if (!agentImageApiSettings || !agentImageApiProfile) {
-        throw new Error('Agent 图像生成配置不可用')
+      if (!imageApiSettings || !imageApiProfile) {
+        throw new Error('图像生成配置不可用')
       }
 
       await ensureStreamingAgentTask(opts.toolCallId, opts.prompt, opts.references.imageIds, {
         createdAt: opts.createdAt,
         maskTargetImageId: null,
         maskImageId: null,
-        profile: agentImageApiProfile,
+        profile: imageApiProfile,
         ...(opts.agentBatchCallId ? { agentBatchCallId: opts.agentBatchCallId } : {}),
       })
 
       const result = await callImageApi({
-        settings: agentImageApiSettings,
+        settings: imageApiSettings,
         prompt: replaceImageMentionsForApi(opts.prompt, opts.references.dataUrls.length),
         params: {
-          ...normalizeParamsForSettings(params, agentImageApiSettings, { hasInputImages: opts.references.dataUrls.length > 0 }),
+          ...normalizeParamsForSettings(params, imageApiSettings, { hasInputImages: opts.references.dataUrls.length > 0 }),
           n: 1,
         },
         inputImageDataUrls: opts.references.dataUrls,
@@ -3782,7 +3784,7 @@ async function executeAgentRound(
             createdAt,
             maskTargetImageId: null,
             maskImageId: null,
-            profile: agentImageApiProfile ?? undefined,
+            profile: imageApiProfile ?? undefined,
             ...(callId ? { agentBatchCallId: callId } : {}),
           })
         } else {
@@ -4275,6 +4277,7 @@ async function executeTask(taskId: string) {
   const task = useStore.getState().tasks.find((t) => t.id === taskId)
   if (!task) return
   const taskProfile = getTaskApiProfile(settings, task)
+    ?? (task.apiProfileId === normalizeSettings(settings).imageApiProfile.id ? normalizeSettings(settings).imageApiProfile : null)
   if (!taskProfile && task.apiProfileId) {
     updateTaskInStore(taskId, {
       status: 'error',
@@ -4286,7 +4289,7 @@ async function executeTask(taskId: string) {
     })
     return
   }
-  const activeProfile = taskProfile ?? getActiveApiProfile(settings)
+  const activeProfile = taskProfile ?? normalizeSettings(settings).imageApiProfile
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
   const taskProvider = task.apiProvider ?? activeProfile.provider
   let falRequestInfo: { requestId: string; endpoint: string } | null = task.falRequestId && task.falEndpoint
@@ -4467,13 +4470,14 @@ async function executeTask(taskId: string) {
       let errorMessage = err instanceof Error ? err.message : String(err)
       const settings = useStore.getState().settings
       const profile = getTaskApiProfile(settings, latestTask)
+        ?? (latestTask.apiProfileId === normalizeSettings(settings).imageApiProfile.id ? normalizeSettings(settings).imageApiProfile : null)
       const usesApiProxy = profile?.apiProxy ?? settings.apiProxy
-      const activeProfile = getActiveApiProfile(settings)
+      const imageProfile = normalizeSettings(settings).imageApiProfile
       const hintProfile = profile ?? {
-        provider: latestTask.apiProvider ?? activeProfile.provider,
+        provider: latestTask.apiProvider ?? imageProfile.provider,
         apiMode: settings.apiMode,
-        streamImages: activeProfile.streamImages,
-        streamPartialImages: activeProfile.streamPartialImages,
+        streamImages: imageProfile.streamImages,
+        streamPartialImages: imageProfile.streamPartialImages,
       }
       const networkErrorHint = getApiRequestNetworkErrorHint(err, latestTask.createdAt, usesApiProxy, hintProfile)
       if (networkErrorHint && !errorMessage.includes(IMAGE_FETCH_CORS_HINT)) {
@@ -4685,7 +4689,10 @@ export async function deleteFavoriteCollection(collectionId: string, deleteTasks
 /** 重试失败的任务：创建新任务并执行 */
 export async function retryTask(task: TaskRecord) {
   const { settings } = useStore.getState()
-  const activeProfile = getActiveApiProfile(settings)
+  const normalizedSettings = normalizeSettings(settings)
+  const activeProfile = task.apiProfileId === normalizedSettings.imageApiProfile.id
+    ? normalizedSettings.imageApiProfile
+    : getTaskApiProfile(normalizedSettings, task) ?? normalizedSettings.imageApiProfile
   const normalizedParams = normalizeParamsForSettings(task.params, settings, { hasInputImages: task.inputImageIds.length > 0 })
   const shouldUseTransparentOutput = normalizedParams.output_format === 'png' && normalizedParams.transparent_output
   const taskParams = shouldUseTransparentOutput
@@ -4728,8 +4735,12 @@ export async function retryTask(task: TaskRecord) {
 export async function reuseConfig(task: TaskRecord) {
   const { settings, setPrompt, setParams, setInputImages, setMaskDraft, clearMaskDraft, showToast, setConfirmDialog, setReusedTaskApiProfile } = useStore.getState()
   const normalizedSettings = normalizeSettings(settings)
-  const currentProfile = getActiveApiProfile(settings)
-  const matchedProfile = normalizedSettings.reuseTaskApiProfileTemporarily ? getTaskApiProfile(normalizedSettings, task) : null
+  const currentProfile = normalizedSettings.imageApiProfile
+  const matchedProfile = normalizedSettings.reuseTaskApiProfileTemporarily
+    ? (task.apiProfileId === normalizedSettings.imageApiProfile.id
+      ? normalizedSettings.imageApiProfile
+      : getTaskApiProfile(normalizedSettings, task))
+    : null
   const shouldTemporarilyReuseProfile = Boolean(matchedProfile && matchedProfile.id !== currentProfile.id)
   const missingReusedProfile = normalizedSettings.reuseTaskApiProfileTemporarily && !matchedProfile
   const taskProfileName = matchedProfile?.name ?? getTaskApiProfileName(task)
@@ -4771,7 +4782,7 @@ export async function reuseConfig(task: TaskRecord) {
   if (missingReusedProfile) {
     setConfirmDialog({
       title: '找不到 API 配置',
-      message: `找不到复用任务所使用的 API 配置「${taskProfileName}」，要使用当前的 API 配置「${currentProfile.name}」提交任务吗？`,
+      message: `找不到复用任务所使用的 API 配置「${taskProfileName}」，要使用当前的图像生成配置「${currentProfile.name}」提交任务吗？`,
       confirmText: '使用当前配置提交',
       cancelText: '放弃提交',
       action: () => {

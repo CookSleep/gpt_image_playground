@@ -239,7 +239,11 @@ describe('favorite collection deletion', () => {
 describe('mask draft lifecycle in store actions', () => {
   beforeEach(() => {
     useStore.setState({
-      settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        imageApiProfile: { ...DEFAULT_SETTINGS.imageApiProfile, apiKey: 'test-key' },
+      }),
       prompt: 'prompt',
       inputImages: [],
       maskDraft: null,
@@ -450,6 +454,7 @@ describe('mask draft lifecycle in store actions', () => {
         ...DEFAULT_SETTINGS,
         profiles: [falProfile],
         activeProfileId: falProfile.id,
+        imageApiProfile: { ...falProfile, apiMode: 'images' as const, streamImages: false },
       }),
       prompt: '单主体图标素材',
       params: {
@@ -2094,7 +2099,7 @@ describe('agent batch reference resolution', () => {
       settings: normalizeSettings({
         ...useStore.getState().settings,
         agentImageGenerationBackend: 'image-api',
-        agentImageApiProfile: imageProfile,
+        imageApiProfile: imageProfile,
       }),
     })
     vi.mocked(callImageApi).mockClear()
@@ -2380,7 +2385,7 @@ describe('reused task API profile', () => {
     expect(state.tasks).toEqual([])
     expect(state.setConfirmDialog).toHaveBeenCalledWith(expect.objectContaining({
       title: '找不到 API 配置',
-      message: '找不到复用任务所使用的 API 配置「未知配置」，要使用当前的 API 配置「默认」提交任务吗？',
+      message: '找不到复用任务所使用的 API 配置「未知配置」，要使用当前的图像生成配置「图像生成」提交任务吗？',
       confirmText: '使用当前配置提交',
       cancelText: '放弃提交',
     }))

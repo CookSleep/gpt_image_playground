@@ -650,11 +650,11 @@ describe('custom providers', () => {
     expect(normalizeSettings({ agentMathFormattingPrompt: false }).agentMathFormattingPrompt).toBe(false)
   })
 
-  it('normalizes Agent image generation configuration', () => {
+  it('normalizes image generation configuration', () => {
     const settings = normalizeSettings({
       agentImageGenerationBackend: 'image-api',
-      agentImageApiProfile: {
-        id: 'agent-image-api',
+      imageApiProfile: {
+        id: 'image-api',
         name: 'Agent Images',
         provider: 'openai',
         baseUrl: 'https://images.example.com/v1',
@@ -666,8 +666,8 @@ describe('custom providers', () => {
     })
 
     expect(settings.agentImageGenerationBackend).toBe('image-api')
-    expect(settings.agentImageApiProfile).toMatchObject({
-      id: 'agent-image-api',
+    expect(settings.imageApiProfile).toMatchObject({
+      id: 'image-api',
       name: 'Agent Images',
       baseUrl: 'https://images.example.com/v1',
       apiKey: 'image-key',
