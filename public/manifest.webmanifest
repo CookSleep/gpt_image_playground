@@ -1,7 +1,7 @@
 {
-  "name": "GPT Image Playground",
-  "short_name": "GPT Image",
-  "description": "GPT Image Playground 图像生成工作台",
+  "name": "OpenToken Images",
+  "short_name": "OpenToken Images",
+  "description": "OpenToken Images 图像生成工作台",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -9,9 +9,9 @@
   "theme_color": "#111827",
   "icons": [
     {
-      "src": "./pwa-icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "./logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ]

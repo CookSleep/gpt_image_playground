@@ -42,7 +42,7 @@ export default function LoginModal() {
       <div className="relative w-full max-w-sm rounded-3xl border border-white/50 dark:border-white/[0.08] bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl shadow-[0_8px_40px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] ring-1 ring-black/5 dark:ring-white/10 p-8 z-10 animate-confirm-in">
         <div className="flex flex-col items-center gap-2 mb-6">
           <h1 className="text-xl font-bold tracking-tight text-gray-900 dark:text-gray-100">
-            GPT Image Playground
+            OpenToken Images
           </h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             登录后即可使用
