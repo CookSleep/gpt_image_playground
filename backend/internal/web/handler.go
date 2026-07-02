@@ -16,16 +16,17 @@ import (
 const headCloseTag = "</head>"
 
 // appConfig 对应前端 window.__APP_CONFIG__。字段均为字符串，前端经 getRuntimeConfig 读取
-// （布尔语义由前端做 === 'true' 比较）。AUTH_BACKEND_URL 用指针保留三态：
-// 环境变量未设置 → 省略该键（前端 isAuthEnabled 判为禁用）；设置为空串 → 保留 ""（同源启用）。
+// （布尔语义由前端做 === 'true' 比较）。
+// AUTH_BACKEND_URL 语义：未设置/空串 → 同源启用登录（默认）；"disabled" → 关闭登录；
+// URL → 跨域调用指定后端（纯静态前端 + 远程后端）。该键始终注入，故用普通字符串。
 type appConfig struct {
-	DefaultAPIURL          string  `json:"DEFAULT_API_URL"`
-	APIProxyAvailable      string  `json:"API_PROXY_AVAILABLE"`
-	APIProxyLocked         string  `json:"API_PROXY_LOCKED"`
-	DockerDeployment       string  `json:"DOCKER_DEPLOYMENT"`
-	DockerLegacyAPIURLUsed string  `json:"DOCKER_LEGACY_API_URL_USED"`
-	ShowDefaultConfigOnly  string  `json:"SHOW_DEFAULT_CONFIG_ONLY"`
-	AuthBackendURL         *string `json:"AUTH_BACKEND_URL,omitempty"`
+	DefaultAPIURL          string `json:"DEFAULT_API_URL"`
+	APIProxyAvailable      string `json:"API_PROXY_AVAILABLE"`
+	APIProxyLocked         string `json:"API_PROXY_LOCKED"`
+	DockerDeployment       string `json:"DOCKER_DEPLOYMENT"`
+	DockerLegacyAPIURLUsed string `json:"DOCKER_LEGACY_API_URL_USED"`
+	ShowDefaultConfigOnly  string `json:"SHOW_DEFAULT_CONFIG_ONLY"`
+	AuthBackendURL         string `json:"AUTH_BACKEND_URL"`
 }
 
 // Handler 是基于嵌入 FS 的 SPA fallback 处理器，供 main.go 挂到 r.NoRoute。
@@ -87,9 +88,8 @@ func configJSON() string {
 		DockerDeployment:       os.Getenv("DOCKER_DEPLOYMENT"),
 		DockerLegacyAPIURLUsed: os.Getenv("DOCKER_LEGACY_API_URL_USED"),
 		ShowDefaultConfigOnly:  os.Getenv("SHOW_DEFAULT_CONFIG_ONLY"),
-	}
-	if v, ok := os.LookupEnv("AUTH_BACKEND_URL"); ok {
-		cfg.AuthBackendURL = &v
+		// 未设置 → "" → 前端默认同源启用登录；"disabled" 关闭；URL 走跨域后端
+		AuthBackendURL: os.Getenv("AUTH_BACKEND_URL"),
 	}
 	// 默认开启 HTML 转义（<、>、& 转义为 \u003c 等），避免字符串中含 </script> 破坏标签
 	b, _ := json.Marshal(cfg)

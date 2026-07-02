@@ -7,10 +7,10 @@ afterEach(() => {
 })
 
 describe('isAuthEnabled / getAuthBaseUrl 三态', () => {
-  it('未配置（undefined）时禁用认证', () => {
+  it('未配置（undefined）时默认同源启用', () => {
     vi.stubGlobal('window', { __APP_CONFIG__: {} })
     vi.stubEnv('VITE_AUTH_BACKEND_URL', undefined)
-    expect(isAuthEnabled()).toBe(false)
+    expect(isAuthEnabled()).toBe(true)
     expect(getAuthBaseUrl()).toBe('')
   })
 

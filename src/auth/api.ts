@@ -1,10 +1,10 @@
 /**
  * Auth backend API 客户端
  *
- * 设计要点：
- * - VITE_AUTH_BACKEND_URL 为空 ""：使用同源（推荐生产部署，nginx 反代 /auth /api/v1）
- * - VITE_AUTH_BACKEND_URL = "disabled"：禁用认证，兼容纯静态部署
- * - VITE_AUTH_BACKEND_URL = "https://..."：跨域调用（开发环境）
+ * 设计要点（AUTH_BACKEND_URL 语义）：
+ * - 未设置 / 空 ""：同源启用登录（默认，embed 单镜像与同源反代部署）
+ * - "disabled"：显式关闭登录（纯静态无后端部署需手动设置）
+ * - "https://..."：跨域调用指定后端（纯静态前端 + 远程后端，或本地分离调试）
  *
  * Token 存储：localStorage，key 见下面常量
  */
@@ -42,12 +42,9 @@ export type TokenPair = {
   token_type?: string
 }
 
-/** 是否启用认证：disabled / 未配置后端时返回 false */
+/** 是否启用认证：仅显式 disabled 时关闭；未配置/空串默认同源启用 */
 export function isAuthEnabled(): boolean {
-  const v = getAuthRuntimeConfig()
-  if (v === undefined) return false
-  if (v === 'disabled') return false
-  return true
+  return getAuthRuntimeConfig() !== 'disabled'
 }
 
 /** 取后端基址，优先注入/env，缺省同源 */

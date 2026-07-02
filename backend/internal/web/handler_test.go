@@ -87,24 +87,33 @@ func TestStaticAssetLongCache(t *testing.T) {
 	}
 }
 
-// AUTH_BACKEND_URL 三态：未设置 → 省略键
-func TestAuthBackendOmittedWhenUnset(t *testing.T) {
+// AUTH_BACKEND_URL 语义：未设置 → 注入 ""（前端默认同源启用登录）
+func TestAuthBackendDefaultsToSameOrigin(t *testing.T) {
 	if orig, ok := os.LookupEnv("AUTH_BACKEND_URL"); ok {
 		os.Unsetenv("AUTH_BACKEND_URL")
 		t.Cleanup(func() { os.Setenv("AUTH_BACKEND_URL", orig) })
 	}
 	body := doRequest(NewHandler(testFS()), http.MethodGet, "/").Body.String()
-	if strings.Contains(body, "AUTH_BACKEND_URL") {
-		t.Fatalf("AUTH_BACKEND_URL 未设置时应省略该键，实际：%s", body)
+	if !strings.Contains(body, `"AUTH_BACKEND_URL":""`) {
+		t.Fatalf("AUTH_BACKEND_URL 未设置时应注入 \"\"（同源启用），实际：%s", body)
 	}
 }
 
-// AUTH_BACKEND_URL 三态：设为空串 → 保留 ""（同源启用）
+// AUTH_BACKEND_URL 语义：空串 → 保留 ""（同源启用）
 func TestAuthBackendEmptyKept(t *testing.T) {
 	t.Setenv("AUTH_BACKEND_URL", "")
 	body := doRequest(NewHandler(testFS()), http.MethodGet, "/").Body.String()
 	if !strings.Contains(body, `"AUTH_BACKEND_URL":""`) {
 		t.Fatalf("AUTH_BACKEND_URL 为空串时应保留 \"\"，实际：%s", body)
+	}
+}
+
+// AUTH_BACKEND_URL 语义：disabled → 原样注入，前端据此关闭登录
+func TestAuthBackendDisabledKept(t *testing.T) {
+	t.Setenv("AUTH_BACKEND_URL", "disabled")
+	body := doRequest(NewHandler(testFS()), http.MethodGet, "/").Body.String()
+	if !strings.Contains(body, `"AUTH_BACKEND_URL":"disabled"`) {
+		t.Fatalf("AUTH_BACKEND_URL=disabled 时应原样注入，实际：%s", body)
 	}
 }
 
