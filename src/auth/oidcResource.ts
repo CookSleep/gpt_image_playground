@@ -9,9 +9,16 @@
 
 import { clearTokens, ensureOIDCToken, getOIDCAccessToken, getOIDCIssuer, refreshOIDCToken } from './api'
 
+export type ApiKeyItem = {
+  key: string
+  name?: string
+  groupName?: string
+}
+
 export type ApiKeysResponse = {
   sub2api_apikeys: string[]
   sub2api_apikey_count: number
+  items: ApiKeyItem[]
 }
 
 export type UsageResponse = {
@@ -68,10 +75,10 @@ async function getActiveOIDCToken(): Promise<string> {
   return tok as string
 }
 
-/** GET {issuer}/oidc/resource/api-keys */
+/** GET {issuer}/oidc/resource/api-keys?status=active —— 仅返回启用的 key */
 export async function fetchApiKeys(): Promise<ApiKeysResponse> {
   const issuer = requireIssuer()
-  const apiKeysUrl = joinUrl(issuer, '/oidc/resource/api-keys')
+  const apiKeysUrl = joinUrl(issuer, '/oidc/resource/api-keys') + '?status=active'
   const doFetch = (token: string) =>
     fetch(apiKeysUrl, {
       method: 'GET',
@@ -128,28 +135,57 @@ export async function fetchApiKeys(): Promise<ApiKeysResponse> {
     payload['data']
 
   let keys: string[] = []
+  const items: ApiKeyItem[] = []
   if (Array.isArray(keysCandidate)) {
-    keys = keysCandidate
-      .map((item) => {
-        if (typeof item === 'string') return item
-        if (item && typeof item === 'object') {
-          const obj = item as Record<string, unknown>
-          // 兼容 sub2api 的列表对象字段：api_key / sub2api_apikey 等
-          const v =
-            obj['key'] ??
-            obj['api_key'] ??
-            obj['apikey'] ??
-            obj['sub2api_apikey'] ??
-            obj['sub2api:apikey'] ??
-            obj['secret'] ??
-            obj['token'] ??
-            obj['value'] ??
-            obj['id']
-          return typeof v === 'string' ? v : ''
+    for (const item of keysCandidate) {
+      if (typeof item === 'string') {
+        if (item) {
+          keys.push(item)
+          items.push({ key: item })
         }
-        return ''
-      })
-      .filter((s) => !!s)
+        continue
+      }
+      if (item && typeof item === 'object') {
+        const obj = item as Record<string, unknown>
+        // 兼容 sub2api 的列表对象字段：api_key / sub2api_apikey 等
+        const v =
+          obj['key'] ??
+          obj['api_key'] ??
+          obj['apikey'] ??
+          obj['sub2api_apikey'] ??
+          obj['sub2api:apikey'] ??
+          obj['secret'] ??
+          obj['token'] ??
+          obj['value'] ??
+          obj['id']
+        const keyStr = typeof v === 'string' ? v : ''
+        if (!keyStr) continue
+
+        const nameRaw =
+          obj['name'] ??
+          obj['display_name'] ??
+          obj['alias'] ??
+          obj['title']
+        const name = typeof nameRaw === 'string' && nameRaw ? nameRaw : undefined
+
+        // group 可能是 { name: '...' } 对象，也可能是字符串；兼容 group_name
+        let groupName: string | undefined
+        const groupRaw = obj['group']
+        if (groupRaw && typeof groupRaw === 'object') {
+          const gn = (groupRaw as Record<string, unknown>)['name']
+          if (typeof gn === 'string' && gn) groupName = gn
+        } else if (typeof groupRaw === 'string' && groupRaw) {
+          groupName = groupRaw
+        }
+        if (!groupName) {
+          const gn2 = obj['group_name'] ?? obj['groupName']
+          if (typeof gn2 === 'string' && gn2) groupName = gn2
+        }
+
+        keys.push(keyStr)
+        items.push({ key: keyStr, name, groupName })
+      }
+    }
   }
 
   const countCandidate =
@@ -168,6 +204,7 @@ export async function fetchApiKeys(): Promise<ApiKeysResponse> {
   return {
     sub2api_apikeys: keys,
     sub2api_apikey_count: count,
+    items,
   }
 }
 
