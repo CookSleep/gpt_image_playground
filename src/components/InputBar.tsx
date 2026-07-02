@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect } fr
 import { createPortal } from 'react-dom'
 import { ALL_FAVORITES_COLLECTION_ID, deleteFavoriteCollection, getTaskFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { useAuth } from '../auth/AuthContext'
-import { fetchApiKeys, fetchUsage, fetchModels, extractBalance, type ModelInfo } from '../auth/oidcResource'
+import { fetchApiKeys, fetchUsage, fetchModels, extractBalance, type ModelInfo, type ApiKeyItem } from '../auth/oidcResource'
 import { DEFAULT_PARAMS, type TaskRecord } from '../types'
 import { getActiveApiProfile, getAgentImageApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
@@ -14,11 +14,42 @@ import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { useHintTooltip } from '../hooks/useHintTooltip'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getTaskOutputImageZipEntries } from '../lib/downloadImages'
 import SizePickerModal from './SizePickerModal'
+import Select from './Select'
 import { CloseIcon } from './icons'
 import ButtonTooltip from './input/buttonTooltip'
 import DragUploadOverlay from './input/dragUploadOverlay'
 import InputBatchBars from './input/inputBatchBars'
 import InputParamsPanel from './input/inputParamsPanel'
+
+// 上次选中的 API Key 本地缓存：按用户维度存储，避免每次刷新都回落到列表第一个。
+const SELECTED_API_KEY_STORAGE_PREFIX = 'gpt-image-playground:selected-api-key:'
+
+function getSelectedApiKeyStorageKey(userId?: string | null): string {
+  return `${SELECTED_API_KEY_STORAGE_PREFIX}${userId || 'anonymous'}`
+}
+
+function readCachedApiKey(userId?: string | null): string {
+  if (typeof window === 'undefined') return ''
+  try {
+    return window.localStorage.getItem(getSelectedApiKeyStorageKey(userId)) || ''
+  } catch {
+    return ''
+  }
+}
+
+function writeCachedApiKey(userId: string | null | undefined, key: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    const storageKey = getSelectedApiKeyStorageKey(userId)
+    if (key) {
+      window.localStorage.setItem(storageKey, key)
+    } else {
+      window.localStorage.removeItem(storageKey)
+    }
+  } catch {
+    // localStorage 不可用时忽略，仅保留内存态
+  }
+}
 
 
 function getMentionTagTextLength(el: Element) {
@@ -389,6 +420,7 @@ function AtImageOptionThumb({ option }: { option: AtImageOption }) {
 export default function InputBar() {
   const { user, refreshUser } = useAuth()
   const [apiKeys, setApiKeys] = useState<string[]>([])
+  const [apiKeyItems, setApiKeyItems] = useState<ApiKeyItem[]>([])
   const [apiKey, setApiKey] = useState<string>('')
   const [apiKeysLoading, setApiKeysLoading] = useState<boolean>(false)
   const [apiKeysError, setApiKeysError] = useState<string>('')
@@ -447,12 +479,16 @@ export default function InputBar() {
         const res = await fetchApiKeys()
         if (cancelled) return
         const keys = res.sub2api_apikeys || []
+        const items = res.items || []
         console.log('[InputBar] parsed apiKeys:', keys, 'count:', res.sub2api_apikey_count)
         setApiKeys(keys)
-        // 没有则清空选中；只有一个则自动选中；多个则在已选不在列表时回落到第一个
+        setApiKeyItems(items)
+        // 选中优先级：当前已选（仍在列表中）> 本地缓存的上次选中 > 列表第一个
         setApiKey((prev) => {
           if (keys.length === 0) return ''
           if (prev && keys.includes(prev)) return prev
+          const cached = readCachedApiKey(user?.id)
+          if (cached && keys.includes(cached)) return cached
           return keys[0]
         })
       } catch (err) {
@@ -461,6 +497,7 @@ export default function InputBar() {
         console.error('[InputBar] fetchApiKeys failed:', err)
         setApiKeysError(msg)
         setApiKeys([])
+        setApiKeyItems([])
         setApiKey('')
       } finally {
         if (!cancelled) setApiKeysLoading(false)
@@ -2161,64 +2198,65 @@ export default function InputBar() {
               </div>
             )}
             
-            {/* API Key / Balance / 模型 显示区域 */}
+            {/* API Key / 余额 / 模型 显示区域 */}
             <div className="mt-2 flex flex-col gap-1 text-xs">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-medium text-gray-500 dark:text-gray-400">API Key:</span>
                 {apiKeysLoading ? (
                   <span className="text-gray-400 dark:text-gray-500">加载中...</span>
                 ) : apiKeys.length > 0 ? (
-                  <select
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    className="max-w-[280px] truncate rounded bg-blue-100 px-2 py-0.5 font-mono text-blue-700 outline-none dark:bg-blue-900/30 dark:text-blue-300"
-                  >
-                    {apiKeys.map((k) => (
-                      <option key={k} value={k} className="font-mono">
-                        {k}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="w-fit max-w-[420px]">
+                    <Select
+                      value={apiKey}
+                      onChange={(val) => {
+                        const next = String(val)
+                        setApiKey(next)
+                        writeCachedApiKey(user?.id, next)
+                      }}
+                      options={apiKeys.map((k) => {
+                        const item = apiKeyItems.find((it) => it.key === k)
+                        const keyPreview = k.length > 20 ? `${k.slice(0, 8)}…${k.slice(-8)}` : k
+                        const parts: string[] = []
+                        if (item?.name) parts.push(`名称: ${item.name}`)
+                        if (item?.groupName) parts.push(`分组: ${item.groupName}`)
+                        parts.push(`Key: ${keyPreview}`)
+                        return { label: parts.join('  '), value: k }
+                      })}
+                      className={`${selectClass} font-mono`}
+                    />
+                  </div>
                 ) : (
-                  <span className="rounded bg-blue-100 px-2 py-0.5 font-mono text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                  <span className="rounded-xl border border-gray-200/60 bg-white/50 px-3 py-1.5 font-mono text-xs text-gray-500 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400">
                     {apiKeysError ? `加载失败: ${apiKeysError}` : '(未获取到)'}
                   </span>
                 )}
 
-                <span className="ml-2 font-medium text-gray-500 dark:text-gray-400">Balance:</span>
-                <span className="rounded bg-green-100 px-2 py-0.5 font-mono text-green-700 dark:bg-green-900/30 dark:text-green-300">
+                <span className="ml-2 font-medium text-gray-500 dark:text-gray-400">余额:</span>
+                <span className="rounded-xl border border-gray-200/60 bg-white/50 px-3 py-1.5 font-mono text-xs text-gray-700 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200">
                   {balanceLoading ? '加载中...' : balance || '(未获取到)'}
                 </span>
 
                 <span className="ml-2 font-medium text-gray-500 dark:text-gray-400">模型:</span>
                 {modelsLoading ? (
                   <span className="text-gray-400 dark:text-gray-500">加载中...</span>
-                ) : models.length > 0 ? (
-                  <select
-                    value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
-                    className="max-w-[260px] truncate rounded bg-purple-100 px-2 py-0.5 font-mono text-purple-700 outline-none dark:bg-purple-900/30 dark:text-purple-300"
-                  >
-                    {/* 当 gpt-image-2 不在 /v1/models 返回中时，仍然兜底提供该选项作为默认值 */}
-                    {!models.some((m) => m.id === selectedModel) && (
-                      <option value={selectedModel} className="font-mono">
-                        {selectedModel}
-                      </option>
-                    )}
-                    {models.map((m) => (
-                      <option key={m.id} value={m.id} className="font-mono">
-                        {m.id}
-                      </option>
-                    ))}
-                  </select>
                 ) : (
-                  <select
-                    value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
-                    className="max-w-[260px] truncate rounded bg-purple-100 px-2 py-0.5 font-mono text-purple-700 outline-none dark:bg-purple-900/30 dark:text-purple-300"
-                  >
-                    <option value="gpt-image-2" className="font-mono">gpt-image-2</option>
-                  </select>
+                  <div className="w-fit max-w-[260px]">
+                    <Select
+                      value={selectedModel}
+                      onChange={(val) => setSelectedModel(String(val))}
+                      options={(() => {
+                        const list = models.length > 0
+                          ? models.map((m) => ({ label: m.id, value: m.id }))
+                          : [{ label: 'gpt-image-2', value: 'gpt-image-2' }]
+                        // 当当前选中值不在列表中时，兵底插入一项，保留默认选择
+                        if (selectedModel && !list.some((o) => o.value === selectedModel)) {
+                          return [{ label: selectedModel, value: selectedModel }, ...list]
+                        }
+                        return list
+                      })()}
+                      className={`${selectClass} font-mono`}
+                    />
+                  </div>
                 )}
               </div>
             </div>
