@@ -26,6 +26,7 @@ type PublicProfile struct {
 	Email        string                 `json:"email,omitempty"`
 	Name         string                 `json:"name,omitempty"`
 	PictureURL   string                 `json:"picture_url,omitempty"`
+	IsAdmin      bool                   `json:"is_admin,omitempty"`
 	Claims       map[string]interface{} `json:"claims,omitempty"`
 }
 
@@ -35,7 +36,7 @@ func (u *User) ToPublicProfile() PublicProfile {
 	if len(u.RawClaims) > 0 {
 		json.Unmarshal(u.RawClaims, &claims)
 	}
-	
+
 	return PublicProfile{
 		ID:           u.ID,
 		OIDCProvider: u.OIDCProvider,

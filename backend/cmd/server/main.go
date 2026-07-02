@@ -63,7 +63,7 @@ func main() {
 	// 5. JWT manager / repo / service
 	jwtMgr := appjwt.NewManager(cfg.JWT)
 	userRepo := database.NewUserRepository(db)
-	authSvc := services.NewAuthService(registry, userRepo, jwtMgr)
+	authSvc := services.NewAuthService(registry, userRepo, jwtMgr, cfg.Admin)
 
 	// 6. gin 引擎
 	if cfg.Server.Environment == "production" {

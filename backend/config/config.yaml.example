@@ -26,6 +26,12 @@ jwt:
   expire_hours: 24
   refresh_hours: 168              # 7 天
 
+# 管理员身份配置：命中 emails 的账号会在 /auth/user 返回 is_admin=true，
+# 前端凭此开放管理员专属提示/入口（例如新版本 NEW 徽标）。留空表示无管理员。
+admin:
+  emails: []
+    # - admin@example.com
+
 oidc:
   providers:
     # 通用 OIDC 提供商（标准 OIDC discovery 协议即可）

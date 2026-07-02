@@ -77,8 +77,10 @@ func (h *AuthHandler) Callback(c *gin.Context) {
 
 	if h.frontendURL == "" {
 		// 没配置前端回跳地址：直接返回 JSON
+		profile := result.User.ToPublicProfile()
+		profile.IsAdmin = h.svc.IsAdmin(result.User)
 		c.JSON(http.StatusOK, gin.H{
-			"user":   result.User.ToPublicProfile(),
+			"user":   profile,
 			"tokens": result.Tokens,
 		})
 		return
@@ -163,7 +165,9 @@ func (h *AuthHandler) GetUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError, "message": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, user.ToPublicProfile())
+	profile := user.ToPublicProfile()
+	profile.IsAdmin = h.svc.IsAdmin(user)
+	c.JSON(http.StatusOK, profile)
 }
 
 // Logout POST /auth/logout

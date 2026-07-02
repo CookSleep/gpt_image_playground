@@ -11,6 +11,7 @@ import (
 	"gpt-image-backend/internal/auth"
 	"gpt-image-backend/internal/database"
 	"gpt-image-backend/internal/models"
+	"gpt-image-backend/pkg/config"
 	appjwt "gpt-image-backend/pkg/jwt"
 )
 
@@ -20,16 +21,26 @@ type AuthService struct {
 	users    *database.UserRepository
 	jwtMgr   *appjwt.Manager
 	states   *auth.StateStore
+	admin    config.AdminConfig
 }
 
 // NewAuthService 构造 AuthService
-func NewAuthService(reg *auth.ProviderRegistry, users *database.UserRepository, jwtMgr *appjwt.Manager) *AuthService {
+func NewAuthService(reg *auth.ProviderRegistry, users *database.UserRepository, jwtMgr *appjwt.Manager, admin config.AdminConfig) *AuthService {
 	return &AuthService{
 		registry: reg,
 		users:    users,
 		jwtMgr:   jwtMgr,
 		states:   auth.NewStateStore(10 * time.Minute),
+		admin:    admin,
 	}
+}
+
+// IsAdmin 判断某个用户是否是管理员（按 email，配置里 admin.emails 命中即为 true）
+func (s *AuthService) IsAdmin(user *models.User) bool {
+	if user == nil {
+		return false
+	}
+	return s.admin.IsAdminEmail(user.Email)
 }
 
 // ListProviders 返回可用的 OIDC 提供商

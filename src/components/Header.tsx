@@ -9,6 +9,7 @@ import HistoryModal from './HistoryModal'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
 import { EditIcon, HelpCircleIcon, HistoryIcon, InstallIcon, SettingsIcon } from './icons'
 import UserMenu from '../auth/UserMenu'
+import { useAuth } from '../auth/AuthContext'
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -34,6 +35,9 @@ export default function Header() {
   const favoriteCollectionTitle = useFavoriteCollectionTitle()
   const showFavoriteCollectionTitle = appMode === 'gallery' && Boolean(activeFavoriteCollectionId)
   const { hasUpdate, latestRelease, dismiss } = useVersionCheck()
+  // 新版本 NEW 徽标只给管理员看：普通用户/未登录/未启用认证都不显示
+  const { user } = useAuth()
+  const showUpdateBadge = hasUpdate && !!latestRelease && !!user?.is_admin
   const [showHelp, setShowHelp] = useState(false)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [isPwaInstalled, setIsPwaInstalled] = useState(isInstalledPwa)
@@ -169,14 +173,14 @@ export default function Header() {
                   OpenToken Images
                 </a>
               )}
-              {hasUpdate && latestRelease && (
+              {showUpdateBadge && (
                 <a
-                  href={latestRelease.url}
+                  href={latestRelease!.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={dismiss}
                   className="absolute -right-1 -top-1 translate-x-full -translate-y-1/4 px-1 py-0.5 rounded-[4px] border border-red-500/30 text-[9px] font-black bg-red-500 text-white hover:bg-red-600 transition-all animate-fade-in leading-none shadow-sm"
-                  title={`新版本 ${latestRelease.tag}`}
+                  title={`新版本 ${latestRelease!.tag}`}
                 >
                   NEW
                 </a>

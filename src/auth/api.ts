@@ -32,6 +32,8 @@ export type PublicUser = {
   email?: string
   name?: string
   picture_url?: string
+  /** 后端根据 admin.emails 配置判定；仅管理员可见的入口/提示以此为准 */
+  is_admin?: boolean
   claims?: Record<string, any>
 }
 

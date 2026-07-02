@@ -16,6 +16,28 @@ type Config struct {
 	Database DatabaseConfig `yaml:"database"`
 	JWT      JWTConfig      `yaml:"jwt"`
 	OIDC     OIDCConfig     `yaml:"oidc"`
+	Admin    AdminConfig    `yaml:"admin"`
+}
+
+// AdminConfig 管理员身份配置
+// emails 里的邮箱（大小写不敏感）会在 /auth/user 返回时被标记 is_admin=true，
+// 仅用于放开管理员专属的前端提示/入口（例如新版本 NEW 徽标）。
+type AdminConfig struct {
+	Emails []string `yaml:"emails"`
+}
+
+// IsAdminEmail 判断给定邮箱是否属于管理员，大小写不敏感，空邮箱始终返回 false
+func (a AdminConfig) IsAdminEmail(email string) bool {
+	if email == "" {
+		return false
+	}
+	target := strings.ToLower(strings.TrimSpace(email))
+	for _, e := range a.Emails {
+		if strings.EqualFold(strings.TrimSpace(e), target) {
+			return true
+		}
+	}
+	return false
 }
 
 // ServerConfig 服务器配置
