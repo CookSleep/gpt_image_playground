@@ -388,6 +388,8 @@ export default function InputBar() {
   const prompt = useStore((s) => s.prompt)
   const appMode = useStore((s) => s.appMode)
   const setPrompt = useStore((s) => s.setPrompt)
+  const batchMode = useStore((s) => s.batchMode)
+  const setBatchMode = useStore((s) => s.setBatchMode)
   const inputImages = useStore((s) => s.inputImages)
   const addInputImage = useStore((s) => s.addInputImage)
   const replaceInputImage = useStore((s) => s.replaceInputImage)
@@ -624,6 +626,7 @@ export default function InputBar() {
   const [isSingleLine, setIsSingleLine] = useState(true)
   const [submitHover, setSubmitHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
+  const [batchHover, setBatchHover] = useState(false)
   const [imageHintId, setImageHintId] = useState<string | null>(null)
   const [mobileCollapsed, setMobileCollapsed] = useState(false)
   const [showSizePicker, setShowSizePicker] = useState(false)
@@ -718,7 +721,9 @@ export default function InputBar() {
     ? maskDraft ? '遮罩编辑' : '生成图像'
     : '请先配置 API'
   const submitTooltipText = activeAgentIsRunning ? '停止生成' : '尚未完成 API 配置，请在右上角设置中进行'
-  const promptPlaceholder = '描述你想生成的图片，可输入 @ 来指定参考图...'
+  const promptPlaceholder = batchMode
+    ? '批量模式：每行一个提示词，将分别生成...'
+    : '描述你想生成的图片，可输入 @ 来指定参考图...'
   const submitCurrentMode = useCallback(() => {
     if (appMode === 'agent') {
       void submitAgentMessage()
@@ -2101,6 +2106,28 @@ export default function InputBar() {
               {renderParams('grid-cols-6')}
 
               <div className="flex gap-2 flex-shrink-0 mb-0.5">
+                {appMode === 'gallery' && (
+                  <div
+                    className="relative"
+                    onMouseEnter={() => setBatchHover(true)}
+                    onMouseLeave={() => setBatchHover(false)}
+                  >
+                    <ButtonTooltip visible={batchHover} text={batchMode ? '关闭批量模式' : '开启批量模式（每行一个提示词）'} />
+                    <button
+                      onClick={() => setBatchMode(!batchMode)}
+                      className={`p-2.5 rounded-xl transition-all shadow-sm ${
+                        batchMode
+                          ? 'bg-blue-500 text-white hover:bg-blue-600'
+                          : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300 hover:shadow'
+                      }`}
+                      aria-label={batchMode ? '关闭批量模式' : '开启批量模式'}
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
                 <div
                   className="relative"
                   onMouseEnter={() => setAttachHover(true)}

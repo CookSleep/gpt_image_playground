@@ -796,6 +796,8 @@ interface AppState {
   // 输入
   prompt: string
   setPrompt: (p: string) => void
+  batchMode: boolean
+  setBatchMode: (v: boolean) => void
   inputImages: InputImage[]
   addInputImage: (img: InputImage) => void
   replaceInputImage: (idx: number, img: InputImage) => void
@@ -1278,6 +1280,8 @@ export const useStore = create<AppState>()(
       // Input
       prompt: '',
       setPrompt: (prompt) => set((s) => syncActiveInputDraft(s, { prompt })),
+      batchMode: false,
+      setBatchMode: (batchMode) => set({ batchMode }),
       inputImages: [],
       addInputImage: (img) =>
         set((s) => {
@@ -2331,7 +2335,7 @@ export async function initStore() {
 
 /** 提交新任务 */
 export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean } = {}) {
-  const { settings, prompt, inputImages, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, showToast, setConfirmDialog } =
+  const { settings, prompt, inputImages, maskDraft, params, batchMode, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, showToast, setConfirmDialog } =
     useStore.getState()
 
   const normalizedSettings = normalizeSettings(settings)
@@ -2371,6 +2375,11 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     return
   }
 
+  // 批量模式：按行拆分提示词
+  const promptLines = batchMode
+    ? prompt.split('\n').map(line => line.trim()).filter(line => line.length > 0)
+    : [prompt.trim()]
+
   let orderedInputImages = inputImages
   let maskImageId: string | null = null
   let maskTargetImageId: string | null = null
@@ -2408,46 +2417,62 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     await storeImage(img.dataUrl)
   }
 
-  const normalizedParams = normalizeParamsForSettings(params, requestSettings, { hasInputImages: orderedInputImages.length > 0 })
-  const shouldUseTransparentOutput = normalizedParams.output_format === 'png' && normalizedParams.transparent_output
-  const taskParams = shouldUseTransparentOutput
-    ? getTransparentRequestParams(normalizedParams)
-    : { ...normalizedParams, transparent_output: false }
-  const transparentMeta = taskParams.transparent_output
-    ? createTransparentOutputMeta(prompt.trim())
-    : null
-  const normalizedParamPatch = getChangedParams(params, taskParams)
+  // 构建任务的 helper 函数
+  const buildTaskFor = (promptText: string): TaskRecord => {
+    const normalizedParams = normalizeParamsForSettings(params, requestSettings, { hasInputImages: orderedInputImages.length > 0 })
+    const shouldUseTransparentOutput = normalizedParams.output_format === 'png' && normalizedParams.transparent_output
+    const taskParams = shouldUseTransparentOutput
+      ? getTransparentRequestParams(normalizedParams)
+      : { ...normalizedParams, transparent_output: false }
+    const transparentMeta = taskParams.transparent_output
+      ? createTransparentOutputMeta(promptText)
+      : null
+
+    const taskId = genId()
+    return {
+      id: taskId,
+      prompt: promptText,
+      params: taskParams,
+      apiProvider: activeProfile.provider,
+      apiProfileId: activeProfile.id,
+      apiProfileName: activeProfile.name,
+      apiMode: activeProfile.apiMode,
+      apiModel: activeProfile.model,
+      inputImageIds: orderedInputImages.map((i) => i.id),
+      maskTargetImageId,
+      maskImageId,
+      transparentOutput: transparentMeta?.transparentOutput,
+      transparentPrompt: transparentMeta?.effectivePrompt,
+      outputImages: [],
+      status: 'running',
+      error: null,
+      createdAt: Date.now(),
+      finishedAt: null,
+      elapsed: null,
+    }
+  }
+
+  // 为所有提示词创建任务
+  const newTasks = promptLines.map(promptText => buildTaskFor(promptText))
+
+  // 归一化参数并同步到 store（仅从第一个任务提取）
+  const normalizedParamPatch = getChangedParams(params, newTasks[0].params)
   if (Object.keys(normalizedParamPatch).length) {
     useStore.getState().setParams(normalizedParamPatch)
   }
 
-  const taskId = genId()
-  const task: TaskRecord = {
-    id: taskId,
-    prompt: prompt.trim(),
-    params: taskParams,
-    apiProvider: activeProfile.provider,
-    apiProfileId: activeProfile.id,
-    apiProfileName: activeProfile.name,
-    apiMode: activeProfile.apiMode,
-    apiModel: activeProfile.model,
-    inputImageIds: orderedInputImages.map((i) => i.id),
-    maskTargetImageId,
-    maskImageId,
-    transparentOutput: transparentMeta?.transparentOutput,
-    transparentPrompt: transparentMeta?.effectivePrompt,
-    outputImages: [],
-    status: 'running',
-    error: null,
-    createdAt: Date.now(),
-    finishedAt: null,
-    elapsed: null,
+  const latestTasks = useStore.getState().tasks
+  useStore.getState().setTasks([...newTasks, ...latestTasks])
+
+  // 持久化所有任务
+  for (const task of newTasks) {
+    await putTask(task)
   }
 
-  const latestTasks = useStore.getState().tasks
-  useStore.getState().setTasks([task, ...latestTasks])
-  await putTask(task)
-  useStore.getState().showToast('任务已提交', 'success')
+  useStore.getState().showToast(
+    newTasks.length === 1 ? '任务已提交' : `已提交 ${newTasks.length} 个任务`,
+    'success'
+  )
 
   if (settings.clearInputAfterSubmit) {
     useStore.getState().setPrompt('')
@@ -2455,8 +2480,10 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   }
   useStore.getState().setReusedTaskApiProfile(null)
 
-  // 异步调用 API
-  executeTask(taskId)
+  // 并发执行所有任务
+  for (const task of newTasks) {
+    executeTask(task.id)
+  }
 }
 
 function getActiveAgentConversation(): AgentConversation {
