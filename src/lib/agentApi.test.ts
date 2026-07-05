@@ -51,6 +51,33 @@ describe('callAgentResponsesApi', () => {
     })
   })
 
+  it('tracks Agent Responses requests with x-client-request-id', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_tracked',
+      output: [],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const tracked: Array<{ requestId: string }> = []
+    const profile = createDefaultOpenAIProfile({
+      apiKey: 'test-key',
+      apiMode: 'responses',
+    })
+
+    await callAgentResponsesApi({
+      settings: DEFAULT_SETTINGS,
+      profile,
+      params: DEFAULT_PARAMS,
+      input: 'prompt',
+      onImageStatusRequestCreated: (request) => tracked.push(request),
+    })
+
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>
+    expect(headers['x-client-request-id']).toMatch(/^img_/)
+    expect(tracked).toEqual([{ requestId: headers['x-client-request-id'] }])
+  })
+
   it('reports failed image output item without aborting the ongoing stream', async () => {
     const streamBody = [
       'data: {"type":"response.output_item.added","item":{"id":"ig_fail","type":"image_generation_call","status":"in_progress"},"output_index":0}',

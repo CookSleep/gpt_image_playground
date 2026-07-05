@@ -19,6 +19,7 @@ export interface CallApiOptions {
   maskDataUrl?: string
   onFalRequestEnqueued?: (request: { requestId: string; endpoint: string }) => void
   onCustomTaskEnqueued?: (task: { taskId: string }) => void
+  onImageStatusRequestCreated?: (request: { requestId: string; requestIndex?: number }) => void
   onPartialImage?: (partial: { image: string; partialImageIndex?: number; requestIndex?: number }) => void
 }
 
@@ -47,6 +48,20 @@ export function isDataUrl(value: unknown): value is string {
 
 export function normalizeBase64Image(value: string, fallbackMime: string): string {
   return value.startsWith('data:') ? value : `data:${fallbackMime};base64,${value}`
+}
+
+export function createImageStatusRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `img_${crypto.randomUUID().replace(/-/g, '')}`
+  }
+
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16)
+    crypto.getRandomValues(bytes)
+    return `img_${Array.from(bytes).map((byte) => byte.toString(16).padStart(2, '0')).join('')}`
+  }
+
+  return `img_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`
 }
 
 function formatMiB(bytes: number): string {

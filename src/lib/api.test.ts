@@ -79,6 +79,60 @@ describe('callImageApi', () => {
     expect(body.prompt).toBe('prompt')
   })
 
+  it('tracks Images API generation requests with x-client-request-id', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      data: [{ b64_json: 'aW1hZ2U=' }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const tracked: Array<{ requestId: string }> = []
+
+    await callImageApi({
+      settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+      onImageStatusRequestCreated: (request) => tracked.push(request),
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const headers = (init as RequestInit).headers as Record<string, string>
+    expect(headers['x-client-request-id']).toMatch(/^img_/)
+    expect(tracked).toEqual([{ requestId: headers['x-client-request-id'] }])
+  })
+
+  it('tracks Images API edit requests with x-client-request-id', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).startsWith('data:')) {
+        return new Response(new Blob(['input'], { type: 'image/png' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({
+        data: [{ b64_json: 'aW1hZ2U=' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    const tracked: Array<{ requestId: string }> = []
+
+    await callImageApi({
+      settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: ['data:image/png;base64,aW5wdXQ='],
+      onImageStatusRequestCreated: (request) => tracked.push(request),
+    })
+
+    const apiCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/images/edits'))
+    expect(apiCall).toBeTruthy()
+    const [url, init] = apiCall!
+    const headers = (init as RequestInit).headers as Record<string, string>
+    expect(String(url)).toContain('/images/edits')
+    expect(headers['x-client-request-id']).toMatch(/^img_/)
+    expect(tracked).toEqual([{ requestId: headers['x-client-request-id'] }])
+  })
+
   it('records actual params returned on Images API responses in Codex CLI mode', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       output_format: 'png',
@@ -512,6 +566,33 @@ describe('callImageApi', () => {
     expect(result.actualParams).toMatchObject({ n: 2 })
   })
 
+  it('tracks concurrent Responses API image requests with request indexes', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      output: [{ type: 'image_generation_call', result: 'aW1hZ2U=' }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const tracked: Array<{ requestId: string; requestIndex?: number }> = []
+
+    await callImageApi({
+      settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key', apiMode: 'responses' },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS, n: 2 },
+      inputImageDataUrls: [],
+      onImageStatusRequestCreated: (request) => tracked.push(request),
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(tracked.map((request) => request.requestIndex)).toEqual([0, 1])
+    for (let i = 0; i < fetchMock.mock.calls.length; i += 1) {
+      const [, init] = fetchMock.mock.calls[i]
+      const headers = (init as RequestInit).headers as Record<string, string>
+      expect(headers['x-client-request-id']).toBe(tracked[i].requestId)
+      expect(headers['x-client-request-id']).toMatch(/^img_/)
+    }
+  })
+
   it('parses Responses API image result objects in gallery mode', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       output: [{
@@ -599,7 +680,7 @@ describe('callImageApi', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api-proxy/images/generations',
+      '/api/images/generations',
       expect.objectContaining({ method: 'POST' }),
     )
   })
@@ -626,7 +707,7 @@ describe('callImageApi', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api-proxy/images/generations',
+      '/api/images/generations',
       expect.objectContaining({ method: 'POST' }),
     )
   })
@@ -675,7 +756,7 @@ describe('callImageApi', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api-proxy/custom/images',
+      '/api/custom/images',
       expect.objectContaining({ method: 'POST' }),
     )
   })
@@ -753,7 +834,7 @@ describe('callImageApi', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api-proxy/images/generations',
+      '/api/images/generations',
       expect.objectContaining({ method: 'POST' }),
     )
   })
@@ -780,7 +861,7 @@ describe('callImageApi', () => {
     expect((init as RequestInit).cache).toBe('no-store')
   })
 
-  it('ignores stored API proxy settings when the current deployment has no proxy', async () => {
+  it('uses the same-origin API proxy when the current dev deployment provides one', async () => {
     vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       data: [{ b64_json: 'aW1hZ2U=' }],
@@ -802,7 +883,7 @@ describe('callImageApi', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://api.example.com/v1/images/generations',
+      '/api/images/generations',
       expect.objectContaining({ method: 'POST' }),
     )
   })

@@ -418,7 +418,7 @@ function AtImageOptionThumb({ option }: { option: AtImageOption }) {
 }
 
 export default function InputBar() {
-  const { user, refreshUser } = useAuth()
+  const { user } = useAuth()
   const [apiKeys, setApiKeys] = useState<string[]>([])
   const [apiKeyItems, setApiKeyItems] = useState<ApiKeyItem[]>([])
   const [apiKey, setApiKey] = useState<string>('')
@@ -463,15 +463,10 @@ export default function InputBar() {
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
   const searchQuery = useStore((s) => s.searchQuery)
 
-  // 进入页面时拉取一次：先 refreshUser（保持鉴权状态），再从 OIDC provider 拉 api-keys 列表
+  // 进入页面时拉取一次 OIDC provider 的 api-keys 列表；用户态由 AuthProvider 统一维护
   useEffect(() => {
     let cancelled = false
     const run = async () => {
-      try {
-        await refreshUser()
-      } catch (err) {
-        console.error('Failed to refresh user:', err)
-      }
       if (cancelled) return
       setApiKeysLoading(true)
       setApiKeysError('')
@@ -564,6 +559,7 @@ export default function InputBar() {
 
   // 监听任务完成时间推进，刷新 Balance；避免任务列表其它更新取消掉刷新请求。
   const lastSeenFinishedAtRef = useRef<number>(0)
+  const balanceRefreshInitializedRef = useRef(false)
   const balanceRefreshSeqRef = useRef<number>(0)
   useEffect(() => {
     if (!apiKey) return
@@ -571,6 +567,11 @@ export default function InputBar() {
       (latest, t) => t.finishedAt && t.finishedAt > latest ? t.finishedAt : latest,
       0,
     )
+    if (!balanceRefreshInitializedRef.current) {
+      balanceRefreshInitializedRef.current = true
+      lastSeenFinishedAtRef.current = latestFinishedAt
+      return
+    }
     if (latestFinishedAt <= lastSeenFinishedAtRef.current) return
     lastSeenFinishedAtRef.current = latestFinishedAt
     const seq = ++balanceRefreshSeqRef.current

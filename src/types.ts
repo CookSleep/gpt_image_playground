@@ -187,6 +187,10 @@ export interface TaskRecord {
   customTaskId?: string
   /** 自定义异步任务是否等待自动恢复 */
   customRecoverable?: boolean
+  /** 图片状态查询 request_id 列表，用于重启后继续查询结果 */
+  imageStatusRequestIds?: string[]
+  /** 图片状态任务是否等待自动恢复 */
+  imageStatusRecoverable?: boolean
   /** API 返回的实际生效参数，用于标记与请求值不一致的情况 */
   actualParams?: Partial<TaskParams>
   /** 输出图片对应的实际生效参数，key 为 outputImages 中的图片 id */
@@ -274,6 +278,12 @@ export interface AgentRound {
   maskTargetImageId?: string | null
   maskImageId?: string | null
   outputTaskIds: string[]
+  /** Agent 主 Responses 请求的图片状态查询 request_id 列表 */
+  imageStatusRequestIds?: string[]
+  /** Agent 主 Responses 请求是否等待图片状态恢复 */
+  imageStatusRecoverable?: boolean
+  /** 发起 Agent 主 Responses 请求时使用的 API 配置 ID */
+  imageStatusApiProfileId?: string
   responseId?: string
   responseOutput?: ResponsesOutputItem[]
   status: AgentRoundStatus

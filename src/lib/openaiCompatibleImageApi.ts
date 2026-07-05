@@ -5,6 +5,7 @@ import {
   assertImageInputPayloadSize,
   assertMaskEditFileSize,
   appendStreamingFormatHint,
+  createImageStatusRequestId,
   maybeAppendStreamingHint,
   type CallApiOptions,
   type CallApiResult,
@@ -508,6 +509,9 @@ async function callImagesApiConcurrent(opts: CallApiOptions, profile: ApiProfile
   const results = await Promise.allSettled(
     Array.from({ length: n }).map((_, requestIndex) => callImagesApiSingle({
       ...singleOpts,
+      onImageStatusRequestCreated: opts.onImageStatusRequestCreated
+        ? (request) => opts.onImageStatusRequestCreated?.({ ...request, requestIndex })
+        : undefined,
       onPartialImage: opts.onPartialImage
         ? (partial) => opts.onPartialImage?.({ ...partial, requestIndex })
         : undefined,
@@ -560,6 +564,8 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
   const requestHeaders = createRequestHeaders(profile)
+  const imageStatusRequestId = createImageStatusRequestId()
+  opts.onImageStatusRequestCreated?.({ requestId: imageStatusRequestId })
   const paths = createOpenAICompatiblePaths()
 
   const controller = new AbortController()
@@ -624,7 +630,10 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
 
       response = await fetch(buildApiUrl(profile.baseUrl, paths.editPath, proxyConfig, useApiProxy), {
         method: 'POST',
-        headers: requestHeaders,
+        headers: {
+          ...requestHeaders,
+          'x-client-request-id': imageStatusRequestId,
+        },
         cache: 'no-store',
         body: formData,
         signal: controller.signal,
@@ -660,6 +669,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
         method: 'POST',
         headers: {
           ...requestHeaders,
+          'x-client-request-id': imageStatusRequestId,
           'Content-Type': 'application/json',
         },
         cache: 'no-store',
@@ -993,6 +1003,9 @@ async function callResponsesImageApi(opts: CallApiOptions, profile: ApiProfile):
 
   const promises = Array.from({ length: n }).map((_, requestIndex) => callResponsesImageApiSingle({
     ...opts,
+    onImageStatusRequestCreated: opts.onImageStatusRequestCreated
+      ? (request) => opts.onImageStatusRequestCreated?.({ ...request, requestIndex })
+      : undefined,
     onPartialImage: opts.onPartialImage
       ? (partial) => opts.onPartialImage?.({ ...partial, requestIndex })
       : undefined,
@@ -1041,6 +1054,8 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
   const requestHeaders = createRequestHeaders(profile)
+  const imageStatusRequestId = createImageStatusRequestId()
+  opts.onImageStatusRequestCreated?.({ requestId: imageStatusRequestId })
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
 
@@ -1068,6 +1083,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
       method: 'POST',
       headers: {
         ...requestHeaders,
+        'x-client-request-id': imageStatusRequestId,
         'Content-Type': 'application/json',
       },
       cache: 'no-store',

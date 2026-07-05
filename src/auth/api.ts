@@ -20,6 +20,10 @@ export const OIDC_TOKEN_EXPIRY_KEY = 'auth.oidc_access_token_expire_at'
 
 /** 预刷提前量（秒）：距过期还剩不足这么多就算“快过期” */
 const OIDC_REFRESH_SKEW_SEC = 60
+const FETCH_USER_CACHE_MS = 1000
+
+let fetchUserInFlight: { token: string; promise: Promise<PublicUser | null> } | null = null
+let fetchUserCache: { token: string; value: PublicUser | null; expiresAt: number } | null = null
 
 export type Provider = {
   name: string
@@ -243,10 +247,34 @@ export function startLogin(providerName: string) {
 
 /** 取当前用户资料 */
 export async function fetchUser(): Promise<PublicUser | null> {
-  const resp = await authFetch('/auth/user')
-  if (resp.status === 401 || resp.status === 404) return null
-  if (!resp.ok) throw new Error(`fetch user: ${resp.status}`)
-  return (await resp.json()) as PublicUser
+  const token = getAccessToken() ?? ''
+  if (token && fetchUserCache?.token === token && fetchUserCache.expiresAt > Date.now()) {
+    return fetchUserCache.value
+  }
+  if (token && fetchUserInFlight?.token === token) return fetchUserInFlight.promise
+
+  const promise = (async () => {
+    const resp = await authFetch('/auth/user')
+    if (resp.status === 401 || resp.status === 404) return null
+    if (!resp.ok) throw new Error(`fetch user: ${resp.status}`)
+    return (await resp.json()) as PublicUser
+  })()
+
+  if (token) fetchUserInFlight = { token, promise }
+  try {
+    const value = await promise
+    const latestToken = getAccessToken() ?? token
+    if (latestToken) {
+      fetchUserCache = {
+        token: latestToken,
+        value,
+        expiresAt: Date.now() + FETCH_USER_CACHE_MS,
+      }
+    }
+    return value
+  } finally {
+    if (fetchUserInFlight?.promise === promise) fetchUserInFlight = null
+  }
 }
 
 /** 刷新 token，失败返回 null 并清掉本地 token */

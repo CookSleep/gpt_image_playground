@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAuthBaseUrl, isAuthEnabled } from './api'
+import { ACCESS_TOKEN_KEY, fetchUser, getAuthBaseUrl, isAuthEnabled } from './api'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -30,5 +30,29 @@ describe('isAuthEnabled / getAuthBaseUrl 三态', () => {
     vi.stubGlobal('window', { __APP_CONFIG__: { AUTH_BACKEND_URL: 'https://api.example.com/' } })
     expect(isAuthEnabled()).toBe(true)
     expect(getAuthBaseUrl()).toBe('https://api.example.com')
+  })
+})
+
+describe('fetchUser', () => {
+  it('复用同 token 的并发 /auth/user 请求', async () => {
+    const storage = new Map<string, string>([[ACCESS_TOKEN_KEY, 'token-a']])
+    vi.stubGlobal('window', { __APP_CONFIG__: { AUTH_BACKEND_URL: '' } })
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key: string) => storage.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
+      removeItem: vi.fn((key: string) => storage.delete(key)),
+    })
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: 'user-a', oidc_provider: 'oidc' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const [first, second] = await Promise.all([fetchUser(), fetchUser()])
+
+    expect(first?.id).toBe('user-a')
+    expect(second?.id).toBe('user-a')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith('/auth/user', expect.any(Object))
   })
 })

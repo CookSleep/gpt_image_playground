@@ -45,9 +45,10 @@ import { callImageApi } from './lib/api'
 import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
 import { showBrowserNotification } from './lib/browserNotification'
-import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
+import { fetchImageUrlAsDataUrl, IMAGE_FETCH_CORS_HINT, MIME_MAP } from './lib/imageApiShared'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
+import { queryImageStatuses, type ImageStatusRecord } from './lib/imageStatusApi'
 import { validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
 import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompatibility'
@@ -74,11 +75,14 @@ const MAX_THUMBNAIL_CACHE_ENTRIES = 80
 const MAX_THUMBNAIL_BACKFILL_CONCURRENT = 4
 const FAL_RECOVERY_POLL_MS = 10_000
 const CUSTOM_RECOVERY_POLL_MS = 10_000
+const IMAGE_STATUS_RECOVERY_POLL_MS = 5_000
 const SUPPORT_PROMPT_IMAGE_THRESHOLD = 50
 const AGENT_INPUT_DRAFT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000
 const AGENT_ROUND_IMAGE_MENTION_RE = /@(?:第)?(\d+)轮图(\d+)/g
 const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const customRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const imageStatusRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const agentImageStatusRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const agentRoundControllers = new Map<string, AbortController>()
 let agentConversationPersistenceReady = false
@@ -402,7 +406,11 @@ function normalizeAgentRound(value: unknown, fallbackIndex: number): AgentRound 
   if (typeof round.id !== 'string' || !round.id) return null
   if (typeof round.userMessageId !== 'string' || !round.userMessageId) return null
 
-  const status = round.status === 'running'
+  const imageStatusRequestIds = normalizeStringArray(round.imageStatusRequestIds)
+  const canRecoverRunningRound = imageStatusRequestIds.length > 0
+  const status = round.status === 'running' && canRecoverRunningRound
+    ? 'running'
+    : round.status === 'running'
     ? 'error'
     : round.status === 'error' || round.status === 'done'
     ? round.status
@@ -419,6 +427,9 @@ function normalizeAgentRound(value: unknown, fallbackIndex: number): AgentRound 
     maskTargetImageId: typeof round.maskTargetImageId === 'string' ? round.maskTargetImageId : null,
     maskImageId: typeof round.maskImageId === 'string' ? round.maskImageId : null,
     outputTaskIds: normalizeStringArray(round.outputTaskIds),
+    ...(imageStatusRequestIds.length ? { imageStatusRequestIds } : {}),
+    ...(round.imageStatusRecoverable === true ? { imageStatusRecoverable: true } : {}),
+    ...(typeof round.imageStatusApiProfileId === 'string' ? { imageStatusApiProfileId: round.imageStatusApiProfileId } : {}),
     ...(typeof round.responseId === 'string' ? { responseId: round.responseId } : {}),
     ...(Array.isArray(round.responseOutput) ? { responseOutput: round.responseOutput } : {}),
     status,
@@ -1712,6 +1723,10 @@ function isRunningOpenAITask(task: TaskRecord) {
   return task.status === 'running' && isOpenAITask(task)
 }
 
+function hasImageStatusRequestIds(task: TaskRecord) {
+  return Boolean(task.imageStatusRequestIds?.length)
+}
+
 function isAsyncCustomProviderTask(settings: AppSettings, provider: string, hasInputImages: boolean) {
   const customProvider = getCustomProviderDefinition(settings, provider)
   if (!customProvider?.poll) return false
@@ -1722,13 +1737,14 @@ function isAsyncCustomProviderTask(settings: AppSettings, provider: string, hasI
 export function markInterruptedOpenAIRunningTasks(tasks: TaskRecord[], now = Date.now()) {
   const interruptedTasks: TaskRecord[] = []
   const updatedTasks = tasks.map((task) => {
-    if (!isRunningOpenAITask(task) || task.customTaskId) return task
+    if (!isRunningOpenAITask(task) || task.customTaskId || hasImageStatusRequestIds(task)) return task
 
     const updated: TaskRecord = {
       ...task,
       status: 'error',
       error: OPENAI_INTERRUPTED_ERROR,
       falRecoverable: false,
+      imageStatusRecoverable: false,
       finishedAt: now,
       elapsed: Math.max(0, now - task.createdAt),
     }
@@ -1753,6 +1769,7 @@ function failOpenAITaskIfStillRunning(taskId: string, error: string, now = Date.
     status: 'error',
     error,
     falRecoverable: false,
+    imageStatusRecoverable: false,
     finishedAt: now,
     elapsed: Math.max(0, now - task.createdAt),
   })
@@ -1779,6 +1796,37 @@ function usesConcurrentOpenAIImageRequests(profile: ApiProfile, params: TaskPara
   if (profile.provider !== 'openai' || n <= 1) return false
   if (profile.apiMode === 'responses') return true
   return profile.apiMode === 'images' && (profile.codexCli || profile.streamImages)
+}
+
+function addImageStatusRequestIdToTask(taskId: string, requestId: string) {
+  const task = useStore.getState().tasks.find((item) => item.id === taskId)
+  if (!task) return
+  const imageStatusRequestIds = task.imageStatusRequestIds?.includes(requestId)
+    ? task.imageStatusRequestIds
+    : [...(task.imageStatusRequestIds ?? []), requestId]
+  updateTaskInStore(taskId, {
+    imageStatusRequestIds,
+    imageStatusRecoverable: false,
+  })
+}
+
+function addImageStatusRequestIdToAgentRound(conversationId: string, roundId: string, requestId: string, profileId?: string) {
+  updateAgentConversation(conversationId, (current) => ({
+    ...current,
+    updatedAt: Date.now(),
+    rounds: current.rounds.map((round) => {
+      if (round.id !== roundId) return round
+      const imageStatusRequestIds = round.imageStatusRequestIds?.includes(requestId)
+        ? round.imageStatusRequestIds
+        : [...(round.imageStatusRequestIds ?? []), requestId]
+      return {
+        ...round,
+        imageStatusRequestIds,
+        imageStatusRecoverable: false,
+        ...(profileId ? { imageStatusApiProfileId: profileId } : {}),
+      }
+    }),
+  }))
 }
 
 export function taskHasOutputErrors(task: Pick<TaskRecord, 'outputErrors'>) {
@@ -1834,6 +1882,20 @@ function getCustomRecoveryProfile(settings: AppSettings, task: TaskRecord) {
   const taskProfile = getTaskApiProfile(settings, task)
   if (taskProfile?.provider === provider) return taskProfile
   return null
+}
+
+function getImageStatusRecoveryProfile(settings: AppSettings, task: TaskRecord) {
+  if ((task.apiProvider ?? 'openai') === 'fal') return null
+  const taskProfile = getTaskApiProfile(settings, task)
+  if (!taskProfile) return null
+  if (task.apiOverride && (task.apiOverride.apiKey || task.apiOverride.model)) {
+    return {
+      ...taskProfile,
+      ...(task.apiOverride.apiKey ? { apiKey: task.apiOverride.apiKey } : {}),
+      ...(task.apiOverride.model ? { model: task.apiOverride.model } : {}),
+    }
+  }
+  return taskProfile
 }
 
 export function getTaskApiProfile(settings: AppSettings, task: TaskRecord): ApiProfile | null {
@@ -1994,6 +2056,42 @@ function scheduleCustomRecovery(taskId: string, delayMs = CUSTOM_RECOVERY_POLL_M
   customRecoveryTimers.set(taskId, timer)
 }
 
+function clearImageStatusRecoveryTimer(taskId: string) {
+  const timer = imageStatusRecoveryTimers.get(taskId)
+  if (timer) clearTimeout(timer)
+  imageStatusRecoveryTimers.delete(taskId)
+}
+
+function scheduleImageStatusRecovery(taskId: string, delayMs = IMAGE_STATUS_RECOVERY_POLL_MS) {
+  if (imageStatusRecoveryTimers.has(taskId)) return
+  const timer = setTimeout(() => {
+    imageStatusRecoveryTimers.delete(taskId)
+    recoverImageStatusTask(taskId)
+  }, delayMs)
+  imageStatusRecoveryTimers.set(taskId, timer)
+}
+
+function getAgentImageStatusRecoveryKey(conversationId: string, roundId: string) {
+  return `${conversationId}:${roundId}`
+}
+
+function clearAgentImageStatusRecoveryTimer(conversationId: string, roundId: string) {
+  const key = getAgentImageStatusRecoveryKey(conversationId, roundId)
+  const timer = agentImageStatusRecoveryTimers.get(key)
+  if (timer) clearTimeout(timer)
+  agentImageStatusRecoveryTimers.delete(key)
+}
+
+function scheduleAgentImageStatusRecovery(conversationId: string, roundId: string, delayMs = IMAGE_STATUS_RECOVERY_POLL_MS) {
+  const key = getAgentImageStatusRecoveryKey(conversationId, roundId)
+  if (agentImageStatusRecoveryTimers.has(key)) return
+  const timer = setTimeout(() => {
+    agentImageStatusRecoveryTimers.delete(key)
+    recoverAgentRoundImageStatus(conversationId, roundId)
+  }, delayMs)
+  agentImageStatusRecoveryTimers.set(key, timer)
+}
+
 function hasActualParams(params: Partial<TaskParams> | undefined): params is Partial<TaskParams> {
   return Boolean(params && Object.keys(params).length > 0)
 }
@@ -2138,6 +2236,558 @@ async function recoverFalTask(taskId: string) {
   }
 }
 
+function getImageStatusUrls(record: ImageStatusRecord) {
+  return record.cosUrls?.length ? record.cosUrls : record.urls ?? []
+}
+
+function getImageStatusFailureMessage(record: ImageStatusRecord) {
+  return record.error || '图像生成失败'
+}
+
+function shouldScheduleTaskImageStatusRecovery(task: TaskRecord, agentRoundRequestIds: Set<string>) {
+  if (!task.imageStatusRequestIds?.length) return false
+  if ((task.apiProvider ?? 'openai') === 'fal') return false
+  if (task.status === 'done') return false
+  if (task.status === 'error' && task.error === AGENT_STOPPED_MESSAGE) return false
+  if (isAgentTask(task) && task.imageStatusRequestIds.some((requestId) => agentRoundRequestIds.has(requestId))) return false
+  return canRecoverTaskImageStatus(task)
+}
+
+function shouldScheduleAgentRoundImageStatusRecovery(conversationId: string, round: AgentRound, tasks: TaskRecord[]) {
+  if (!round.imageStatusRequestIds?.length) return false
+  if (round.status === 'error' && round.error === AGENT_STOPPED_MESSAGE) return false
+  if (getRecoverableAgentRoundImageStatusRequestIds(conversationId, round, tasks).length === 0) return false
+  return canRecoverAgentRoundImageStatus(round)
+}
+
+function canRecoverTaskImageStatus(task: TaskRecord) {
+  return task.status !== 'done' && (task.status === 'running' || task.imageStatusRecoverable === true)
+}
+
+function canRecoverAgentRoundImageStatus(round: AgentRound) {
+  return round.status !== 'done' && (round.status === 'running' || round.imageStatusRecoverable === true)
+}
+
+function getAgentRoundImageStatusTasks(conversationId: string, round: AgentRound, tasks = useStore.getState().tasks) {
+  const requestIds = round.imageStatusRequestIds ?? []
+  return tasks.filter((task) =>
+    task.agentConversationId === conversationId &&
+    task.agentRoundId === round.id &&
+    task.imageStatusRequestIds?.some((requestId) => requestIds.includes(requestId)),
+  )
+}
+
+function getRecoverableAgentRoundImageStatusRequestIds(conversationId: string, round: AgentRound, tasks = useStore.getState().tasks) {
+  return (round.imageStatusRequestIds ?? []).filter((requestId) => {
+    const matchingTasks = tasks.filter((task) =>
+      task.agentConversationId === conversationId &&
+      task.agentRoundId === round.id &&
+      task.imageStatusRequestIds?.includes(requestId),
+    )
+    return matchingTasks.length === 0 || matchingTasks.every(canRecoverTaskImageStatus)
+  })
+}
+
+function getImageStatusTexts(records: ImageStatusRecord[]) {
+  return uniqueIds(records.flatMap((record) => record.texts ?? []).map((text) => text.trim()).filter(Boolean))
+}
+
+function syncAgentConversationsFromTerminalImageStatusTasks(tasks: TaskRecord[]) {
+  for (const task of tasks) {
+    if (
+      isAgentTask(task) &&
+      task.imageStatusRequestIds?.length &&
+      !canRecoverTaskImageStatus(task) &&
+      (task.status === 'done' || task.status === 'error')
+    ) {
+      updateAgentRoundFromImageStatus(task, [], task.error ?? undefined)
+    }
+  }
+}
+
+function recoverAgentConversationsForImageStatus(conversations: AgentConversation[], tasks: TaskRecord[]) {
+  const recoverableTasks = tasks.filter((task) =>
+    isAgentTask(task) &&
+    task.agentConversationId &&
+    task.agentRoundId &&
+    task.imageStatusRequestIds?.length &&
+    (task.status === 'running' || task.imageStatusRecoverable),
+  )
+  if (recoverableTasks.length === 0) return conversations
+
+  let changed = false
+  const tasksByRound = new Map<string, TaskRecord[]>()
+  for (const task of recoverableTasks) {
+    const key = `${task.agentConversationId}:${task.agentRoundId}`
+    tasksByRound.set(key, [...(tasksByRound.get(key) ?? []), task])
+  }
+
+  const next = conversations.map((conversation) => {
+    const roundTasks = conversation.rounds.flatMap((round) => tasksByRound.get(`${conversation.id}:${round.id}`) ?? [])
+    if (roundTasks.length === 0) return conversation
+
+    let messages = conversation.messages
+    const rounds = conversation.rounds.map((round) => {
+      const tasksForRound = tasksByRound.get(`${conversation.id}:${round.id}`) ?? []
+      if (tasksForRound.length === 0) return round
+
+      const existingAssistantMessage = round.assistantMessageId
+        ? messages.find((message) => message.id === round.assistantMessageId)
+        : messages.find((message) => message.roundId === round.id && message.role === 'assistant')
+      const assistantMessageId = existingAssistantMessage?.id ?? tasksForRound.find((task) => task.agentMessageId)?.agentMessageId ?? genId()
+      if (!existingAssistantMessage) {
+        messages = [
+          ...messages,
+          {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: '',
+            roundId: round.id,
+            outputTaskIds: tasksForRound.map((task) => task.id),
+            createdAt: round.createdAt,
+          },
+        ]
+      } else if (!arraysEqual(existingAssistantMessage.outputTaskIds ?? [], uniqueIds([...(existingAssistantMessage.outputTaskIds ?? []), ...tasksForRound.map((task) => task.id)]))) {
+        const outputTaskIds = uniqueIds([...(existingAssistantMessage.outputTaskIds ?? []), ...tasksForRound.map((task) => task.id)])
+        messages = messages.map((message) => message.id === assistantMessageId ? { ...message, outputTaskIds } : message)
+      }
+
+      const outputTaskIds = uniqueIds([...round.outputTaskIds, ...tasksForRound.map((task) => task.id)])
+      if (
+        round.status !== 'running' ||
+        round.error !== null ||
+        round.finishedAt !== null ||
+        round.assistantMessageId !== assistantMessageId ||
+        !arraysEqual(round.outputTaskIds, outputTaskIds)
+      ) {
+        changed = true
+        return {
+          ...round,
+          assistantMessageId,
+          outputTaskIds,
+          status: 'running' as const,
+          error: null,
+          finishedAt: null,
+        }
+      }
+      return round
+    })
+
+    if (messages !== conversation.messages || rounds !== conversation.rounds) changed = true
+    return {
+      ...conversation,
+      updatedAt: Date.now(),
+      rounds,
+      messages,
+    }
+  })
+
+  return changed ? next : conversations
+}
+
+function updateAgentRoundFromImageStatus(task: TaskRecord, records: ImageStatusRecord[], error?: string) {
+  if (!task.agentConversationId || !task.agentRoundId) return
+
+  const texts = getImageStatusTexts(records)
+  const now = Date.now()
+  updateAgentConversation(task.agentConversationId, (current) => {
+    const round = current.rounds.find((item) => item.id === task.agentRoundId)
+    if (!round) return current
+
+    const roundTaskIds = uniqueIds([...round.outputTaskIds, task.id])
+    const roundTasks = roundTaskIds
+      .map((taskId) => useStore.getState().tasks.find((item) => item.id === taskId))
+      .filter((item): item is TaskRecord => Boolean(item))
+    const hasRunningTask = roundTasks.some((item) => item.status === 'running' || item.imageStatusRecoverable)
+    const hasRecoveredOutput = roundTasks.some((item) => item.status === 'done' || item.rawImageUrls?.length)
+    const existingAssistantMessage = round.assistantMessageId
+      ? current.messages.find((message) => message.id === round.assistantMessageId)
+      : current.messages.find((message) => message.roundId === round.id && message.role === 'assistant')
+    const assistantMessageId = existingAssistantMessage?.id ?? task.agentMessageId ?? genId()
+    const existingContent = existingAssistantMessage?.content.trim() ?? ''
+    const textContent = texts.join('\n\n').trim()
+    const finalContent = textContent || existingContent || (hasRunningTask ? '' : hasRecoveredOutput ? '图像已生成。' : `请求失败：${error ?? roundTasks.find((item) => item.error)?.error ?? '图片状态恢复失败'}`)
+    const outputTaskIds = uniqueIds([...(existingAssistantMessage?.outputTaskIds ?? []), ...roundTaskIds])
+    const messages = existingAssistantMessage
+      ? current.messages.map((message) => message.id === assistantMessageId ? { ...message, content: finalContent, outputTaskIds } : message)
+      : [
+          ...current.messages,
+          {
+            id: assistantMessageId,
+            role: 'assistant' as const,
+            content: finalContent,
+            roundId: round.id,
+            outputTaskIds,
+            createdAt: now,
+          },
+        ]
+
+    return {
+      ...current,
+      updatedAt: now,
+      rounds: current.rounds.map((item) =>
+        item.id === round.id
+          ? {
+              ...item,
+              assistantMessageId,
+              outputTaskIds: roundTaskIds,
+              status: hasRunningTask ? 'running' : hasRecoveredOutput ? 'done' : 'error',
+              error: hasRunningTask || hasRecoveredOutput ? null : error ?? roundTasks.find((task) => task.error)?.error ?? '图片状态恢复失败',
+              imageStatusRecoverable: hasRunningTask,
+              finishedAt: hasRunningTask ? null : now,
+            }
+          : item,
+      ),
+      messages,
+    }
+  })
+}
+
+function getAgentRoundImageStatusRecoveryProfile(settings: AppSettings, round: AgentRound) {
+  const normalized = normalizeSettings(settings)
+  const profile = round.imageStatusApiProfileId
+    ? normalized.profiles.find((item) => item.id === round.imageStatusApiProfileId) ?? null
+    : getAgentTextApiProfile(normalized)
+  return profile ? applyOidcOverrideToProfile(profile) : null
+}
+
+async function ensureAgentRoundImageStatusTask(conversation: AgentConversation, round: AgentRound, profile: ApiProfile, requestIds: string[]) {
+  const existingTask = useStore.getState().tasks.find((task) =>
+    task.agentConversationId === conversation.id &&
+    task.agentRoundId === round.id &&
+    task.imageStatusRequestIds?.some((requestId) => requestIds.includes(requestId)),
+  )
+  if (existingTask) return existingTask
+
+  const params = {
+    ...useStore.getState().params,
+    n: 1,
+    transparent_output: false,
+  }
+  const task: TaskRecord = {
+    id: genId(),
+    prompt: round.prompt,
+    params,
+    apiProvider: profile.provider,
+    apiProfileId: profile.id,
+    apiProfileName: profile.name,
+    apiMode: profile.apiMode,
+    apiModel: profile.model,
+    inputImageIds: round.inputImageIds,
+    maskTargetImageId: round.maskTargetImageId ?? null,
+    maskImageId: round.maskImageId ?? null,
+    imageStatusRequestIds: requestIds,
+    imageStatusRecoverable: true,
+    outputImages: [],
+    status: 'running',
+    error: null,
+    createdAt: round.createdAt,
+    finishedAt: null,
+    elapsed: null,
+    sourceMode: 'agent',
+    agentConversationId: conversation.id,
+    agentRoundId: round.id,
+    agentMessageId: round.assistantMessageId,
+    agentToolCallId: requestIds[0],
+  }
+
+  useStore.getState().setTasks([task, ...useStore.getState().tasks])
+  await putTask(task)
+  updateAgentRoundFromImageStatus(task, [])
+  return task
+}
+
+async function recoverAgentRoundImageStatus(conversationId: string, roundId: string) {
+  const { settings, agentConversations } = useStore.getState()
+  const conversation = agentConversations.find((item) => item.id === conversationId)
+  const round = conversation?.rounds.find((item) => item.id === roundId)
+  if (!conversation || !round || round.status === 'done' || !round.imageStatusRequestIds?.length) return
+  if (!canRecoverAgentRoundImageStatus(round)) {
+    clearAgentImageStatusRecoveryTimer(conversationId, roundId)
+    return
+  }
+  const requestIds = getRecoverableAgentRoundImageStatusRequestIds(conversationId, round)
+  if (requestIds.length === 0) {
+    clearAgentImageStatusRecoveryTimer(conversationId, roundId)
+    const terminalTask = getAgentRoundImageStatusTasks(conversationId, round).find((task) => !canRecoverTaskImageStatus(task))
+    if (terminalTask) updateAgentRoundFromImageStatus(terminalTask, [], terminalTask.error ?? undefined)
+    return
+  }
+
+  const profile = getAgentRoundImageStatusRecoveryProfile(settings, round)
+  if (!profile) {
+    updateAgentConversation(conversationId, (current) => ({
+      ...current,
+      updatedAt: Date.now(),
+      rounds: current.rounds.map((item) =>
+        item.id === roundId
+          ? { ...item, status: 'error', error: '找不到此 Agent 请求所使用的 API 配置，无法查询图片状态。', imageStatusRecoverable: false, finishedAt: Date.now() }
+          : item,
+      ),
+    }))
+    return
+  }
+
+  const timedOut = Date.now() - round.createdAt >= Math.max(0, profile.timeout * 1000)
+  try {
+    const result = await queryImageStatuses(profile, requestIds)
+    const latestRound = useStore.getState().agentConversations
+      .find((item) => item.id === conversationId)
+      ?.rounds.find((item) => item.id === roundId)
+    if (!latestRound || !canRecoverAgentRoundImageStatus(latestRound)) {
+      clearAgentImageStatusRecoveryTimer(conversationId, roundId)
+      return
+    }
+    const recordsById = new Map(result.records.map((record) => [record.requestId, record]))
+    const succeededRecords: ImageStatusRecord[] = []
+    const failedRequests: Array<{ requestIndex: number; error: string }> = []
+    const pendingRequests: Array<{ requestId: string; requestIndex: number }> = []
+
+    for (let i = 0; i < requestIds.length; i += 1) {
+      const requestId = requestIds[i]
+      const record = recordsById.get(requestId)
+      if (!record) {
+        pendingRequests.push({ requestId, requestIndex: i })
+        continue
+      }
+      if (record.status === 'succeeded') {
+        succeededRecords.push(record)
+        continue
+      }
+      if (record.status === 'failed') {
+        failedRequests.push({ requestIndex: i, error: getImageStatusFailureMessage(record) })
+        continue
+      }
+      pendingRequests.push({ requestId, requestIndex: i })
+    }
+
+    if (pendingRequests.length > 0 && !timedOut) {
+      updateAgentConversation(conversationId, (current) => ({
+        ...current,
+        updatedAt: Date.now(),
+        rounds: current.rounds.map((item) =>
+          item.id === roundId ? { ...item, status: 'running', error: null, imageStatusRecoverable: true, finishedAt: null } : item,
+        ),
+      }))
+      scheduleAgentImageStatusRecovery(conversationId, roundId)
+      return
+    }
+
+    const timedOutRequests = pendingRequests.map((request) => ({
+      requestIndex: request.requestIndex,
+      error: timedOut ? '图片状态查询超时' : '图片状态记录不存在或已过期',
+    }))
+    const allFailedRequests = [...failedRequests, ...timedOutRequests]
+    clearAgentImageStatusRecoveryTimer(conversationId, roundId)
+
+    const task = await ensureAgentRoundImageStatusTask(conversation, round, profile, requestIds)
+    if (succeededRecords.length > 0) {
+      await completeRecoveredImageStatusTask(task, succeededRecords, allFailedRequests)
+      return
+    }
+
+    const error = allFailedRequests[0]?.error ?? '图片状态恢复失败'
+    updateTaskInStore(task.id, {
+      status: 'error',
+      error,
+      outputErrors: allFailedRequests.length ? allFailedRequests : undefined,
+      imageStatusRecoverable: false,
+      finishedAt: Date.now(),
+      elapsed: Date.now() - task.createdAt,
+    })
+    updateAgentRoundFromImageStatus(task, result.records, error)
+  } catch (err) {
+    if (!timedOut && isFalConnectionRecoverableError(err)) {
+      updateAgentConversation(conversationId, (current) => ({
+        ...current,
+        updatedAt: Date.now(),
+        rounds: current.rounds.map((item) =>
+          item.id === roundId ? { ...item, status: 'running', error: null, imageStatusRecoverable: true, finishedAt: null } : item,
+        ),
+      }))
+      scheduleAgentImageStatusRecovery(conversationId, roundId)
+      return
+    }
+
+    clearAgentImageStatusRecoveryTimer(conversationId, roundId)
+    const error = err instanceof Error ? err.message : String(err)
+    const task = await ensureAgentRoundImageStatusTask(conversation, round, profile, requestIds)
+    updateTaskInStore(task.id, {
+      status: 'error',
+      error,
+      imageStatusRecoverable: false,
+      finishedAt: Date.now(),
+      elapsed: Date.now() - task.createdAt,
+    })
+    updateAgentRoundFromImageStatus(task, [], error)
+  }
+}
+
+async function completeRecoveredImageStatusTask(task: TaskRecord, records: ImageStatusRecord[], failedRequests: Array<{ requestIndex: number; error: string }>) {
+  const latest = useStore.getState().tasks.find((item) => item.id === task.id)
+  if (!latest || latest.status === 'done') return
+  if (!canRecoverTaskImageStatus(latest)) return
+
+  const urls = records.flatMap(getImageStatusUrls)
+  if (urls.length > 0) updateTaskInStore(task.id, { rawImageUrls: urls })
+  const mime = MIME_MAP[task.params.output_format] || 'image/png'
+  const images = []
+  try {
+    for (const url of urls) {
+      images.push(await fetchImageUrlAsDataUrl(url, mime))
+    }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err)
+    updateTaskInStore(task.id, {
+      status: 'error',
+      error,
+      rawImageUrls: urls.length ? urls : undefined,
+      imageStatusRecoverable: false,
+      finishedAt: Date.now(),
+      elapsed: Date.now() - task.createdAt,
+    })
+    updateAgentRoundFromImageStatus(task, records, error)
+    return
+  }
+  if (images.length === 0) {
+    const error = failedRequests[0]?.error ?? '图片状态已完成，但没有返回可用图片链接'
+    updateTaskInStore(task.id, {
+      status: 'error',
+      error,
+      rawImageUrls: urls.length ? urls : undefined,
+      imageStatusRecoverable: false,
+      finishedAt: Date.now(),
+      elapsed: Date.now() - task.createdAt,
+    })
+    updateAgentRoundFromImageStatus(task, records, error)
+    return
+  }
+  const latestAfterDownload = useStore.getState().tasks.find((item) => item.id === task.id)
+  if (!latestAfterDownload || !canRecoverTaskImageStatus(latestAfterDownload)) return
+
+  const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, images)
+  const actualParamsList = await resolveImageSizeParamsList(outputDataUrls, undefined, outputImageSizes)
+
+  updateTaskInStore(task.id, {
+    outputImages: outputIds,
+    transparentOriginalImages: transparentOriginalImageIds,
+    outputErrors: failedRequests.length ? failedRequests : undefined,
+    rawImageUrls: urls.length ? urls : undefined,
+    actualParams: firstActualParams(actualParamsList),
+    actualParamsByImage: mapActualParamsByImage(outputIds, actualParamsList),
+    revisedPromptByImage: undefined,
+    status: 'done',
+    error: null,
+    imageStatusRecoverable: false,
+    finishedAt: Date.now(),
+    elapsed: Date.now() - task.createdAt,
+  })
+  updateAgentRoundFromImageStatus(task, records)
+  useStore.getState().showToast(`图像任务已恢复，共 ${outputIds.length} 张图片`, failedRequests.length ? 'error' : 'success')
+  if (!isAgentTask(task)) showTaskCompletionNotification('图像生成完成', `图像任务已恢复，共 ${outputIds.length} 张图片。`)
+}
+
+async function recoverImageStatusTask(taskId: string) {
+  const { settings, tasks } = useStore.getState()
+  const task = tasks.find((item) => item.id === taskId)
+  const requestIds = task?.imageStatusRequestIds ?? []
+  if (!task || task.status === 'done' || (task.apiProvider ?? 'openai') === 'fal' || requestIds.length === 0) return
+  if (!canRecoverTaskImageStatus(task)) {
+    clearImageStatusRecoveryTimer(taskId)
+    return
+  }
+
+  const profile = getImageStatusRecoveryProfile(settings, task)
+  if (!profile) {
+    updateTaskInStore(taskId, {
+      status: 'error',
+      error: '找不到此任务所使用的 API 配置，无法查询图片状态。',
+      imageStatusRecoverable: false,
+      finishedAt: Date.now(),
+      elapsed: Date.now() - task.createdAt,
+    })
+    return
+  }
+
+  const timedOut = Date.now() - task.createdAt >= Math.max(0, profile.timeout * 1000)
+  try {
+    const result = await queryImageStatuses(profile, requestIds)
+    const latestTask = useStore.getState().tasks.find((item) => item.id === taskId)
+    if (!latestTask || !canRecoverTaskImageStatus(latestTask)) {
+      clearImageStatusRecoveryTimer(taskId)
+      return
+    }
+    const recordsById = new Map(result.records.map((record) => [record.requestId, record]))
+    const succeededRecords: ImageStatusRecord[] = []
+    const failedRequests: Array<{ requestIndex: number; error: string }> = []
+    const pendingRequests: Array<{ requestId: string; requestIndex: number }> = []
+
+    for (let i = 0; i < requestIds.length; i += 1) {
+      const requestId = requestIds[i]
+      const record = recordsById.get(requestId)
+      if (!record) {
+        pendingRequests.push({ requestId, requestIndex: i })
+        continue
+      }
+      if (record.status === 'succeeded') {
+        succeededRecords.push(record)
+        continue
+      }
+      if (record.status === 'failed') {
+        failedRequests.push({ requestIndex: i, error: getImageStatusFailureMessage(record) })
+        continue
+      }
+      pendingRequests.push({ requestId, requestIndex: i })
+    }
+
+    if (pendingRequests.length > 0 && !timedOut) {
+      updateTaskInStore(taskId, { imageStatusRecoverable: true })
+      scheduleImageStatusRecovery(taskId)
+      return
+    }
+
+    const timedOutRequests = pendingRequests.map((request) => ({
+      requestIndex: request.requestIndex,
+      error: timedOut ? '图片状态查询超时' : '图片状态记录不存在或已过期',
+    }))
+    const allFailedRequests = [...failedRequests, ...timedOutRequests]
+    clearImageStatusRecoveryTimer(taskId)
+
+    if (succeededRecords.length > 0) {
+      await completeRecoveredImageStatusTask(task, succeededRecords, allFailedRequests)
+      return
+    }
+
+    const error = allFailedRequests[0]?.error ?? '图片状态恢复失败'
+    updateTaskInStore(taskId, {
+      status: 'error',
+      error,
+      outputErrors: allFailedRequests.length ? allFailedRequests : undefined,
+      imageStatusRecoverable: false,
+      finishedAt: Date.now(),
+      elapsed: Date.now() - task.createdAt,
+    })
+    updateAgentRoundFromImageStatus(task, result.records, error)
+  } catch (err) {
+    if (!timedOut && isFalConnectionRecoverableError(err)) {
+      updateTaskInStore(taskId, { imageStatusRecoverable: true })
+      scheduleImageStatusRecovery(taskId)
+      return
+    }
+
+    clearImageStatusRecoveryTimer(taskId)
+    const error = err instanceof Error ? err.message : String(err)
+    updateTaskInStore(taskId, {
+      status: 'error',
+      error,
+      imageStatusRecoverable: false,
+      finishedAt: Date.now(),
+      elapsed: Date.now() - task.createdAt,
+    })
+    updateAgentRoundFromImageStatus(task, [], error)
+  }
+}
+
 /** 初始化：从 IndexedDB 加载任务，按需恢复输入图片，并清理孤立图片 */
 export async function initStore() {
   const legacyAgentConversations = normalizeAgentConversations(useStore.getState().agentConversations)
@@ -2191,7 +2841,17 @@ export async function initStore() {
     .filter((task, index) => normalizedFavorites.changed || interruptedTaskIds.has(task.id) || task.rawResponsePayload !== markedTasks[index]?.rawResponsePayload)
     .map((task) => putTask(task)))
   useStore.getState().setTasks(tasks)
+  const recoveredAgentConversations = recoverAgentConversationsForImageStatus(useStore.getState().agentConversations, tasks)
+  if (recoveredAgentConversations !== useStore.getState().agentConversations) {
+    useStore.setState({ agentConversations: recoveredAgentConversations })
+  }
+  syncAgentConversationsFromTerminalImageStatusTasks(tasks)
   showSupportPromptForExistingLocalData(tasks)
+  const agentRoundRequestIds = new Set(
+    useStore.getState().agentConversations.flatMap((conversation) =>
+      conversation.rounds.flatMap((round) => round.imageStatusRequestIds ?? []),
+    ),
+  )
   for (const task of tasks) {
     if (
       task.apiProvider === 'fal' &&
@@ -2206,6 +2866,18 @@ export async function initStore() {
       (task.status === 'running' || task.customRecoverable)
     ) {
       scheduleCustomRecovery(task.id, 0)
+    }
+    if (
+      shouldScheduleTaskImageStatusRecovery(task, agentRoundRequestIds)
+    ) {
+      scheduleImageStatusRecovery(task.id, 0)
+    }
+  }
+  for (const conversation of useStore.getState().agentConversations) {
+    for (const round of conversation.rounds) {
+      if (shouldScheduleAgentRoundImageStatusRecovery(conversation.id, round, tasks)) {
+        scheduleAgentImageStatusRecovery(conversation.id, round.id, 0)
+      }
     }
   }
 
@@ -2519,6 +3191,15 @@ function appendAgentStoppedMessage(content: string) {
   return `${trimmed}\n\n${AGENT_STOPPED_MESSAGE}`
 }
 
+function cancelAgentRoundStatusRecovery(conversationId: string, roundId: string) {
+  clearAgentImageStatusRecoveryTimer(conversationId, roundId)
+  for (const task of useStore.getState().tasks) {
+    if (task.agentConversationId === conversationId && task.agentRoundId === roundId) {
+      clearImageStatusRecoveryTimer(task.id)
+    }
+  }
+}
+
 function markAgentRoundTasksStopped(conversationId: string, roundId: string, now = Date.now()) {
   const runningTasks = useStore.getState().tasks.filter((task) =>
     task.status === 'running' &&
@@ -2532,6 +3213,7 @@ function markAgentRoundTasksStopped(conversationId: string, roundId: string, now
       error: AGENT_STOPPED_MESSAGE,
       falRecoverable: false,
       customRecoverable: false,
+      imageStatusRecoverable: false,
       finishedAt: now,
       elapsed: Math.max(0, now - task.createdAt),
     })
@@ -2562,6 +3244,7 @@ function markAgentRoundTasksFailed(
       ...(rawResponsePayload ? { rawResponsePayload } : {}),
       falRecoverable: false,
       customRecoverable: false,
+      imageStatusRecoverable: false,
       finishedAt: now,
       elapsed: Math.max(0, now - task.createdAt),
     })
@@ -2571,6 +3254,7 @@ function markAgentRoundTasksFailed(
 
 function markAgentRoundStopped(conversationId: string, roundId: string) {
   const now = Date.now()
+  cancelAgentRoundStatusRecovery(conversationId, roundId)
   const stoppedTasks = markAgentRoundTasksStopped(conversationId, roundId, now)
   let stoppedRound = false
   updateAgentConversation(conversationId, (current) => {
@@ -2590,6 +3274,7 @@ function markAgentRoundStopped(conversationId: string, roundId: string) {
               ...(assistantMessageId ? { assistantMessageId } : {}),
               status: 'error',
               error: AGENT_STOPPED_MESSAGE,
+              imageStatusRecoverable: false,
               finishedAt: now,
             }
           : item,
@@ -2625,6 +3310,28 @@ function appendAgentAssistantMessageContent(conversationId: string, messageId: s
         ? { ...message, content: `${message.content}${delta}` }
         : message,
     ),
+  }))
+}
+
+function ensureAgentAssistantMessage(conversationId: string, roundId: string, messageId: string, now = Date.now()) {
+  updateAgentConversation(conversationId, (current) => ({
+    ...current,
+    updatedAt: now,
+    rounds: current.rounds.map((round) =>
+      round.id === roundId ? { ...round, assistantMessageId: messageId } : round,
+    ),
+    messages: current.messages.some((message) => message.id === messageId)
+      ? current.messages
+      : [
+          ...current.messages,
+          {
+            id: messageId,
+            role: 'assistant',
+            content: '',
+            roundId,
+            createdAt: now,
+          },
+        ],
   }))
 }
 
@@ -2807,6 +3514,10 @@ export function getAgentBranchLeafId(conversation: AgentConversation, roundId: s
 
 function uniqueIds(ids: string[]) {
   return Array.from(new Set(ids.filter(Boolean)))
+}
+
+function arraysEqual(a: string[], b: string[]) {
+  return a.length === b.length && a.every((item, index) => item === b[index])
 }
 
 function addAgentReferencedImageIds(target: Set<string>, conversations = useStore.getState().agentConversations, inputDrafts = useStore.getState().agentInputDrafts) {
@@ -3668,32 +4379,13 @@ async function executeAgentRound(
         rawResponsePayload,
         falRecoverable: false,
         customRecoverable: false,
+        imageStatusRecoverable: false,
         finishedAt: Date.now(),
         elapsed: Date.now() - latestTask.createdAt,
       })
     }
 
-    if (shouldStreamAssistantMessage) {
-      updateAgentConversation(conversationId, (current) => ({
-        ...current,
-        updatedAt: Date.now(),
-        rounds: current.rounds.map((item) =>
-          item.id === roundId ? { ...item, assistantMessageId } : item,
-        ),
-        messages: current.messages.some((message) => message.id === assistantMessageId)
-          ? current.messages.map((message) => message.id === assistantMessageId ? { ...message, content: '', outputTaskIds: [] } : message)
-          : [
-              ...current.messages,
-              {
-                id: assistantMessageId,
-                role: 'assistant',
-                content: '',
-                roundId,
-                createdAt: Date.now(),
-              },
-            ],
-      }))
-    }
+    ensureAgentAssistantMessage(conversationId, roundId, assistantMessageId)
     const maxToolCalls = Number.isFinite(requestSettings.agentMaxToolRounds)
       ? Math.max(1, Math.trunc(requestSettings.agentMaxToolRounds))
       : DEFAULT_AGENT_MAX_TOOL_ROUNDS
@@ -3757,6 +4449,7 @@ async function executeAgentRound(
       referenceImageDataUrls: string[]
       taskParams: TaskParams
       signal: AbortSignal
+      onImageStatusRequestCreated?: (event: { requestId: string }) => void
       onPartialImage?: (event: { image: string; partialImageIndex?: number }) => void | Promise<void>
     }) => {
       const result = await callImageApi({
@@ -3764,6 +4457,7 @@ async function executeAgentRound(
         prompt: replaceImageMentionsForApi(opts.prompt, opts.referenceImageDataUrls.length),
         params: opts.taskParams,
         inputImageDataUrls: opts.referenceImageDataUrls,
+        onImageStatusRequestCreated: opts.onImageStatusRequestCreated,
         onPartialImage: opts.onPartialImage
           ? (partial) => {
               void opts.onPartialImage?.({ image: partial.image, partialImageIndex: partial.partialImageIndex ?? partial.requestIndex })
@@ -3816,6 +4510,10 @@ async function executeAgentRound(
           referenceImageDataUrls: references.dataUrls,
           taskParams,
           signal: controller.signal,
+          onImageStatusRequestCreated: (request) => {
+            const taskId = taskIdByToolCallId.get(toolCallId)
+            if (taskId) addImageStatusRequestIdToTask(taskId, request.requestId)
+          },
           onPartialImage: async ({ image, partialImageIndex }) => {
             if (controller.signal.aborted) return
             const taskId = taskIdByToolCallId.get(toolCallId)
@@ -3886,6 +4584,10 @@ async function executeAgentRound(
                 referenceImageDataUrls: references.dataUrls,
                 taskParams,
                 signal: controller.signal,
+                onImageStatusRequestCreated: (request) => {
+                  const taskId = taskIdByToolCallId.get(batchToolCallId)
+                  if (taskId) addImageStatusRequestIdToTask(taskId, request.requestId)
+                },
                 onPartialImage: async ({ image, partialImageIndex }) => {
                   if (controller.signal.aborted) return
                   const taskId = taskIdByToolCallId.get(batchToolCallId)
@@ -3905,6 +4607,10 @@ async function executeAgentRound(
               referenceIds,
               allowPromptRewrite: requestSettings.allowPromptRewrite,
               signal: controller.signal,
+              onImageStatusRequestCreated: (request) => {
+                const taskId = taskIdByToolCallId.get(batchToolCallId)
+                if (taskId) addImageStatusRequestIdToTask(taskId, request.requestId)
+              },
               onImageToolStarted: shouldStreamAssistantMessage
                 ? async () => {
                     if (controller.signal.aborted) return
@@ -3985,6 +4691,9 @@ async function executeAgentRound(
         input: apiInputForTurn,
         maskDataUrl,
         signal: controller.signal,
+        onImageStatusRequestCreated: (request) => {
+          addImageStatusRequestIdToAgentRound(conversationId, roundId, request.requestId, activeProfile.id)
+        },
         onTextDelta: shouldStreamAssistantMessage
           ? (delta) => {
               if (controller.signal.aborted) return
@@ -4342,6 +5051,7 @@ async function executeTask(taskId: string) {
       error: '找不到此任务所使用的 API 配置。',
       falRecoverable: false,
       customRecoverable: false,
+      imageStatusRecoverable: false,
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
     })
@@ -4410,6 +5120,9 @@ async function executeTask(taskId: string) {
           customTaskId: request.taskId,
           customRecoverable: false,
         })
+      },
+      onImageStatusRequestCreated: (request) => {
+        addImageStatusRequestIdToTask(taskId, request.requestId)
       },
       onPartialImage: (partial) => {
         useStore.getState().setTaskStreamPreview(taskId, partial.image, partial.requestIndex)
@@ -4483,6 +5196,7 @@ async function executeTask(taskId: string) {
       elapsed: Date.now() - task.createdAt,
       falRecoverable: false,
       customRecoverable: false,
+      imageStatusRecoverable: false,
     })
     void deleteUnreferencedImageIds(partialImageIdsToClean)
 
@@ -4521,6 +5235,15 @@ async function executeTask(taskId: string) {
         elapsed: Date.now() - task.createdAt,
       })
       scheduleFalRecovery(taskId)
+    } else if ((latestTask.apiProvider ?? 'openai') !== 'fal' && latestTask.imageStatusRequestIds?.length && isFalConnectionRecoverableError(err)) {
+      updateTaskInStore(taskId, {
+        status: 'error',
+        error: '请求连接已断开，之后会继续查询图片状态。',
+        imageStatusRecoverable: true,
+        finishedAt: Date.now(),
+        elapsed: Date.now() - task.createdAt,
+      })
+      scheduleImageStatusRecovery(taskId)
     } else if (latestCustomTaskInfo && isFalConnectionRecoverableError(err)) {
       updateTaskInStore(taskId, {
         status: 'error',
@@ -4553,6 +5276,7 @@ async function executeTask(taskId: string) {
         ...getRawErrorPayload(err),
         falRecoverable: false,
         customRecoverable: false,
+        imageStatusRecoverable: false,
         finishedAt: Date.now(),
         elapsed: Date.now() - task.createdAt,
       })

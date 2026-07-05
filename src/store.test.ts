@@ -92,6 +92,12 @@ vi.mock('./lib/falAiImageApi', () => ({
     revisedPrompts: [],
   })),
 }))
+vi.mock('./lib/imageStatusApi', () => ({
+  queryImageStatuses: vi.fn(async () => ({
+    records: [],
+    notFound: [],
+  })),
+}))
 vi.mock('./lib/transparentImage', () => ({
   GREEN_KEY_COLOR: '#00FF00',
   MAGENTA_KEY_COLOR: '#FF00FF',
@@ -130,6 +136,7 @@ vi.mock('./lib/agentApi', () => ({
 import { clearAgentConversations, clearImages, clearTasks, getAllAgentConversations, getAllTasks, getImage, putAgentConversation, putImage, putTask as putDbTask } from './lib/db'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
 import { getFalQueuedImageResult } from './lib/falAiImageApi'
+import { queryImageStatuses } from './lib/imageStatusApi'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { cleanStaleAgentInputDrafts, clearFailedTasks, deleteAgentRoundFromConversation, deleteFavoriteCollection, editOutputs, getActiveAgentRounds, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, reuseConfig, retryTask, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
 
@@ -577,11 +584,12 @@ describe('interrupted OpenAI running tasks', () => {
     const now = 10_000
     const legacyRunning = task({ id: 'legacy-running', status: 'running', createdAt: 1_000, finishedAt: null, elapsed: null })
     const openAIRunning = task({ id: 'openai-running', apiProvider: 'openai', status: 'running', createdAt: 2_000, finishedAt: null, elapsed: null })
+    const trackedOpenAIRunning = task({ id: 'tracked-openai-running', apiProvider: 'openai', status: 'running', imageStatusRequestIds: ['img_request'], createdAt: 2_500, finishedAt: null, elapsed: null })
     const falRunning = task({ id: 'fal-running', apiProvider: 'fal', status: 'running', createdAt: 3_000, finishedAt: null, elapsed: null })
     const customAsyncRunning = task({ id: 'custom-running', apiProvider: 'custom-provider', customTaskId: 'task-1', status: 'running', createdAt: 4_000, finishedAt: null, elapsed: null })
     const doneTask = task({ id: 'done-task', apiProvider: 'openai', status: 'done' })
 
-    const result = markInterruptedOpenAIRunningTasks([legacyRunning, openAIRunning, falRunning, customAsyncRunning, doneTask], now)
+    const result = markInterruptedOpenAIRunningTasks([legacyRunning, openAIRunning, trackedOpenAIRunning, falRunning, customAsyncRunning, doneTask], now)
 
     expect(result.interruptedTasks.map((item) => item.id)).toEqual(['legacy-running', 'openai-running'])
     expect(result.tasks.find((item) => item.id === 'legacy-running')).toMatchObject({
@@ -596,6 +604,7 @@ describe('interrupted OpenAI running tasks', () => {
       finishedAt: now,
       elapsed: 8_000,
     })
+    expect(result.tasks.find((item) => item.id === 'tracked-openai-running')).toEqual(trackedOpenAIRunning)
     expect(result.tasks.find((item) => item.id === 'fal-running')).toEqual(falRunning)
     expect(result.tasks.find((item) => item.id === 'custom-running')).toEqual(customAsyncRunning)
     expect(result.tasks.find((item) => item.id === 'done-task')).toEqual(doneTask)
@@ -860,6 +869,697 @@ describe('fal task recovery', () => {
     const originalImage = await getImage(recovered!.transparentOriginalImages![0])
     expect(outputImage?.dataUrl).toBe('transparent:data:image/png;base64,fal-recovered')
     expect(originalImage?.dataUrl).toBe('data:image/png;base64,fal-recovered')
+  })
+})
+
+describe('image status recovery', () => {
+  const openAIProfile = createDefaultOpenAIProfile({ id: 'openai-profile', apiKey: 'openai-key', timeout: 60 })
+
+  beforeEach(async () => {
+    await clearTasks()
+    await clearImages()
+    await clearAgentConversations()
+    vi.mocked(queryImageStatuses).mockReset()
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        profiles: [openAIProfile],
+        activeProfileId: openAIProfile.id,
+      }),
+      tasks: [],
+      inputImages: [],
+      galleryInputDraft: null,
+      agentConversations: [],
+      activeAgentConversationId: null,
+      showToast: vi.fn(),
+    })
+  })
+
+  it('recovers a tracked non-fal task from image status cos urls', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(new Blob(['ok'], { type: 'image/png' }), {
+      status: 200,
+      headers: { 'Content-Type': 'image/png' },
+    }))
+    const runningTask = task({
+      id: 'status-task',
+      apiProvider: 'openai',
+      apiProfileId: openAIProfile.id,
+      apiMode: 'images',
+      status: 'running',
+      imageStatusRequestIds: ['img_status_1'],
+      createdAt: Date.now(),
+      finishedAt: null,
+      elapsed: null,
+    })
+    await putDbTask(runningTask)
+    vi.mocked(queryImageStatuses).mockResolvedValueOnce({
+      records: [{
+        requestId: 'img_status_1',
+        status: 'succeeded',
+        cosUrls: ['https://cos.example/a.png'],
+      }],
+      notFound: [],
+    })
+
+    await initStore()
+    await vi.waitFor(() => expect(useStore.getState().tasks.find((item) => item.id === runningTask.id)?.status).toBe('done'))
+
+    const recovered = useStore.getState().tasks.find((item) => item.id === runningTask.id)!
+    expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_status_1'])
+    expect(fetchMock).toHaveBeenCalledWith('https://cos.example/a.png', expect.objectContaining({ cache: 'no-store' }))
+    expect(recovered.imageStatusRecoverable).toBe(false)
+    expect(recovered.outputImages).toHaveLength(1)
+    expect((await getImage(recovered.outputImages[0]))?.dataUrl).toBe('data:image/png;base64,b2s=')
+    fetchMock.mockRestore()
+  })
+
+  it('keeps image status cos urls when recovered image download is blocked', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'))
+    const runningTask = task({
+      id: 'status-cors-task',
+      apiProvider: 'openai',
+      apiProfileId: openAIProfile.id,
+      apiMode: 'images',
+      status: 'running',
+      imageStatusRequestIds: ['img_status_cors'],
+      createdAt: Date.now(),
+      finishedAt: null,
+      elapsed: null,
+    })
+    await putDbTask(runningTask)
+    vi.mocked(queryImageStatuses).mockResolvedValueOnce({
+      records: [{
+        requestId: 'img_status_cors',
+        status: 'succeeded',
+        cosUrls: ['https://cos.example/blocked.png'],
+      }],
+      notFound: [],
+    })
+
+    await initStore()
+    await vi.waitFor(() => expect(useStore.getState().tasks.find((item) => item.id === runningTask.id)?.status).toBe('error'))
+
+    const recovered = useStore.getState().tasks.find((item) => item.id === runningTask.id)!
+    expect(recovered.rawImageUrls).toEqual(['https://cos.example/blocked.png'])
+    expect(recovered.imageStatusRecoverable).toBe(false)
+    expect(recovered.error).toContain('图片链接下载失败')
+    fetchMock.mockRestore()
+  })
+
+  it('restores Agent assistant message from image status texts after refresh', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(new Blob(['agent'], { type: 'image/png' }), {
+      status: 200,
+      headers: { 'Content-Type': 'image/png' },
+    }))
+    const conversation = agentConversation({
+      id: 'agent-status-conversation',
+      activeRoundId: 'agent-status-round',
+      rounds: [{
+        id: 'agent-status-round',
+        index: 1,
+        parentRoundId: null,
+        userMessageId: 'agent-status-user',
+        prompt: '生成图片',
+        inputImageIds: [],
+        outputTaskIds: ['agent-status-task'],
+        status: 'running',
+        error: null,
+        createdAt: Date.now(),
+        finishedAt: null,
+      }],
+      messages: [{
+        id: 'agent-status-user',
+        role: 'user',
+        content: '生成图片',
+        roundId: 'agent-status-round',
+        createdAt: Date.now(),
+      }],
+    })
+    const runningTask = task({
+      id: 'agent-status-task',
+      apiProvider: 'openai',
+      apiProfileId: openAIProfile.id,
+      apiMode: 'responses',
+      status: 'running',
+      imageStatusRequestIds: ['img_agent_status'],
+      createdAt: Date.now(),
+      finishedAt: null,
+      elapsed: null,
+      sourceMode: 'agent',
+      agentConversationId: conversation.id,
+      agentRoundId: 'agent-status-round',
+      agentMessageId: 'agent-status-assistant',
+      agentToolCallId: 'agent-tool-call',
+    })
+    await putAgentConversation(conversation)
+    await putDbTask(runningTask)
+    vi.mocked(queryImageStatuses).mockResolvedValueOnce({
+      records: [{
+        requestId: 'img_agent_status',
+        status: 'succeeded',
+        cosUrls: ['https://cos.example/agent.png'],
+        texts: ['Generated the image and adjusted the prompt.'],
+      }],
+      notFound: [],
+    })
+
+    await initStore()
+    await vi.waitFor(() => {
+      const restored = useStore.getState().agentConversations.find((item) => item.id === conversation.id)
+      expect(restored?.rounds[0].status).toBe('done')
+    })
+
+    const restored = useStore.getState().agentConversations.find((item) => item.id === conversation.id)!
+    const round = restored.rounds[0]
+    const assistant = restored.messages.find((message) => message.id === round.assistantMessageId)
+    const recovered = useStore.getState().tasks.find((item) => item.id === runningTask.id)!
+    expect(round.assistantMessageId).toBe('agent-status-assistant')
+    expect(round.outputTaskIds).toEqual(['agent-status-task'])
+    expect(assistant?.content).toBe('Generated the image and adjusted the prompt.')
+    expect(assistant?.outputTaskIds).toEqual(['agent-status-task'])
+    expect(recovered.status).toBe('done')
+    expect(recovered.outputImages).toHaveLength(1)
+    fetchMock.mockRestore()
+  })
+
+  it('keeps a tracked Agent round running and queries image status after refresh before a task exists', async () => {
+    const conversation = agentConversation({
+      id: 'agent-round-status-conversation',
+      activeRoundId: 'agent-round-status',
+      rounds: [{
+        id: 'agent-round-status',
+        index: 1,
+        parentRoundId: null,
+        userMessageId: 'agent-round-status-user',
+        assistantMessageId: 'agent-round-status-assistant',
+        prompt: '生成图片',
+        inputImageIds: [],
+        outputTaskIds: [],
+        imageStatusRequestIds: ['img_agent_round_status'],
+        imageStatusApiProfileId: openAIProfile.id,
+        status: 'running',
+        error: null,
+        createdAt: Date.now(),
+        finishedAt: null,
+      }],
+      messages: [
+        {
+          id: 'agent-round-status-user',
+          role: 'user',
+          content: '生成图片',
+          roundId: 'agent-round-status',
+          createdAt: Date.now(),
+        },
+        {
+          id: 'agent-round-status-assistant',
+          role: 'assistant',
+          content: '',
+          roundId: 'agent-round-status',
+          createdAt: Date.now(),
+        },
+      ],
+    })
+    await putAgentConversation(conversation)
+    vi.mocked(queryImageStatuses).mockResolvedValueOnce({
+      records: [{
+        requestId: 'img_agent_round_status',
+        status: 'running',
+      }],
+      notFound: [],
+    })
+
+    await initStore()
+    await vi.waitFor(() => expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_agent_round_status']))
+
+    const restored = useStore.getState().agentConversations.find((item) => item.id === conversation.id)!
+    expect(restored.rounds[0]).toMatchObject({
+      status: 'running',
+      error: null,
+      imageStatusRecoverable: true,
+    })
+    expect(restored.messages.find((message) => message.id === 'agent-round-status-assistant')).toBeTruthy()
+    expect(useStore.getState().tasks).toEqual([])
+  })
+
+  it('queries a shared Agent round/task image status id only once after refresh', async () => {
+    const conversation = agentConversation({
+      id: 'agent-shared-status-conversation',
+      activeRoundId: 'agent-shared-status-round',
+      rounds: [{
+        id: 'agent-shared-status-round',
+        index: 1,
+        parentRoundId: null,
+        userMessageId: 'agent-shared-status-user',
+        assistantMessageId: 'agent-shared-status-assistant',
+        prompt: '生成图片',
+        inputImageIds: [],
+        outputTaskIds: ['agent-shared-status-task'],
+        imageStatusRequestIds: ['img_agent_shared_status'],
+        imageStatusApiProfileId: openAIProfile.id,
+        status: 'running',
+        error: null,
+        createdAt: Date.now(),
+        finishedAt: null,
+      }],
+      messages: [
+        {
+          id: 'agent-shared-status-user',
+          role: 'user',
+          content: '生成图片',
+          roundId: 'agent-shared-status-round',
+          createdAt: Date.now(),
+        },
+        {
+          id: 'agent-shared-status-assistant',
+          role: 'assistant',
+          content: '',
+          roundId: 'agent-shared-status-round',
+          outputTaskIds: ['agent-shared-status-task'],
+          createdAt: Date.now(),
+        },
+      ],
+    })
+    const runningTask = task({
+      id: 'agent-shared-status-task',
+      apiProvider: 'openai',
+      apiProfileId: openAIProfile.id,
+      apiMode: 'responses',
+      status: 'running',
+      imageStatusRequestIds: ['img_agent_shared_status'],
+      createdAt: Date.now(),
+      finishedAt: null,
+      elapsed: null,
+      sourceMode: 'agent',
+      agentConversationId: conversation.id,
+      agentRoundId: 'agent-shared-status-round',
+      agentMessageId: 'agent-shared-status-assistant',
+      agentToolCallId: 'img_agent_shared_status',
+    })
+    await putAgentConversation(conversation)
+    await putDbTask(runningTask)
+    vi.mocked(queryImageStatuses).mockResolvedValue({
+      records: [{
+        requestId: 'img_agent_shared_status',
+        status: 'running',
+      }],
+      notFound: [],
+    })
+
+    await initStore()
+    await vi.waitFor(() => expect(queryImageStatuses).toHaveBeenCalledTimes(1))
+
+    expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_agent_shared_status'])
+  })
+
+  it('does not query image status for a stopped Agent round after refresh', async () => {
+    const conversation = agentConversation({
+      id: 'agent-stopped-conversation',
+      activeRoundId: 'agent-stopped-round',
+      rounds: [{
+        id: 'agent-stopped-round',
+        index: 1,
+        parentRoundId: null,
+        userMessageId: 'agent-stopped-user',
+        assistantMessageId: 'agent-stopped-assistant',
+        prompt: '生成图片',
+        inputImageIds: [],
+        outputTaskIds: [],
+        imageStatusRequestIds: ['img_agent_stopped'],
+        imageStatusRecoverable: true,
+        imageStatusApiProfileId: openAIProfile.id,
+        status: 'error',
+        error: '已停止生成。',
+        createdAt: Date.now(),
+        finishedAt: Date.now(),
+      }],
+      messages: [
+        {
+          id: 'agent-stopped-user',
+          role: 'user',
+          content: '生成图片',
+          roundId: 'agent-stopped-round',
+          createdAt: Date.now(),
+        },
+        {
+          id: 'agent-stopped-assistant',
+          role: 'assistant',
+          content: '已停止生成。',
+          roundId: 'agent-stopped-round',
+          createdAt: Date.now(),
+        },
+      ],
+    })
+    await putAgentConversation(conversation)
+
+    await initStore()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const restored = useStore.getState().agentConversations.find((item) => item.id === conversation.id)!
+    expect(queryImageStatuses).not.toHaveBeenCalled()
+    expect(restored.rounds[0]).toMatchObject({
+      status: 'error',
+      error: '已停止生成。',
+    })
+  })
+
+  it('does not turn an Agent round back to running when status returns after manual stop', async () => {
+    let resolveStatus: (value: Awaited<ReturnType<typeof queryImageStatuses>>) => void = () => {}
+    vi.mocked(queryImageStatuses).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveStatus = resolve
+    }))
+    const conversation = agentConversation({
+      id: 'agent-stop-race-conversation',
+      activeRoundId: 'agent-stop-race-round',
+      rounds: [{
+        id: 'agent-stop-race-round',
+        index: 1,
+        parentRoundId: null,
+        userMessageId: 'agent-stop-race-user',
+        assistantMessageId: 'agent-stop-race-assistant',
+        prompt: '生成图片',
+        inputImageIds: [],
+        outputTaskIds: [],
+        imageStatusRequestIds: ['img_agent_stop_race'],
+        imageStatusApiProfileId: openAIProfile.id,
+        status: 'running',
+        error: null,
+        createdAt: Date.now(),
+        finishedAt: null,
+      }],
+      messages: [
+        {
+          id: 'agent-stop-race-user',
+          role: 'user',
+          content: '生成图片',
+          roundId: 'agent-stop-race-round',
+          createdAt: Date.now(),
+        },
+        {
+          id: 'agent-stop-race-assistant',
+          role: 'assistant',
+          content: '',
+          roundId: 'agent-stop-race-round',
+          createdAt: Date.now(),
+        },
+      ],
+    })
+    await putAgentConversation(conversation)
+
+    await initStore()
+    await vi.waitFor(() => expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_agent_stop_race']))
+    useStore.setState((state) => ({
+      agentConversations: state.agentConversations.map((item) =>
+        item.id === conversation.id
+          ? {
+              ...item,
+              rounds: item.rounds.map((round) =>
+                round.id === 'agent-stop-race-round'
+                  ? { ...round, status: 'error', error: '已停止生成。', imageStatusRecoverable: false, finishedAt: Date.now() }
+                  : round,
+              ),
+            }
+          : item,
+      ),
+    }))
+    resolveStatus({
+      records: [{
+        requestId: 'img_agent_stop_race',
+        status: 'running',
+      }],
+      notFound: [],
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const restored = useStore.getState().agentConversations.find((item) => item.id === conversation.id)!
+    expect(restored.rounds[0]).toMatchObject({
+      status: 'error',
+      error: '已停止生成。',
+      imageStatusRecoverable: false,
+    })
+  })
+
+  it('does not keep polling when a tracked task fails while image status is running', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveStatus: (value: Awaited<ReturnType<typeof queryImageStatuses>>) => void = () => {}
+      vi.mocked(queryImageStatuses).mockImplementationOnce(() => new Promise((resolve) => {
+        resolveStatus = resolve
+      }))
+      const runningTask = task({
+        id: 'status-invalid-key-task',
+        apiProvider: 'openai',
+        apiProfileId: openAIProfile.id,
+        apiMode: 'responses',
+        status: 'running',
+        imageStatusRequestIds: ['img_status_invalid_key'],
+        createdAt: Date.now(),
+        finishedAt: null,
+        elapsed: null,
+      })
+      await putDbTask(runningTask)
+
+      await initStore()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_status_invalid_key'])
+
+      useStore.setState((state) => ({
+        tasks: state.tasks.map((item) =>
+          item.id === runningTask.id
+            ? { ...item, status: 'error', error: 'Invalid API key', imageStatusRecoverable: false, finishedAt: Date.now() }
+            : item,
+        ),
+      }))
+      resolveStatus({
+        records: [{
+          requestId: 'img_status_invalid_key',
+          status: 'running',
+        }],
+        notFound: [],
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(5000)
+
+      const restored = useStore.getState().tasks.find((item) => item.id === runningTask.id)!
+      expect(queryImageStatuses).toHaveBeenCalledTimes(1)
+      expect(restored).toMatchObject({
+        status: 'error',
+        error: 'Invalid API key',
+        imageStatusRecoverable: false,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not keep polling when an Agent round fails while image status is running', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveStatus: (value: Awaited<ReturnType<typeof queryImageStatuses>>) => void = () => {}
+      vi.mocked(queryImageStatuses).mockImplementationOnce(() => new Promise((resolve) => {
+        resolveStatus = resolve
+      }))
+      const conversation = agentConversation({
+        id: 'agent-invalid-key-conversation',
+        activeRoundId: 'agent-invalid-key-round',
+        rounds: [{
+          id: 'agent-invalid-key-round',
+          index: 1,
+          parentRoundId: null,
+          userMessageId: 'agent-invalid-key-user',
+          assistantMessageId: 'agent-invalid-key-assistant',
+          prompt: '生成图片',
+          inputImageIds: [],
+          outputTaskIds: [],
+          imageStatusRequestIds: ['img_agent_invalid_key'],
+          imageStatusApiProfileId: openAIProfile.id,
+          status: 'running',
+          error: null,
+          createdAt: Date.now(),
+          finishedAt: null,
+        }],
+        messages: [
+          {
+            id: 'agent-invalid-key-user',
+            role: 'user',
+            content: '生成图片',
+            roundId: 'agent-invalid-key-round',
+            createdAt: Date.now(),
+          },
+          {
+            id: 'agent-invalid-key-assistant',
+            role: 'assistant',
+            content: '',
+            roundId: 'agent-invalid-key-round',
+            createdAt: Date.now(),
+          },
+        ],
+      })
+      await putAgentConversation(conversation)
+
+      await initStore()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_agent_invalid_key'])
+
+      useStore.setState((state) => ({
+        agentConversations: state.agentConversations.map((item) =>
+          item.id === conversation.id
+            ? {
+                ...item,
+                rounds: item.rounds.map((round) =>
+                  round.id === 'agent-invalid-key-round'
+                    ? { ...round, status: 'error', error: 'Invalid API key', imageStatusRecoverable: false, finishedAt: Date.now() }
+                    : round,
+                ),
+              }
+            : item,
+        ),
+      }))
+      resolveStatus({
+        records: [{
+          requestId: 'img_agent_invalid_key',
+          status: 'running',
+        }],
+        notFound: [],
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(5000)
+
+      const restored = useStore.getState().agentConversations.find((item) => item.id === conversation.id)!
+      expect(queryImageStatuses).toHaveBeenCalledTimes(1)
+      expect(restored.rounds[0]).toMatchObject({
+        status: 'error',
+        error: 'Invalid API key',
+        imageStatusRecoverable: false,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not recheck a terminal errored image status task on init', async () => {
+    const erroredTask = task({
+      id: 'status-errored-task',
+      apiProvider: 'openai',
+      apiProfileId: openAIProfile.id,
+      apiMode: 'images',
+      status: 'error',
+      error: '图片状态查询超时',
+      imageStatusRequestIds: ['img_status_retry'],
+      imageStatusRecoverable: false,
+      createdAt: Date.now(),
+      finishedAt: Date.now(),
+      elapsed: 1000,
+    })
+    await putDbTask(erroredTask)
+
+    await initStore()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const recovered = useStore.getState().tasks.find((item) => item.id === erroredTask.id)!
+    expect(queryImageStatuses).not.toHaveBeenCalled()
+    expect(recovered.rawImageUrls).toBeUndefined()
+    expect(recovered.error).toBe('图片状态查询超时')
+  })
+
+  it('does not query Agent round status on init when its image task is terminally failed', async () => {
+    const conversation = agentConversation({
+      id: 'agent-terminal-task-conversation',
+      activeRoundId: 'agent-terminal-task-round',
+      rounds: [{
+        id: 'agent-terminal-task-round',
+        index: 1,
+        parentRoundId: null,
+        userMessageId: 'agent-terminal-task-user',
+        assistantMessageId: 'agent-terminal-task-assistant',
+        prompt: '生成图片',
+        inputImageIds: [],
+        outputTaskIds: ['agent-terminal-task'],
+        imageStatusRequestIds: ['img_agent_terminal_task'],
+        imageStatusApiProfileId: openAIProfile.id,
+        status: 'running',
+        error: null,
+        createdAt: Date.now(),
+        finishedAt: null,
+      }],
+      messages: [
+        {
+          id: 'agent-terminal-task-user',
+          role: 'user',
+          content: '生成图片',
+          roundId: 'agent-terminal-task-round',
+          createdAt: Date.now(),
+        },
+        {
+          id: 'agent-terminal-task-assistant',
+          role: 'assistant',
+          content: '',
+          roundId: 'agent-terminal-task-round',
+          outputTaskIds: ['agent-terminal-task'],
+          createdAt: Date.now(),
+        },
+      ],
+    })
+    const failedTask = task({
+      id: 'agent-terminal-task',
+      apiProvider: 'openai',
+      apiProfileId: openAIProfile.id,
+      apiMode: 'responses',
+      status: 'error',
+      error: 'Invalid API key',
+      imageStatusRequestIds: ['img_agent_terminal_task'],
+      imageStatusRecoverable: false,
+      createdAt: Date.now(),
+      finishedAt: Date.now(),
+      elapsed: 1000,
+      sourceMode: 'agent',
+      agentConversationId: conversation.id,
+      agentRoundId: 'agent-terminal-task-round',
+      agentMessageId: 'agent-terminal-task-assistant',
+      agentToolCallId: 'img_agent_terminal_task',
+    })
+    await putAgentConversation(conversation)
+    await putDbTask(failedTask)
+
+    await initStore()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const restored = useStore.getState().agentConversations.find((item) => item.id === conversation.id)!
+    expect(queryImageStatuses).not.toHaveBeenCalled()
+    expect(restored.rounds[0]).toMatchObject({
+      status: 'error',
+      error: 'Invalid API key',
+      imageStatusRecoverable: false,
+    })
+  })
+
+  it('fails a tracked non-fal task when image status explicitly fails', async () => {
+    const runningTask = task({
+      id: 'status-failed-task',
+      apiProvider: 'openai',
+      apiProfileId: openAIProfile.id,
+      apiMode: 'responses',
+      status: 'running',
+      imageStatusRequestIds: ['img_status_failed'],
+      createdAt: Date.now(),
+      finishedAt: null,
+      elapsed: null,
+    })
+    await putDbTask(runningTask)
+    vi.mocked(queryImageStatuses).mockResolvedValueOnce({
+      records: [{
+        requestId: 'img_status_failed',
+        status: 'failed',
+        error: 'upstream failed',
+      }],
+      notFound: [],
+    })
+
+    await initStore()
+    await vi.waitFor(() => expect(useStore.getState().tasks.find((item) => item.id === runningTask.id)?.status).toBe('error'))
+
+    const recovered = useStore.getState().tasks.find((item) => item.id === runningTask.id)!
+    expect(recovered.error).toBe('upstream failed')
+    expect(recovered.imageStatusRecoverable).toBe(false)
   })
 })
 

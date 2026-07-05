@@ -41,6 +41,8 @@ export type ModelsResponse = {
   object?: string
 }
 
+const usageInFlight = new Map<string, Promise<UsageResponse>>()
+
 function joinUrl(base: string, path: string): string {
   const b = base.replace(/\/+$/, '')
   const p = path.startsWith('/') ? path : '/' + path
@@ -212,18 +214,30 @@ export async function fetchApiKeys(): Promise<ApiKeysResponse> {
 export async function fetchUsage(apiKey: string): Promise<UsageResponse> {
   if (!apiKey) throw new Error('apiKey 不能为空')
   const issuer = requireIssuer()
-  const resp = await fetch(joinUrl(issuer, '/v1/usage'), {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      Accept: 'application/json',
-    },
-  })
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '')
-    throw new Error(`fetch usage failed: ${resp.status} ${text}`)
+  const cacheKey = `${issuer}:${apiKey}`
+  const existing = usageInFlight.get(cacheKey)
+  if (existing) return existing
+
+  const promise = (async () => {
+    const resp = await fetch(joinUrl(issuer, '/v1/usage'), {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+      },
+    })
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '')
+      throw new Error(`fetch usage failed: ${resp.status} ${text}`)
+    }
+    return (await resp.json()) as UsageResponse
+  })()
+  usageInFlight.set(cacheKey, promise)
+  try {
+    return await promise
+  } finally {
+    usageInFlight.delete(cacheKey)
   }
-  return (await resp.json()) as UsageResponse
 }
 
 /** GET {issuer}/v1/models —— 用所选 api_key 作 Bearer */

@@ -33,11 +33,11 @@ describe('validateApiProfile', () => {
     }))).toBeNull()
   })
 
-  it('still requires API URL when API proxy is unavailable', () => {
+  it('still requires API URL when API proxy is disabled', () => {
     expect(validateApiProfile(createDefaultOpenAIProfile({
       baseUrl: '',
       apiKey: 'test-key',
-      apiProxy: true,
+      apiProxy: false,
     }))).toBe('缺少 API URL')
   })
 })

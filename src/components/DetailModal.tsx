@@ -323,6 +323,16 @@ export default function DetailModal() {
     }
   }
 
+  const handleCopyRawImageUrls = async () => {
+    if (!rawImageUrls.length) return
+    try {
+      await copyTextToClipboard(rawImageUrls.join('\n'))
+      showToast(rawImageUrls.length === 1 ? '图片链接已复制' : '图片链接已全部复制', 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制链接失败', err), 'error')
+    }
+  }
+
   const handleCopyPrompt = async () => {
     if (!task.prompt) return
     try {
@@ -762,35 +772,6 @@ export default function DetailModal() {
                     </ViewportTooltip>
                   </div>
                 )}
-                {task.rawImageUrls && task.rawImageUrls.length > 0 && (
-                  <div className="relative group">
-                    <button
-                      type="button"
-                      {...copyRawUrlsTooltip.handlers}
-                      onClick={async () => {
-                        if (task.rawImageUrls!.length === 1) {
-                          copyRawUrlsTooltip.handlers.onClick()
-                          try {
-                            await copyTextToClipboard(task.rawImageUrls![0])
-                            showToast('图片链接已复制', 'success')
-                          } catch (err) {
-                            showToast(getClipboardFailureMessage('复制链接失败', err), 'error')
-                          }
-                        } else {
-                          dismissAllTooltips()
-                          setShowRawUrlsModal(true)
-                        }
-                      }}
-                      className="inline-flex items-center justify-center rounded-full border border-green-200/80 bg-green-50 px-3 py-1.5 text-green-600 transition hover:bg-green-100 dark:border-green-500/20 dark:bg-green-500/10 dark:text-green-400 dark:hover:bg-green-500/20"
-                      aria-label="复制图片链接"
-                    >
-                      <LinkIcon className="h-4 w-4" />
-                    </button>
-                    <ViewportTooltip visible={copyRawUrlsTooltip.visible} className="whitespace-nowrap">
-                      复制图片链接
-                    </ViewportTooltip>
-                  </div>
-                )}
                 {streamPartialImageIds.length > 0 && (
                   <div className="relative group">
                     <button
@@ -829,6 +810,26 @@ export default function DetailModal() {
                     重试任务
                   </ViewportTooltip>
                 </div>
+                {task.rawImageUrls && task.rawImageUrls.length > 0 && (
+                  <div className="relative group">
+                    <button
+                      type="button"
+                      {...copyRawUrlsTooltip.handlers}
+                      onClick={async () => {
+                        copyRawUrlsTooltip.handlers.onClick()
+                        await handleCopyRawImageUrls()
+                      }}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-full border border-green-200/80 bg-green-50 px-3 py-1.5 text-xs font-medium text-green-600 transition hover:bg-green-100 dark:border-green-500/20 dark:bg-green-500/10 dark:text-green-400 dark:hover:bg-green-500/20"
+                      aria-label="复制图片链接"
+                    >
+                      <LinkIcon className="h-4 w-4" />
+                      <span>复制图片链接</span>
+                    </button>
+                    <ViewportTooltip visible={copyRawUrlsTooltip.visible} className="whitespace-nowrap">
+                      复制图片链接
+                    </ViewportTooltip>
+                  </div>
+                )}
               </div>
             </div>
           )}
