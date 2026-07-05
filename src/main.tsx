@@ -9,6 +9,12 @@ import 'katex/dist/katex.min.css'
 import './index.css'
 import { installMobileViewportGuards } from './lib/viewport'
 
+// 在页面加载时重置 sessionStorage 状态，确保每次页面刷新都能重新获取 API
+if (typeof window !== 'undefined') {
+  sessionStorage.removeItem('githubApiFetched')
+  sessionStorage.removeItem('apiKeysFetched')
+}
+
 installMobileViewportGuards()
 
 if ('serviceWorker' in navigator) {

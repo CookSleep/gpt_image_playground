@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect } fr
 import { createPortal } from 'react-dom'
 import { ALL_FAVORITES_COLLECTION_ID, deleteFavoriteCollection, getTaskFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { useAuth } from '../auth/AuthContext'
-import { fetchApiKeys, fetchUsage, fetchModels, extractBalance, type ModelInfo, type ApiKeyItem } from '../auth/oidcResource'
+import { fetchApiKeys, fetchUsage, fetchModels, extractBalance, invalidateApiKeysCache, type ModelInfo, type ApiKeyItem } from '../auth/oidcResource'
 import { DEFAULT_PARAMS, type TaskRecord } from '../types'
 import { getActiveApiProfile, getAgentImageApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
@@ -463,14 +463,26 @@ export default function InputBar() {
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
   const searchQuery = useStore((s) => s.searchQuery)
 
-  // 进入页面时拉取一次 OIDC provider 的 api-keys 列表；用户态由 AuthProvider 统一维护
+  // 监听用户登录状态变化：用户登录后拉取 API keys
   useEffect(() => {
+    if (!user) {
+      // 用户登出时清空 API keys 和缓存
+      console.log('[InputBar] User logged out, clearing API keys')
+      invalidateApiKeysCache() // 清空模块级缓存，允许重新登录后重新获取
+      setApiKeys([])
+      setApiKeyItems([])
+      setApiKey('')
+      setApiKeysError('')
+      return
+    }
+
     let cancelled = false
     const run = async () => {
       if (cancelled) return
       setApiKeysLoading(true)
       setApiKeysError('')
       try {
+        console.log('[InputBar] Fetching API keys...')
         const res = await fetchApiKeys()
         if (cancelled) return
         const keys = res.sub2api_apikeys || []
@@ -486,6 +498,7 @@ export default function InputBar() {
           if (cached && keys.includes(cached)) return cached
           return keys[0]
         })
+        console.log('[InputBar] API keys fetched successfully')
       } catch (err) {
         if (cancelled) return
         const msg = err instanceof Error ? err.message : String(err)
@@ -502,21 +515,26 @@ export default function InputBar() {
     return () => {
       cancelled = true
     }
-    // 仅在挂载时触发一次
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [user])
 
-  // 选中的 apiKey 变化：并行拉 balance(/v1/usage) 与 模型列表(/v1/models)
   useEffect(() => {
     if (!apiKey) {
       setBalance('')
       setModels([])
       return
     }
+    
     let cancelled = false
     setBalanceLoading(true)
     setModelsLoading(true)
-    Promise.allSettled([fetchUsage(apiKey), fetchModels(apiKey)]).then((results) => {
+    
+    // 使用 AbortController 来取消重复请求
+    const controller = new AbortController()
+    
+    Promise.allSettled([
+      fetchUsage(apiKey, { signal: controller.signal }),
+      fetchModels(apiKey, { signal: controller.signal })
+    ]).then((results) => {
       if (cancelled) return
       const [usageRes, modelsRes] = results
       if (usageRes.status === 'fulfilled') {
@@ -542,9 +560,16 @@ export default function InputBar() {
       }
       setBalanceLoading(false)
       setModelsLoading(false)
+    }).catch(() => {
+      if (!cancelled) {
+        setBalanceLoading(false)
+        setModelsLoading(false)
+      }
     })
+    
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [apiKey])
 

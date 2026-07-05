@@ -3,6 +3,12 @@
 declare const __APP_VERSION__: string
 declare const __DEV_PROXY_CONFIG__: unknown
 
+interface Window {
+  __APP_CONFIG__?: AppRuntimeConfig
+  __githubApiFetched?: boolean
+  __apiKeysFetched?: boolean
+}
+
 interface ImportMetaEnv {
   readonly VITE_DEFAULT_API_URL?: string
   readonly VITE_API_PROXY_AVAILABLE?: string
@@ -29,8 +35,4 @@ interface AppRuntimeConfig {
   SHOW_DEFAULT_CONFIG_ONLY?: string
   AUTH_BACKEND_URL?: string
   [key: string]: string | undefined
-}
-
-interface Window {
-  __APP_CONFIG__?: AppRuntimeConfig
 }

@@ -75,13 +75,13 @@ export default function LoginModal() {
               onClick={() => startLogin(p.name)}
               className="w-full rounded-lg border border-gray-200 dark:border-white/[0.08] bg-gray-50 dark:bg-white/[0.04] hover:bg-gray-100 dark:hover:bg-white/[0.08] text-gray-900 dark:text-gray-100 px-4 py-2.5 text-sm font-medium transition-colors"
             >
-              使用 {p.display_name} 登录
+              通过 {p.display_name} 登录
             </button>
           ))}
         </div>
 
         <p className="mt-6 text-xs text-center text-gray-400 dark:text-gray-500">
-          登录信息由第三方提供商管理
+          登录信息由[OpenToken主站]管理, 可放心登录
         </p>
       </div>
     </div>

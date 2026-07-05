@@ -21,6 +21,35 @@ export interface LatestRelease {
   url: string
 }
 
+// 模块级 Promise 缓存：解决 StrictMode 下 useEffect 双执行导致的重复请求
+// 同步立即赋值 Promise，第二次调用直接复用同一个 Promise
+let latestReleasePromise: Promise<LatestRelease | null> | null = null
+
+function fetchLatestRelease(): Promise<LatestRelease | null> {
+  if (latestReleasePromise) return latestReleasePromise
+  latestReleasePromise = fetch(API_URL, { headers: { Accept: 'application/vnd.github.v3+json' } })
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return res.json()
+    })
+    .then((data): LatestRelease | null => {
+      const tag: string = data.tag_name ?? ''
+      const version = tag.replace(/^v/, '')
+      if (version && compareVersions(version, __APP_VERSION__) > 0) {
+        return {
+          tag,
+          url: data.html_url ?? `https://github.com/${REPO}/releases/latest`,
+        }
+      }
+      return null
+    })
+    .catch(() => {
+      // 静默失败，不影响正常使用；保留缓存避免重复请求
+      return null
+    })
+  return latestReleasePromise
+}
+
 /**
  * 检查 GitHub 最新 Release 版本。
  * - 仅当最新 Release 版本高于当前 __APP_VERSION__ 时提示。
@@ -35,27 +64,10 @@ export function useVersionCheck() {
 
   useEffect(() => {
     let cancelled = false
-
-    fetch(API_URL, { headers: { Accept: 'application/vnd.github.v3+json' } })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json()
-      })
-      .then((data) => {
-        if (cancelled) return
-        const tag: string = data.tag_name ?? ''
-        const version = tag.replace(/^v/, '')
-        if (version && compareVersions(version, __APP_VERSION__) > 0) {
-          setLatestRelease({
-            tag,
-            url: data.html_url ?? `https://github.com/${REPO}/releases/latest`,
-          })
-        }
-      })
-      .catch(() => {
-        /* 静默失败，不影响正常使用 */
-      })
-
+    fetchLatestRelease().then((release) => {
+      if (cancelled) return
+      if (release) setLatestRelease(release)
+    })
     return () => {
       cancelled = true
     }

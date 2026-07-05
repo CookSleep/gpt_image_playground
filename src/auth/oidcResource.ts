@@ -77,8 +77,27 @@ async function getActiveOIDCToken(): Promise<string> {
   return tok as string
 }
 
-/** GET {issuer}/oidc/resource/api-keys?status=active —— 仅返回启用的 key */
-export async function fetchApiKeys(): Promise<ApiKeysResponse> {
+// 模块级 Promise 缓存：解决 React StrictMode 下 useEffect 双执行导致的重复请求
+// 同步立即赋值 Promise，第二次调用直接复用同一个 Promise
+let apiKeysPromise: Promise<ApiKeysResponse> | null = null
+
+/** 清空 api-keys 缓存（登出、切换用户、失败重试时调用） */
+export function invalidateApiKeysCache(): void {
+  apiKeysPromise = null
+}
+
+/** GET {issuer}/oidc/resource/api-keys?status=active —— 仅返回启用的 key（带模块级缓存） */
+export function fetchApiKeys(): Promise<ApiKeysResponse> {
+  if (apiKeysPromise) return apiKeysPromise
+  apiKeysPromise = _fetchApiKeys().catch((err) => {
+    // 失败清空缓存，允许下次重试
+    apiKeysPromise = null
+    throw err
+  })
+  return apiKeysPromise
+}
+
+async function _fetchApiKeys(): Promise<ApiKeysResponse> {
   const issuer = requireIssuer()
   const apiKeysUrl = joinUrl(issuer, '/oidc/resource/api-keys') + '?status=active'
   const doFetch = (token: string) =>
@@ -211,7 +230,7 @@ export async function fetchApiKeys(): Promise<ApiKeysResponse> {
 }
 
 /** GET {issuer}/v1/usage —— 用所选 api_key 作 Bearer */
-export async function fetchUsage(apiKey: string): Promise<UsageResponse> {
+export async function fetchUsage(apiKey: string, options?: { signal?: AbortSignal }): Promise<UsageResponse> {
   if (!apiKey) throw new Error('apiKey 不能为空')
   const issuer = requireIssuer()
   const cacheKey = `${issuer}:${apiKey}`
@@ -225,6 +244,7 @@ export async function fetchUsage(apiKey: string): Promise<UsageResponse> {
         Authorization: `Bearer ${apiKey}`,
         Accept: 'application/json',
       },
+      signal: options?.signal,
     })
     if (!resp.ok) {
       const text = await resp.text().catch(() => '')
@@ -241,7 +261,7 @@ export async function fetchUsage(apiKey: string): Promise<UsageResponse> {
 }
 
 /** GET {issuer}/v1/models —— 用所选 api_key 作 Bearer */
-export async function fetchModels(apiKey: string): Promise<ModelsResponse> {
+export async function fetchModels(apiKey: string, options?: { signal?: AbortSignal }): Promise<ModelsResponse> {
   if (!apiKey) throw new Error('apiKey 不能为空')
   const issuer = requireIssuer()
   const resp = await fetch(joinUrl(issuer, '/v1/models'), {
@@ -250,6 +270,7 @@ export async function fetchModels(apiKey: string): Promise<ModelsResponse> {
       Authorization: `Bearer ${apiKey}`,
       Accept: 'application/json',
     },
+    signal: options?.signal,
   })
   if (!resp.ok) {
     const text = await resp.text().catch(() => '')
