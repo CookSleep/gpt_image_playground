@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  ATLAS_CLOUD_BASE_URL,
+  ATLAS_CLOUD_EDIT_MODEL,
+  ATLAS_CLOUD_IMAGE_MODEL,
+  ATLAS_CLOUD_PROVIDER_ID,
   DEFAULT_FAL_BASE_URL,
   DEFAULT_FAL_MODEL,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_OPENAI_PROFILE_ID,
   DEFAULT_SETTINGS,
+  createAtlasCloudProviderDefinition,
   createDefaultOpenAIProfile,
   createDefaultFalProfile,
   getActiveApiProfile,
@@ -591,6 +596,65 @@ describe('custom providers', () => {
     expect(profile.provider).toBe(provider.id)
     expect(profile.baseUrl).toBe(DEFAULT_SETTINGS.baseUrl)
     expect(profile.model).toBe(DEFAULT_IMAGES_MODEL)
+  })
+
+  it('provides an Atlas Cloud custom provider preset', () => {
+    const provider = createAtlasCloudProviderDefinition()
+
+    expect(provider).toMatchObject({
+      id: ATLAS_CLOUD_PROVIDER_ID,
+      name: 'Atlas Cloud',
+      submit: {
+        path: 'model/generateImage',
+        contentType: 'json',
+        taskIdPath: 'id',
+        body: {
+          model: '$profile.model',
+          prompt: '$prompt',
+          size: '$params.size',
+          quality: '$params.quality',
+          output_format: '$params.output_format',
+          moderation: '$params.moderation',
+          enable_base64_output: false,
+          enable_sync_mode: false,
+        },
+      },
+      editSubmit: {
+        path: 'model/generateImage',
+        contentType: 'json',
+        taskIdPath: 'id',
+        body: {
+          model: ATLAS_CLOUD_EDIT_MODEL,
+          prompt: '$prompt',
+          images: '$inputImages.dataUrls',
+          output_format: '$params.output_format',
+        },
+      },
+      poll: {
+        path: 'model/result/{task_id}',
+        statusPath: 'status',
+        successValues: ['completed'],
+        failureValues: ['failed'],
+        result: {
+          imageUrlPaths: ['outputs.*'],
+          b64JsonPaths: [],
+        },
+      },
+    })
+  })
+
+  it('uses Atlas Cloud URL and model when switching to the preset provider', () => {
+    const provider = createAtlasCloudProviderDefinition()
+    const profile = switchApiProfileProvider(createDefaultFalProfile(), provider.id, provider)
+
+    expect(profile).toMatchObject({
+      provider: ATLAS_CLOUD_PROVIDER_ID,
+      baseUrl: ATLAS_CLOUD_BASE_URL,
+      model: ATLAS_CLOUD_IMAGE_MODEL,
+      apiMode: 'images',
+      apiProxy: false,
+      streamImages: false,
+    })
   })
 
   it('uses API-mode specific streaming defaults and preserves partial image count', () => {

@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
-import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
+import {
+  ATLAS_CLOUD_BASE_URL,
+  ATLAS_CLOUD_DEFAULT_IMAGE_SIZE,
+  ATLAS_CLOUD_DEFAULT_QUALITY,
+  ATLAS_CLOUD_IMAGE_MODEL,
+  ATLAS_CLOUD_PROVIDER_ID,
+  createDefaultFalProfile,
+  createDefaultOpenAIProfile,
+  DEFAULT_SETTINGS,
+  normalizeSettings,
+} from './apiProfiles'
 import { getOutputImageLimitForSettings, normalizeParamsForSettings } from './paramCompatibility'
 
 describe('parameter compatibility', () => {
@@ -49,5 +59,39 @@ describe('parameter compatibility', () => {
 
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: 'auto' }, settings).size).toBe('1360x1024')
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: 'auto' }, settings, { hasInputImages: true }).size).toBe('auto')
+  })
+
+  it('normalizes Atlas Cloud params to the supported image schema', () => {
+    const atlasCloudProfile = createDefaultOpenAIProfile({
+      id: 'atlascloud-profile',
+      provider: ATLAS_CLOUD_PROVIDER_ID,
+      baseUrl: ATLAS_CLOUD_BASE_URL,
+      apiKey: 'atlas-key',
+      model: ATLAS_CLOUD_IMAGE_MODEL,
+    })
+    const settings = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      customProviders: [{ id: ATLAS_CLOUD_PROVIDER_ID, name: 'Atlas Cloud', submit: { path: 'model/generateImage' } }],
+      profiles: [atlasCloudProfile],
+      activeProfileId: atlasCloudProfile.id,
+    })
+
+    expect(getOutputImageLimitForSettings(settings)).toBe(1)
+    expect(normalizeParamsForSettings({
+      ...DEFAULT_PARAMS,
+      n: 3,
+      size: 'auto',
+      quality: 'auto',
+      output_format: 'webp',
+      moderation: 'auto',
+      output_compression: 80,
+    }, settings)).toMatchObject({
+      n: 1,
+      size: ATLAS_CLOUD_DEFAULT_IMAGE_SIZE,
+      quality: ATLAS_CLOUD_DEFAULT_QUALITY,
+      output_format: 'png',
+      moderation: 'low',
+      output_compression: null,
+    })
   })
 })

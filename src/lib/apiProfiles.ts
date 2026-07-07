@@ -33,6 +33,12 @@ export const DEFAULT_IMAGES_MODEL = 'gpt-image-2'
 export const DEFAULT_RESPONSES_MODEL = 'gpt-5.5'
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
+export const ATLAS_CLOUD_PROVIDER_ID = 'custom-atlascloud'
+export const ATLAS_CLOUD_BASE_URL = 'https://api.atlascloud.ai/api/v1'
+export const ATLAS_CLOUD_IMAGE_MODEL = 'openai/gpt-image-2/text-to-image'
+export const ATLAS_CLOUD_EDIT_MODEL = 'openai/gpt-image-2/edit'
+export const ATLAS_CLOUD_DEFAULT_IMAGE_SIZE = '1024x1024'
+export const ATLAS_CLOUD_DEFAULT_QUALITY = 'medium'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
 export const DEFAULT_API_TIMEOUT = 600
 
@@ -315,6 +321,72 @@ export function normalizeCustomProviderDefinitions(input: unknown): CustomProvid
     .filter((item): item is CustomProviderDefinition => Boolean(item))
 }
 
+export function createAtlasCloudProviderDefinition(): CustomProviderDefinition {
+  const result: CustomProviderResultMapping = {
+    imageUrlPaths: ['outputs.*'],
+    b64JsonPaths: [],
+  }
+
+  return {
+    id: ATLAS_CLOUD_PROVIDER_ID,
+    name: 'Atlas Cloud',
+    template: 'http-image',
+    submit: {
+      path: 'model/generateImage',
+      method: 'POST',
+      contentType: 'json',
+      body: {
+        model: '$profile.model',
+        prompt: '$prompt',
+        size: '$params.size',
+        quality: '$params.quality',
+        output_format: '$params.output_format',
+        moderation: '$params.moderation',
+        enable_base64_output: false,
+        enable_sync_mode: false,
+      },
+      taskIdPath: 'id',
+      result,
+    },
+    editSubmit: {
+      path: 'model/generateImage',
+      method: 'POST',
+      contentType: 'json',
+      body: {
+        model: ATLAS_CLOUD_EDIT_MODEL,
+        prompt: '$prompt',
+        images: '$inputImages.dataUrls',
+        size: '$params.size',
+        quality: '$params.quality',
+        output_format: '$params.output_format',
+        moderation: '$params.moderation',
+        enable_base64_output: false,
+        enable_sync_mode: false,
+      },
+      taskIdPath: 'id',
+      result,
+    },
+    poll: {
+      path: 'model/result/{task_id}',
+      method: 'GET',
+      intervalSeconds: 5,
+      statusPath: 'status',
+      successValues: ['completed'],
+      failureValues: ['failed'],
+      errorPath: 'error',
+      result,
+    },
+  }
+}
+
+function getCustomProviderProfileDefaults(customProvider: CustomProviderDefinition) {
+  if (customProvider.id !== ATLAS_CLOUD_PROVIDER_ID) return null
+  return {
+    baseUrl: ATLAS_CLOUD_BASE_URL,
+    model: ATLAS_CLOUD_IMAGE_MODEL,
+  }
+}
+
 export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
   const apiMode = overrides.apiMode ?? DEFAULT_API_URL_PATCH?.apiMode ?? 'images'
   const streamImages = overrides.streamImages ?? DEFAULT_API_URL_PATCH?.streamImages ?? getDefaultStreamImages('openai', apiMode)
@@ -388,11 +460,12 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
 
   if (customProvider) {
     const shouldUseOpenAIDefaults = profile.provider === 'fal'
+    const customProviderDefaults = getCustomProviderProfileDefaults(customProvider)
     return {
       ...profile,
       provider: customProvider.id,
-      baseUrl: savedDraft?.baseUrl ?? (shouldUseOpenAIDefaults ? DEFAULT_BASE_URL : profile.baseUrl || DEFAULT_BASE_URL),
-      model: savedDraft?.model ?? (shouldUseOpenAIDefaults ? DEFAULT_IMAGES_MODEL : profile.model || DEFAULT_IMAGES_MODEL),
+      baseUrl: savedDraft?.baseUrl ?? customProviderDefaults?.baseUrl ?? (shouldUseOpenAIDefaults ? DEFAULT_BASE_URL : profile.baseUrl || DEFAULT_BASE_URL),
+      model: savedDraft?.model ?? customProviderDefaults?.model ?? (shouldUseOpenAIDefaults ? DEFAULT_IMAGES_MODEL : profile.model || DEFAULT_IMAGES_MODEL),
       apiMode: 'images',
       codexCli: false,
       apiProxy: false,
