@@ -70,6 +70,7 @@ export default function App() {
   const [view, setView] = useState<MainView>('gallery')
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
 
   async function loadMe() {
     if (isClientLoggedOut()) {
@@ -143,6 +144,7 @@ export default function App() {
           <button className="quota-pill">剩余额度 <b>{user.quotaRemaining}</b></button>
           <button className={view === 'gallery' ? 'active' : ''} onClick={() => setView('gallery')}>工作台</button>
           {user.role === 'admin' ? <button className={view === 'admin' ? 'active' : ''} onClick={() => setView('admin')}>管理</button> : null}
+          <button onClick={() => setShowPasswordModal(true)}>改密码</button>
           <button onClick={logout}>退出</button>
         </nav>
       </header>
@@ -151,6 +153,67 @@ export default function App() {
       ) : (
         <GalleryPage user={user} onUserChange={setUser} />
       )}
+      {showPasswordModal ? <ChangePasswordModal onClose={() => setShowPasswordModal(false)} /> : null}
+    </div>
+  )
+}
+
+function ChangePasswordModal(props: { onClose: () => void }) {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setMessage('')
+    if (newPassword.length < 6) {
+      setMessage('新密码至少 6 位')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setMessage('两次输入的新密码不一致')
+      return
+    }
+    setBusy(true)
+    try {
+      await apiRequest('/api/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      })
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setMessage('密码已修改')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={props.onClose}>
+      <section className="password-modal" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div>
+            <b>修改密码</b>
+            <span>修改后下次登录请使用新密码。</span>
+          </div>
+          <button onClick={props.onClose}>关闭</button>
+        </header>
+        <form onSubmit={submit}>
+          <label>当前密码<input value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} type="password" autoComplete="current-password" /></label>
+          <label>新密码<input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} type="password" autoComplete="new-password" /></label>
+          <label>确认新密码<input value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} type="password" autoComplete="new-password" /></label>
+          {message ? <div className={`inline-message ${message.includes('已修改') ? '' : 'error'}`}>{message}</div> : null}
+          <div className="button-row">
+            <button type="button" onClick={props.onClose}>取消</button>
+            <button className="primary" disabled={busy}>{busy ? '保存中...' : '保存密码'}</button>
+          </div>
+        </form>
+      </section>
     </div>
   )
 }

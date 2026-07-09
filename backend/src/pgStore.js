@@ -112,6 +112,20 @@ export async function createPgStore(databaseUrl) {
       return rowUser(row)
     },
 
+    async updatePassword(userId, password) {
+      const passwordHash = await bcrypt.hash(password, SALT_ROUNDS)
+      const result = await pool.query(
+        'update users set password_hash = $1, updated_at = now() where id = $2 returning *',
+        [passwordHash, userId],
+      )
+      if (!result.rows[0]) {
+        const err = new Error('用户不存在')
+        err.statusCode = 404
+        throw err
+      }
+      return rowUser(result.rows[0])
+    },
+
     async getUserById(id) {
       const result = await pool.query('select * from users where id = $1', [id])
       return rowUser(result.rows[0])

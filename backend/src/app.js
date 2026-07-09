@@ -144,6 +144,20 @@ export function buildApp(options) {
     return { ok: true }
   })
 
+  app.post('/api/auth/change-password', async (request, reply) => {
+    const user = await requireUser(request, reply)
+    if (!user) return
+    const currentPassword = String(request.body?.currentPassword ?? '')
+    const newPassword = String(request.body?.newPassword ?? '')
+    if (newPassword.length < 6) return sendError(reply, 400, '新密码至少 6 位')
+
+    const verified = await options.store.verifyUser(user.username, currentPassword)
+    if (!verified) return sendError(reply, 400, '当前密码不正确')
+
+    await options.store.updatePassword(user.id, newPassword)
+    return { ok: true }
+  })
+
   app.get('/api/me', async (request, reply) => {
     const user = await requireUser(request, reply)
     if (!user) return

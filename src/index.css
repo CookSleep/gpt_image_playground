@@ -654,7 +654,8 @@ img {
   box-shadow: 0 24px 70px rgba(24, 58, 93, .20);
 }
 
-.detail-modal header {
+.detail-modal header,
+.password-modal header {
   min-height: 58px;
   border-bottom: 1px solid var(--line);
   display: flex;
@@ -662,6 +663,44 @@ img {
   justify-content: space-between;
   gap: 12px;
   padding: 0 18px;
+}
+
+.password-modal {
+  width: min(440px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(24, 58, 93, .20);
+  overflow: hidden;
+}
+
+.password-modal header b {
+  display: block;
+  color: var(--ink-strong);
+}
+
+.password-modal header span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.password-modal form {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.password-modal label {
+  display: grid;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.password-modal .button-row {
+  justify-content: flex-end;
 }
 
 .detail-body {
@@ -1045,6 +1084,10 @@ img {
 
   .detail-body {
     grid-template-columns: 1fr;
+  }
+
+  .password-modal .button-row {
+    flex-direction: column-reverse;
   }
 
   .auth-panel {

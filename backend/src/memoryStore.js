@@ -86,6 +86,18 @@ export function createMemoryStore() {
       return publicUser(user)
     },
 
+    async updatePassword(userId, password) {
+      const user = users.find((item) => String(item.id) === String(userId))
+      if (!user) {
+        const err = new Error('用户不存在')
+        err.statusCode = 404
+        throw err
+      }
+      user.passwordHash = bcrypt.hashSync(password, 4)
+      user.updatedAt = nowIso()
+      return publicUser(user)
+    },
+
     async getUserById(id) {
       const user = users.find((item) => String(item.id) === String(id))
       return user ? publicUser(user) : null

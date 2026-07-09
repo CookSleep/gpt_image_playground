@@ -90,6 +90,45 @@ describe('认证与审核', () => {
     expect(response.response.statusCode).toBe(403)
     expect(response.response.json().message).toContain('禁用')
   })
+
+  test('登录用户可以修改自己的密码', async () => {
+    const { app } = createHarness()
+    const admin = await login(app, 'admin', 'admin-pass')
+
+    const changed = await app.inject({
+      method: 'POST',
+      url: '/api/auth/change-password',
+      headers: { cookie: admin.cookie },
+      payload: { currentPassword: 'admin-pass', newPassword: 'new-admin-pass' },
+    })
+
+    expect(changed.statusCode).toBe(200)
+    expect(changed.json()).toMatchObject({ ok: true })
+
+    const oldLogin = await login(app, 'admin', 'admin-pass')
+    expect(oldLogin.response.statusCode).toBe(401)
+
+    const newLogin = await login(app, 'admin', 'new-admin-pass')
+    expect(newLogin.response.statusCode).toBe(200)
+  })
+
+  test('旧密码错误时不能修改密码', async () => {
+    const { app } = createHarness()
+    const admin = await login(app, 'admin', 'admin-pass')
+
+    const changed = await app.inject({
+      method: 'POST',
+      url: '/api/auth/change-password',
+      headers: { cookie: admin.cookie },
+      payload: { currentPassword: 'wrong-pass', newPassword: 'new-admin-pass' },
+    })
+
+    expect(changed.statusCode).toBe(400)
+    expect(changed.json().message).toContain('当前密码')
+
+    const oldLogin = await login(app, 'admin', 'admin-pass')
+    expect(oldLogin.response.statusCode).toBe(200)
+  })
 })
 
 describe('管理员额度与生成', () => {
@@ -170,4 +209,3 @@ describe('管理员额度与生成', () => {
     expect(me.json().user).toMatchObject({ quotaRemaining: 1, quotaUsed: 0 })
   })
 })
-
