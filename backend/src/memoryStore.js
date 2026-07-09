@@ -189,6 +189,24 @@ export function createMemoryStore() {
       const generation = generations.find((item) => item.id === String(generationId))
       if (!generation) throw new Error('任务不存在')
       const user = users.find((item) => String(item.id) === generation.userId)
+      if (user?.role === 'admin') {
+        generation.status = 'done'
+        generation.upstream = upstream
+        generation.elapsedMs = elapsedMs
+        generation.finishedAt = nowIso()
+        for (const image of outputImages) {
+          images.push({
+            id: String(nextImageId++),
+            generationId: generation.id,
+            userId: generation.userId,
+            objectKey: image.objectKey,
+            contentType: image.contentType,
+            revisedPrompt: image.revisedPrompt ?? null,
+            createdAt: nowIso(),
+          })
+        }
+        return this.getGeneration(generation.id, generation.userId)
+      }
       if (!user || user.quotaRemaining <= 0) {
         generation.status = 'error'
         generation.error = '额度不足，扣费失败'

@@ -384,6 +384,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
 
   const visible = useMemo(() => generations.filter((item) => filter === 'all' || item.status === filter), [generations, filter])
   const doneCount = generations.filter((item) => item.status === 'done').length
+  const quotaBlocked = props.user.role !== 'admin' && props.user.quotaRemaining <= 0
 
   return (
     <main className="workspace studio-workspace">
@@ -425,13 +426,13 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
                 <select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select>
                 <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
                 <button type="button" onClick={() => fileInputRef.current?.click()}>参考图 {inputImages.length ? inputImages.length : ''}</button>
-                <button className="primary" disabled={busy || props.user.quotaRemaining <= 0}>{busy ? '提交中...' : '生成图片'}</button>
+                <button className="primary" disabled={busy || quotaBlocked}>{busy ? '提交中...' : quotaBlocked ? '额度不足' : '生成图片'}</button>
               </div>
               {error ? <div className="inline-message error">{error}</div> : null}
             </form>
           </div>
           <div className="generator-stats">
-            <div><span>可用额度</span><b>{props.user.quotaRemaining}</b></div>
+            <div><span>{props.user.role === 'admin' ? '管理员生成' : '可用额度'}</span><b>{props.user.role === 'admin' ? '不限' : props.user.quotaRemaining}</b></div>
             <div><span>默认模型</span><b>gpt-image-2</b></div>
             <div><span>成功任务</span><b>{doneCount}</b></div>
           </div>

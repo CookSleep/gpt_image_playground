@@ -198,7 +198,7 @@ export function buildApp(options) {
     const user = await requireUser(request, reply)
     if (!user) return
     if (user.status !== 'active') return sendError(reply, 403, '账号待审核或已禁用')
-    if (user.quotaRemaining <= 0) return sendError(reply, 403, '可用额度不足')
+    if (user.role !== 'admin' && user.quotaRemaining <= 0) return sendError(reply, 403, '可用额度不足')
 
     const prompt = String(request.body?.prompt ?? '').trim()
     if (!prompt) return sendError(reply, 400, '请输入提示词')

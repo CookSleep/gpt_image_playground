@@ -132,6 +132,27 @@ describe('认证与审核', () => {
 })
 
 describe('管理员额度与生成', () => {
+  test('管理员可以在无额度时生成图片且不扣额度', async () => {
+    const { app } = createHarness()
+    const admin = await login(app, 'admin', 'admin-pass')
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/generations',
+      headers: { cookie: admin.cookie },
+      payload: {
+        prompt: '后台管理员测试生成',
+        params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 1 },
+      },
+    })
+
+    expect(created.statusCode).toBe(202)
+    expect(created.json()).toMatchObject({ generation: { status: 'done', prompt: '后台管理员测试生成' } })
+
+    const me = await app.inject({ method: 'GET', url: '/api/me', headers: { cookie: admin.cookie } })
+    expect(me.json().user).toMatchObject({ role: 'admin', quotaRemaining: 0, quotaUsed: 0 })
+  })
+
   test('管理员启用用户并分配额度后，生成成功扣 1 次并可代理下载图片', async () => {
     const { app } = createHarness()
     const admin = await login(app, 'admin', 'admin-pass')

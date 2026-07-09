@@ -217,6 +217,25 @@ export async function createPgStore(databaseUrl) {
         const generation = generationResult.rows[0]
         if (!generation) throw new Error('任务不存在')
 
+        const ownerResult = await client.query('select * from users where id = $1 for update', [generation.user_id])
+        const owner = ownerResult.rows[0]
+        if (owner?.role === 'admin') {
+          const done = await client.query(
+            `update generations set status = 'done', upstream = $2, elapsed_ms = $3, finished_at = now()
+             where id = $1 returning *`,
+            [generationId, upstream ?? null, elapsedMs],
+          )
+          for (const image of outputImages) {
+            await client.query(
+              `insert into generation_images (generation_id, user_id, object_key, content_type, revised_prompt)
+               values ($1, $2, $3, $4, $5)`,
+              [generationId, generation.user_id, image.objectKey, image.contentType, image.revisedPrompt ?? null],
+            )
+          }
+          await client.query('commit')
+          return this.getGeneration(done.rows[0].id, generation.user_id)
+        }
+
         const userResult = await client.query(
           `update users set quota_remaining = quota_remaining - 1, quota_used = quota_used + 1, updated_at = now()
            where id = $1 and quota_remaining > 0
