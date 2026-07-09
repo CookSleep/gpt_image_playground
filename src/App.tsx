@@ -428,7 +428,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
                 <select value={imageCount} onChange={(e) => setImageCount(Number(e.target.value))} aria-label="图片数量">{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item} 张</option>)}</select>
                 <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
                 <button type="button" onClick={() => fileInputRef.current?.click()}>参考图 {inputImages.length ? inputImages.length : ''}</button>
-                <button className="primary" disabled={busy || quotaBlocked}>{busy ? '提交中...' : quotaBlocked ? '额度不足' : '生成图片'}</button>
+                <button type="submit" className="primary" disabled={busy || quotaBlocked}>{busy ? '提交中...' : quotaBlocked ? '额度不足' : '生成图片'}</button>
               </div>
               {error ? <div className="inline-message error">{error}</div> : null}
             </form>
@@ -481,6 +481,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
 
 function GenerationDetail(props: { generation: ApiGeneration; onClose: () => void }) {
   const firstImage = props.generation.images[0]
+  const imageCount = props.generation.images.length || props.generation.params.n || 1
 
   function download() {
     if (!firstImage) return
@@ -498,19 +499,28 @@ function GenerationDetail(props: { generation: ApiGeneration; onClose: () => voi
           <button onClick={props.onClose}>关闭</button>
         </header>
         <div className="detail-body">
-          <div className="detail-image">{firstImage ? <img src={imageUrl(firstImage.id)} alt={props.generation.prompt} /> : <div className="thumb-placeholder" />}</div>
+          <div className="detail-preview">
+            <div className="detail-image">{firstImage ? <img src={imageUrl(firstImage.id)} alt={props.generation.prompt} /> : <div className="thumb-placeholder" />}</div>
+            <span>{statusText(props.generation.status)}</span>
+          </div>
           <div className="detail-info">
-            <h3>提示词</h3>
-            <p>{props.generation.prompt}</p>
-            <h3>生成参数</h3>
-            <dl>
-              <dt>模型</dt><dd>{props.generation.model}</dd>
-              <dt>尺寸</dt><dd>{props.generation.params.size}</dd>
-              <dt>质量</dt><dd>{props.generation.params.quality}</dd>
-              <dt>格式</dt><dd>{props.generation.params.output_format}</dd>
-              <dt>状态</dt><dd>{statusText(props.generation.status)}</dd>
-              <dt>额度</dt><dd>{props.generation.status === 'done' ? '已扣除 1 次' : '未扣费'}</dd>
-            </dl>
+            <section className="detail-section">
+              <h3>提示词</h3>
+              <p>{props.generation.prompt}</p>
+            </section>
+            <section className="detail-section">
+              <h3>生成参数</h3>
+              <dl>
+                <div><dt>模型</dt><dd>{props.generation.model}</dd></div>
+                <div><dt>尺寸</dt><dd>{props.generation.params.size}</dd></div>
+                <div><dt>质量</dt><dd>{props.generation.params.quality}</dd></div>
+                <div><dt>格式</dt><dd>{props.generation.params.output_format}</dd></div>
+                <div><dt>图片数</dt><dd>{imageCount} 张</dd></div>
+                <div><dt>耗时</dt><dd>{props.generation.elapsedMs ? `${Math.round(props.generation.elapsedMs / 1000)} 秒` : '-'}</dd></div>
+                <div><dt>状态</dt><dd>{statusText(props.generation.status)}</dd></div>
+                <div><dt>额度</dt><dd>{props.generation.status === 'done' ? `已扣除 ${imageCount} 次` : '未扣费'}</dd></div>
+              </dl>
+            </section>
             {props.generation.error ? <div className="inline-message error">{props.generation.error}</div> : null}
             <div className="button-row">
               <button className="primary" disabled={!firstImage} onClick={download}>下载图片</button>
