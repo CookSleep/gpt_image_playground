@@ -236,11 +236,12 @@ export async function createPgStore(databaseUrl) {
           return this.getGeneration(done.rows[0].id, generation.user_id)
         }
 
+        const charge = outputImages.length
         const userResult = await client.query(
-          `update users set quota_remaining = quota_remaining - 1, quota_used = quota_used + 1, updated_at = now()
-           where id = $1 and quota_remaining > 0
+          `update users set quota_remaining = quota_remaining - $2, quota_used = quota_used + $2, updated_at = now()
+           where id = $1 and quota_remaining >= $2
            returning *`,
-          [generation.user_id],
+          [generation.user_id, charge],
         )
         if (!userResult.rows[0]) {
           const failed = await client.query(
@@ -253,8 +254,8 @@ export async function createPgStore(databaseUrl) {
         }
 
         await client.query(
-          'insert into quota_ledger (user_id, actor_id, delta, reason, balance_after) values ($1, null, -1, $2, $3)',
-          [generation.user_id, `生成任务 ${generationId} 成功扣费`, userResult.rows[0].quota_remaining],
+          'insert into quota_ledger (user_id, actor_id, delta, reason, balance_after) values ($1, null, $2, $3, $4)',
+          [generation.user_id, -charge, `生成任务 ${generationId} 成功扣费（${charge} 张图片）`, userResult.rows[0].quota_remaining],
         )
         const done = await client.query(
           `update generations set status = 'done', upstream = $2, elapsed_ms = $3, finished_at = now()

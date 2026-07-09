@@ -207,22 +207,23 @@ export function createMemoryStore() {
         }
         return this.getGeneration(generation.id, generation.userId)
       }
-      if (!user || user.quotaRemaining <= 0) {
+      const charge = outputImages.length
+      if (!user || user.quotaRemaining < charge) {
         generation.status = 'error'
         generation.error = '额度不足，扣费失败'
         generation.finishedAt = nowIso()
         return this.getGeneration(generationId, generation.userId)
       }
 
-      user.quotaRemaining -= 1
-      user.quotaUsed += 1
+      user.quotaRemaining -= charge
+      user.quotaUsed += charge
       user.updatedAt = nowIso()
       quotaLedger.push({
         id: quotaLedger.length + 1,
         userId: String(user.id),
         actorId: null,
-        delta: -1,
-        reason: `生成任务 ${generation.id} 成功扣费`,
+        delta: -charge,
+        reason: `生成任务 ${generation.id} 成功扣费（${charge} 张图片）`,
         balanceAfter: user.quotaRemaining,
         createdAt: nowIso(),
       })

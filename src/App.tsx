@@ -329,6 +329,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   const [size, setSize] = useState('1024x1024')
   const [quality, setQuality] = useState('high')
   const [format, setFormat] = useState('png')
+  const [imageCount, setImageCount] = useState(1)
   const [inputImages, setInputImages] = useState<string[]>([])
   const [filter, setFilter] = useState<'all' | ApiGeneration['status']>('all')
   const [busy, setBusy] = useState(false)
@@ -362,7 +363,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
         body: JSON.stringify({
           prompt,
           inputImages,
-          params: { size, quality, output_format: format, n: 1 },
+          params: { size, quality, output_format: format, n: imageCount },
         }),
       })
       setGenerations((current) => [payload.generation, ...current.filter((item) => item.id !== payload.generation.id)])
@@ -384,7 +385,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
 
   const visible = useMemo(() => generations.filter((item) => filter === 'all' || item.status === filter), [generations, filter])
   const doneCount = generations.filter((item) => item.status === 'done').length
-  const quotaBlocked = props.user.role !== 'admin' && props.user.quotaRemaining <= 0
+  const quotaBlocked = props.user.role !== 'admin' && props.user.quotaRemaining < imageCount
 
   return (
     <main className="workspace studio-workspace">
@@ -398,7 +399,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
         <div className="quota-card">
           <span>可用额度</span>
           <b>{props.user.quotaRemaining}</b>
-          <small>失败不扣，成功扣 1 次</small>
+          <small>失败不扣，成功按图片张数扣费</small>
         </div>
       </aside>
       <section className="studio-main">
@@ -407,7 +408,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
             <div className="generator-copy">
               <span className="eyebrow">图片生成</span>
               <h1>先写提示词，再生成图片</h1>
-              <p>支持参考图、尺寸、质量和格式设置。提交后在下方查看任务状态，成功后扣 1 次额度。</p>
+              <p>支持参考图、尺寸、质量、格式和图片数量设置。提交后在下方查看任务状态，成功后按图片张数扣费。</p>
             </div>
             <form className="prompt-form" onSubmit={submit}>
               <label>
@@ -424,6 +425,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
                 <select value={size} onChange={(e) => setSize(e.target.value)} aria-label="图片尺寸">{sizeOptions.map((item) => <option key={item}>{item}</option>)}</select>
                 <select value={quality} onChange={(e) => setQuality(e.target.value)} aria-label="图片质量">{qualityOptions.map((item) => <option key={item}>{item}</option>)}</select>
                 <select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select>
+                <select value={imageCount} onChange={(e) => setImageCount(Number(e.target.value))} aria-label="图片数量">{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item} 张</option>)}</select>
                 <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
                 <button type="button" onClick={() => fileInputRef.current?.click()}>参考图 {inputImages.length ? inputImages.length : ''}</button>
                 <button className="primary" disabled={busy || quotaBlocked}>{busy ? '提交中...' : quotaBlocked ? '额度不足' : '生成图片'}</button>

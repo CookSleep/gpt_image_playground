@@ -153,7 +153,105 @@ describe('管理员额度与生成', () => {
     expect(me.json().user).toMatchObject({ role: 'admin', quotaRemaining: 0, quotaUsed: 0 })
   })
 
-  test('管理员启用用户并分配额度后，生成成功扣 1 次并可代理下载图片', async () => {
+  test('管理员启用用户并分配额度后，生成成功按图片张数扣费并可代理下载图片', async () => {
+    const { app } = createHarness({
+      imageClient: {
+        async generate() {
+          return {
+            images: [
+              { bytes: Buffer.from('generated-image-1'), contentType: 'image/png', revisedPrompt: 'revised prompt 1' },
+              { bytes: Buffer.from('generated-image-2'), contentType: 'image/png', revisedPrompt: 'revised prompt 2' },
+            ],
+            upstream: { id: 'mock-response' },
+          }
+        },
+      },
+    })
+    const admin = await login(app, 'admin', 'admin-pass')
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'user1', password: 'secret123', nickname: '用户一' },
+    })
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/users/2/status',
+      headers: { cookie: admin.cookie },
+      payload: { status: 'active' },
+    })
+    await app.inject({
+      method: 'POST',
+      url: '/api/admin/users/2/quota',
+      headers: { cookie: admin.cookie },
+      payload: { delta: 3, reason: '测试分配' },
+    })
+
+    const user = await login(app, 'user1', 'secret123')
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/generations',
+      headers: { cookie: user.cookie },
+      payload: {
+        prompt: '白色陶瓷杯，极简产品摄影',
+        params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 2 },
+      },
+    })
+
+    expect(created.statusCode).toBe(202)
+    expect(created.json()).toMatchObject({ generation: { status: 'done', prompt: '白色陶瓷杯，极简产品摄影' } })
+    expect(created.json().generation.images).toHaveLength(2)
+
+    const me = await app.inject({ method: 'GET', url: '/api/me', headers: { cookie: user.cookie } })
+    expect(me.json().user).toMatchObject({ quotaRemaining: 1, quotaUsed: 2 })
+
+    const list = await app.inject({ method: 'GET', url: '/api/generations', headers: { cookie: user.cookie } })
+    const firstImageId = list.json().generations[0].images[0].id
+    const image = await app.inject({ method: 'GET', url: `/api/images/${firstImageId}`, headers: { cookie: user.cookie } })
+    expect(image.statusCode).toBe(200)
+    expect(image.headers['content-type']).toContain('image/png')
+    expect(image.body).toBe('generated-image-1')
+  })
+
+  test('普通用户额度少于请求图片数时拒绝生成且不调用上游', async () => {
+    let upstreamCalls = 0
+    const { app: guardedApp } = createHarness({
+      imageClient: {
+        async generate() {
+          upstreamCalls += 1
+          return {
+            images: [{ bytes: Buffer.from('generated-image'), contentType: 'image/png' }],
+            upstream: { id: 'mock-response' },
+          }
+        },
+      },
+    })
+    const admin = await login(guardedApp, 'admin', 'admin-pass')
+
+    await guardedApp.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'user3', password: 'secret123', nickname: '用户三' } })
+    await guardedApp.inject({ method: 'PATCH', url: '/api/admin/users/2/status', headers: { cookie: admin.cookie }, payload: { status: 'active' } })
+    await guardedApp.inject({ method: 'POST', url: '/api/admin/users/2/quota', headers: { cookie: admin.cookie }, payload: { delta: 1, reason: '测试分配' } })
+
+    const user = await login(guardedApp, 'user3', 'secret123')
+    const created = await guardedApp.inject({
+      method: 'POST',
+      url: '/api/generations',
+      headers: { cookie: user.cookie },
+      payload: {
+        prompt: '两张图但额度不足',
+        params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 2 },
+      },
+    })
+
+    expect(created.statusCode).toBe(403)
+    expect(created.json().message).toContain('可用额度不足')
+    expect(upstreamCalls).toBe(0)
+
+    const me = await guardedApp.inject({ method: 'GET', url: '/api/me', headers: { cookie: user.cookie } })
+    expect(me.json().user).toMatchObject({ quotaRemaining: 1, quotaUsed: 0 })
+  })
+
+  test('管理员启用用户并分配额度后，单张生成成功扣 1 次并可代理下载图片', async () => {
     const { app } = createHarness()
     const admin = await login(app, 'admin', 'admin-pass')
 
