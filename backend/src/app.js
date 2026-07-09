@@ -55,7 +55,10 @@ function publicGeneration(generation) {
 
 export function buildApp(options) {
   const app = Fastify({ logger: false, bodyLimit: 80 * 1024 * 1024 })
-  const ready = options.store.ensureAdmin(options.admin)
+  const ready = (async () => {
+    await options.store.ensureAdmin(options.admin)
+    await options.store.failInterruptedRunningGenerations?.('服务重启，生成任务已中断，请重新生成')
+  })()
 
   async function getCurrentUser(request) {
     await ready

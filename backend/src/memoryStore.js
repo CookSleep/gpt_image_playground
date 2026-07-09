@@ -185,6 +185,19 @@ export function createMemoryStore() {
       return clone(generation)
     },
 
+    async failInterruptedRunningGenerations(error) {
+      const finishedAt = nowIso()
+      let count = 0
+      for (const generation of generations) {
+        if (generation.status !== 'running') continue
+        generation.status = 'error'
+        generation.error = error
+        generation.finishedAt = finishedAt
+        count += 1
+      }
+      return count
+    },
+
     async finishGenerationSuccess(generationId, outputImages, upstream, elapsedMs) {
       const generation = generations.find((item) => item.id === String(generationId))
       if (!generation) throw new Error('任务不存在')

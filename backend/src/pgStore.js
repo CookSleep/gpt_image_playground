@@ -209,6 +209,15 @@ export async function createPgStore(databaseUrl) {
       return rowGeneration(result.rows[0])
     },
 
+    async failInterruptedRunningGenerations(error) {
+      const result = await pool.query(
+        `update generations set status = 'error', error = $1, finished_at = now()
+         where status = 'running'`,
+        [error],
+      )
+      return result.rowCount
+    },
+
     async finishGenerationSuccess(generationId, outputImages, upstream, elapsedMs) {
       const client = await pool.connect()
       try {

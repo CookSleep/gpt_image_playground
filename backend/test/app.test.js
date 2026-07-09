@@ -132,6 +132,43 @@ describe('认证与审核', () => {
 })
 
 describe('管理员额度与生成', () => {
+  test('服务启动时会把遗留的生成中任务标记为失败', async () => {
+    const store = createMemoryStore()
+    await store.ensureAdmin({ username: 'admin', password: 'admin-pass' })
+    await store.createGeneration({
+      userId: '1',
+      prompt: '部署前还在生成的任务',
+      params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 1 },
+      model: 'gpt-image-2',
+    })
+    const app = buildApp({
+      store,
+      storage: {
+        async putObject() {},
+        async getObject() {
+          return null
+        },
+      },
+      imageClient: {
+        async generate() {
+          throw new Error('不应恢复调用上游')
+        },
+      },
+      sessionSecret: 'test-secret',
+      defaultModel: 'gpt-image-2',
+      admin: { username: 'admin', password: 'admin-pass' },
+      runJobsInline: true,
+    })
+
+    const admin = await login(app, 'admin', 'admin-pass')
+    const list = await app.inject({ method: 'GET', url: '/api/generations', headers: { cookie: admin.cookie } })
+
+    expect(list.json().generations[0]).toMatchObject({
+      status: 'error',
+      error: '服务重启，生成任务已中断，请重新生成',
+    })
+  })
+
   test('管理员可以在无额度时生成图片且不扣额度', async () => {
     const { app } = createHarness()
     const admin = await login(app, 'admin', 'admin-pass')
