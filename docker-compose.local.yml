@@ -67,6 +67,9 @@ services:
       OPENAI_BASE_URL: http://mock-api:4010/v1
       OPENAI_API_KEY: local-mock-key
       DEFAULT_IMAGE_MODEL: gpt-image-2
+      OPENAI_IMAGE_STREAM: "true"
+      OPENAI_IMAGE_PARTIAL_IMAGES: 2
+      OPENAI_IMAGE_TIMEOUT_MS: 600000
       S3_ENDPOINT: http://minio:9000
       S3_REGION: us-east-1
       S3_BUCKET: minimal-images
@@ -91,4 +94,3 @@ services:
 volumes:
   pg-data:
   minio-data:
-

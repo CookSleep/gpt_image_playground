@@ -15,6 +15,11 @@ function requireEnv(name) {
   return value
 }
 
+function intEnv(name, fallback) {
+  const value = Number(process.env[name])
+  return Number.isFinite(value) && value > 0 ? value : fallback
+}
+
 const port = Number(process.env.PORT || 3000)
 const store = await createPgStore(requireEnv('DATABASE_URL'))
 const app = buildApp({
@@ -30,6 +35,9 @@ const app = buildApp({
   imageClient: createOpenAIImageClient({
     baseUrl: requireEnv('OPENAI_BASE_URL'),
     apiKey: requireEnv('OPENAI_API_KEY'),
+    streamImages: boolEnv('OPENAI_IMAGE_STREAM', true),
+    partialImages: intEnv('OPENAI_IMAGE_PARTIAL_IMAGES', 2),
+    timeoutMs: intEnv('OPENAI_IMAGE_TIMEOUT_MS', 10 * 60 * 1000),
   }),
   sessionSecret: requireEnv('SESSION_SECRET'),
   defaultModel: process.env.DEFAULT_IMAGE_MODEL || 'gpt-image-2',
