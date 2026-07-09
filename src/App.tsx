@@ -282,10 +282,10 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   const doneCount = generations.filter((item) => item.status === 'done').length
 
   return (
-    <main className="workspace">
+    <main className="workspace studio-workspace">
       <aside className="side-nav">
-        <h2>图片工作台</h2>
-        <p>生成、筛选、下载和继续编辑都在这里完成。</p>
+        <h2>工作台</h2>
+        <p>生成、历史和下载。</p>
         <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部图片 <span>{generations.length}</span></button>
         <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>生成成功 <span>{doneCount}</span></button>
         <button className={filter === 'running' ? 'active' : ''} onClick={() => setFilter('running')}>生成中 <span>{generations.filter((item) => item.status === 'running').length}</span></button>
@@ -296,55 +296,77 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
           <small>失败不扣，成功扣 1 次</small>
         </div>
       </aside>
-      <section className="gallery">
-        <div className="section-head">
-          <div>
-            <h1>图片库</h1>
-            <p>按生成状态、提示词和参数快速找到图片。选中图片后查看详情、下载或继续作为参考图。</p>
+      <section className="studio-main">
+        <section className="generator-panel">
+          <div className="generator-copy">
+            <span className="eyebrow">图片生成</span>
+            <h1>输入提示词，生成图片</h1>
+            <p>支持参考图、尺寸、质量和格式设置。任务提交后可在下方查看状态，成功后扣 1 次额度。</p>
           </div>
-          <button onClick={refresh}>刷新</button>
-        </div>
-        <div className="summary-row">
-          <div className="summary-card focus"><span>当前可用额度</span><b>{props.user.quotaRemaining}</b></div>
-          <div className="summary-card"><span>默认模型</span><b>gpt-image-2</b></div>
-          <div className="summary-card"><span>成功任务</span><b>{doneCount}</b></div>
-        </div>
-        <div className="toolbar">
-          <span>{visible.length} 条记录</span>
-          <div>
-            <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button>
-            <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>已完成</button>
-            <button className={filter === 'error' ? 'active' : ''} onClick={() => setFilter('error')}>失败</button>
+          <form className="composer studio-composer" onSubmit={submit}>
+            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="描述你想要的画面，例如：浅蓝背景上的极简产品图，柔和自然光..." />
+            {inputImages.length ? (
+              <div className="reference-strip">
+                {inputImages.map((item, index) => <img key={item} src={item} alt={`参考图 ${index + 1}`} />)}
+                <button type="button" onClick={() => setInputImages([])}>清空参考图</button>
+              </div>
+            ) : null}
+            <div className="param-row">
+              <select value={size} onChange={(e) => setSize(e.target.value)} aria-label="图片尺寸">{sizeOptions.map((item) => <option key={item}>{item}</option>)}</select>
+              <select value={quality} onChange={(e) => setQuality(e.target.value)} aria-label="图片质量">{qualityOptions.map((item) => <option key={item}>{item}</option>)}</select>
+              <select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select>
+              <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
+              <button type="button" onClick={() => fileInputRef.current?.click()}>参考图 {inputImages.length ? inputImages.length : ''}</button>
+              <button className="primary" disabled={busy || props.user.quotaRemaining <= 0}>{busy ? '提交中...' : '生成图片'}</button>
+            </div>
+            {error ? <div className="inline-message error">{error}</div> : null}
+          </form>
+          <div className="generator-stats">
+            <div><span>可用额度</span><b>{props.user.quotaRemaining}</b></div>
+            <div><span>默认模型</span><b>gpt-image-2</b></div>
+            <div><span>成功任务</span><b>{doneCount}</b></div>
           </div>
-        </div>
-        <div className="task-grid">
-          {visible.map((item) => (
-            <article key={item.id} className="task-card" onClick={() => setSelected(item)}>
-              <div className={`thumb ${item.status}`}>
-                {item.images[0] ? <img src={imageUrl(item.images[0].id)} alt={item.prompt} /> : <div className="thumb-placeholder" />}
-                <span>{statusText(item.status)}</span>
-              </div>
-              <div className="task-body">
-                <b>{item.prompt}</b>
-                <div><span>{item.model}</span><span>{item.elapsedMs ? `${Math.round(item.elapsedMs / 1000)}s` : formatTime(item.createdAt)}</span></div>
-              </div>
-            </article>
-          ))}
-        </div>
-        {!visible.length ? <div className="empty-state">暂无图片，输入提示词开始生成。</div> : null}
+        </section>
+
+        <section className="gallery-panel">
+          <div className="section-head">
+            <div>
+              <h1>最近任务</h1>
+              <p>按状态筛选任务，点击图片查看详情和下载。</p>
+            </div>
+            <button onClick={refresh}>刷新</button>
+          </div>
+          <div className="toolbar">
+            <span>{visible.length} 条记录</span>
+            <div>
+              <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button>
+              <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>已完成</button>
+              <button className={filter === 'running' ? 'active' : ''} onClick={() => setFilter('running')}>生成中</button>
+              <button className={filter === 'error' ? 'active' : ''} onClick={() => setFilter('error')}>失败</button>
+            </div>
+          </div>
+          <div className="task-grid">
+            {visible.map((item) => (
+              <article key={item.id} className="task-card" onClick={() => setSelected(item)}>
+                <div className={`thumb ${item.status}`}>
+                  {item.images[0] ? <img src={imageUrl(item.images[0].id)} alt={item.prompt} /> : <div className="thumb-placeholder" />}
+                  <span>{statusText(item.status)}</span>
+                </div>
+                <div className="task-body">
+                  <b>{item.prompt}</b>
+                  <div><span>{item.model}</span><span>{item.elapsedMs ? `${Math.round(item.elapsedMs / 1000)}s` : formatTime(item.createdAt)}</span></div>
+                </div>
+              </article>
+            ))}
+          </div>
+          {!visible.length ? (
+            <div className="empty-state compact">
+              <b>还没有图片</b>
+              <span>在上方输入提示词，生成后的任务会显示在这里。</span>
+            </div>
+          ) : null}
+        </section>
       </section>
-      <form className="composer" onSubmit={submit}>
-        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="输入图片提示词..." />
-        <div className="param-row">
-          <select value={size} onChange={(e) => setSize(e.target.value)}>{sizeOptions.map((item) => <option key={item}>{item}</option>)}</select>
-          <select value={quality} onChange={(e) => setQuality(e.target.value)}>{qualityOptions.map((item) => <option key={item}>{item}</option>)}</select>
-          <select value={format} onChange={(e) => setFormat(e.target.value)}>{formatOptions.map((item) => <option key={item}>{item}</option>)}</select>
-          <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
-          <button type="button" onClick={() => fileInputRef.current?.click()}>参考图 {inputImages.length ? inputImages.length : ''}</button>
-          <button className="primary" disabled={busy || props.user.quotaRemaining <= 0}>{busy ? '提交中...' : '生成图片'}</button>
-        </div>
-        {error ? <div className="inline-message error">{error}</div> : null}
-      </form>
       {selected ? <GenerationDetail generation={selected} onClose={() => setSelected(null)} /> : null}
     </main>
   )
