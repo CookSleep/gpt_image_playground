@@ -4,6 +4,7 @@ import { apiRequest, imageUrl, type ApiGeneration, type ApiUser } from './lib/mi
 type AuthMode = 'login' | 'register'
 type MainView = 'gallery' | 'admin'
 
+const clientLoggedOutKey = 'minimal-image-site-client-logged-out'
 const sizeOptions = ['1024x1024', '1024x1536', '1536x1024']
 const qualityOptions = ['auto', 'low', 'medium', 'high']
 const formatOptions = ['png', 'jpeg', 'webp']
@@ -39,6 +40,30 @@ function fileToDataUrl(file: File) {
   })
 }
 
+function isClientLoggedOut() {
+  try {
+    return window.localStorage.getItem(clientLoggedOutKey) === '1'
+  } catch {
+    return false
+  }
+}
+
+function markClientLoggedOut() {
+  try {
+    window.localStorage.setItem(clientLoggedOutKey, '1')
+  } catch {
+    // localStorage may be disabled; server-side logout still runs below.
+  }
+}
+
+function clearClientLoggedOut() {
+  try {
+    window.localStorage.removeItem(clientLoggedOutKey)
+  } catch {
+    // Ignore storage failures so login/logout remains usable.
+  }
+}
+
 export default function App() {
   const [user, setUser] = useState<ApiUser | null>(null)
   const [authMode, setAuthMode] = useState<AuthMode>('login')
@@ -47,6 +72,11 @@ export default function App() {
   const [message, setMessage] = useState('')
 
   async function loadMe() {
+    if (isClientLoggedOut()) {
+      setUser(null)
+      setLoading(false)
+      return
+    }
     try {
       const payload = await apiRequest<{ user: ApiUser }>('/api/me')
       setUser(payload.user)
@@ -59,8 +89,19 @@ export default function App() {
   }
 
   async function logout() {
-    await apiRequest('/api/auth/logout', { method: 'POST' })
+    markClientLoggedOut()
     setUser(null)
+    setView('gallery')
+    try {
+      await apiRequest('/api/auth/logout', { method: 'POST' })
+    } catch {
+      // The user should still leave the app even if the backend is restarting.
+    }
+  }
+
+  function handleAuthed(nextUser: ApiUser) {
+    clearClientLoggedOut()
+    setUser(nextUser)
     setView('gallery')
   }
 
@@ -79,7 +120,7 @@ export default function App() {
         message={message}
         onModeChange={setAuthMode}
         onMessage={setMessage}
-        onAuthed={setUser}
+        onAuthed={handleAuthed}
       />
     )
   }
