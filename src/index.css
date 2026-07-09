@@ -407,12 +407,18 @@ img {
   gap: 10px;
 }
 
+.param-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(112px, 1fr)) minmax(104px, auto) minmax(120px, auto);
+}
+
 .param-row select {
-  width: 132px;
-  flex: 0 0 132px;
+  width: 100%;
+  min-width: 0;
 }
 
 .param-row button {
+  min-width: 0;
   white-space: nowrap;
 }
 
@@ -973,6 +979,16 @@ img {
   white-space: nowrap;
 }
 
+@media (max-width: 1180px) {
+  .generator-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .generator-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 1020px) {
   .minimal-app {
     padding: 16px;
@@ -986,14 +1002,6 @@ img {
   .side-nav {
     border-right: 0;
     border-bottom: 1px solid var(--line);
-  }
-
-  .generator-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .generator-stats {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .auth-page {
@@ -1070,16 +1078,18 @@ img {
 
   .section-head,
   .toolbar,
-  .param-row,
   .button-row {
     align-items: stretch;
     flex-direction: column;
   }
 
+  .param-row {
+    grid-template-columns: 1fr;
+  }
+
   .param-row select,
   .param-row button {
     width: 100%;
-    flex: 0 0 auto;
   }
 
   .detail-body {
