@@ -1,517 +1,154 @@
-<div align="center">
+# 极简图片生成站
 
-# 🎨 GPT Image Playground
+基于 `CookSleep/gpt_image_playground` 改造的一个小型图片生成站。
 
-[![GitHub Repo stars](https://img.shields.io/github/stars/CookSleep/gpt_image_playground?style=flat-square&color=eab308)](https://github.com/CookSleep/gpt_image_playground/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/CookSleep/gpt_image_playground?style=flat-square&color=3b82f6)](https://github.com/CookSleep/gpt_image_playground/network/members)
-[![License](https://img.shields.io/badge/license-MIT-10b981?style=flat-square)](https://github.com/CookSleep/gpt_image_playground/blob/main/LICENSE)
-[![React](https://img.shields.io/badge/React-19-20232A?style=flat-square&logo=react&logoColor=61DAFB)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+目标很简单：只做图片生成，不做聊天、Agent、知识库、插件市场或大而全 AI 平台。
 
-**基于 OpenAI gpt-image-2 API 的图片生成与编辑工具**
+## 功能
 
-提供简洁精美的 Web UI，支持 OpenAI / OpenAI 兼容接口、fal.ai 与可导入的自定义 HTTP 服务商。<br>
-支持文本生图、参考图与遮罩编辑，数据纯本地化存储，带来流畅的历史记录与参数管理体验。
+- 中文界面
+- 账号注册、登录、退出
+- 注册后默认待审核，额度为 0
+- 管理员启用/禁用用户、调整额度
+- 登录用户生成图片、查看自己的历史记录
+- 生成成功扣 1 次额度，失败不扣
+- 前端不暴露上游 API Key
+- 后端统一转发到 OpenAI-compatible API
+- 默认模型：`gpt-image-2`
+- 图片存储使用 S3 兼容对象存储，例如 MinIO、Cloudflare R2
+- 支持 Docker 部署和 nginx 反向代理
 
-<br>
+## 技术栈
 
-[![Vercel 在线体验](https://img.shields.io/badge/Vercel-%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-black?style=for-the-badge&logo=vercel&logoColor=white)](https://gpt-image-playground.cooksleep.dev)
-&nbsp;&nbsp;&nbsp;
-[![GitHub Pages 在线体验](https://img.shields.io/badge/GitHub%20Pages-%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-222222?style=for-the-badge&logo=github&logoColor=white)](https://cooksleep.github.io/gpt_image_playground)
+- 前端：Vite + React + TypeScript
+- 后端：Node.js + Fastify
+- 数据库：PostgreSQL
+- 对象存储：S3 compatible
+- 部署：Docker Compose + nginx
 
-</div>
+## 本地开发
 
-<br>
-
-> 💡 **提示**：若需调用非 HTTPS 的内网或本地 HTTP API，请使用 GitHub Pages 版本或自行部署，Vercel 部署的体验版绑定的 `.dev` 域名因安全策略通常要求接口必须为 HTTPS。
-
----
-
-## ❤️ 赞助商
-
-<table>
-<tr>
-<td width="180" align="center" valign="middle">
-  <a href="https://www.5cookie.cc"><img src="https://github.com/user-attachments/assets/c2a1e98e-c172-49ff-b361-60bb32601daa" alt="5Cookie Code" width="150"></a>
-</td>
-<td valign="middle"><b><a href="https://www.5cookie.cc">5Cookie Code</a></b>&nbsp;是一家稳定高速的 API 中继服务提供商，为 Image-2、Claude Code、Codex 等平台或模型提供 API 中继服务。面向个人、团队和企业用户提供 AI 编码服务和 AI 生图服务。</td>
-</tr>
-<tr>
-<td width="180" align="center" valign="middle">
-  <a href="https://9527code.com/"><img src="https://github.com/user-attachments/assets/29eba620-e902-42f9-9c3b-2fb2d7b2e310" alt="9527 CODE" width="150"></a>
-</td>
-<td valign="middle"><b><a href="https://9527code.com/">9527 CODE</a></b>&nbsp;是企业级满血 AI 中转服务平台，专注提供 Claude Code、Codex 等主流模型的高稳定中转能力，为企业级 AI 使用提供稳定、合规、高效的一站式解决方案。</td>
-</tr>
-<tr>
-<td width="180" align="center" valign="middle">
-  <a href="https://code0.ai/?source=cooksleep"><img src="https://github.com/user-attachments/assets/515dc874-3b2b-4355-aeae-04eba6e6505d" alt="Code0" width="150"></a>
-</td>
-<td valign="middle"><b><a href="https://code0.ai/?source=cooksleep">Code0</a></b>&nbsp;是一家稳定高速的 AI API 中转服务商，支持 gpt-image、Claude Code、Codex 等主流模型，提供即充即用的 AI 生图与编码能力，面向个人、团队与企业用户。<a href="https://gpt-image-playground.cooksleep.dev/?apiUrl=https%3A%2F%2Fcode0.ai%2Fv1&apiMode=images&profileName=Code0">点此导入配置</a></td>
-</tr>
-<tr>
-<td width="180" align="center" valign="middle">
-  <a href="https://qiuqiutoken.com"><img src="https://github.com/user-attachments/assets/03fd9d8d-fba0-4643-9d83-47e386267b57" alt="球球Token" width="150"></a>
-</td>
-<td valign="middle"><b><a href="https://qiuqiutoken.com">球球Token</a></b>&nbsp;是一家高速稳定务实的 AI 中转服务站，支持 gpt-image-2、Codex、Claude Code 等主流模型，100% 缓存命中、文档齐备、k8s 高可用集群、多个 CN2 GIA 接入点、售后极速响应、企业开票。</td>
-</tr>
-<tr>
-<td width="180" align="center" valign="middle">
-  <a href="https://api.muteki.site/register?aff=CookSleep&promo=CookSleep"><img src="https://github.com/user-attachments/assets/0247d44d-d76b-458b-b8f5-9714ec46e7de" alt="MaruCode" width="150"></a>
-</td>
-<td valign="middle"><b><a href="https://api.muteki.site/register?aff=CookSleep&promo=CookSleep">MaruCode</a></b>&nbsp;是一家偶尔做做慈善的小破站 API，自营号池，主要提供 Codex、Claude Code、GPT Image 等主流模型，明码标价(Codex 0.3x, CC 1.5x)，透明汇率(1:1)，<a href="https://api.muteki.site/register?aff=CookSleep&promo=CookSleep">新用户注册送 2 刀</a></td>
-</tr>
-<tr>
-<td width="180" align="center" valign="middle">
-  <a href="https://sui-xiang.com"><img src="https://github.com/user-attachments/assets/fc64d112-c820-4e2e-ad34-728b3b9c9dd8" alt="随想AI中转站" width="150"></a>
-</td>
-<td valign="middle"><b><a href="https://sui-xiang.com">随想AI中转站</a></b>&nbsp;是一家可靠高效的 API 中转服务提供商，提供 Claude、Codex、Gemini 等的中继服务。注重隐私的中转站·无数据倒卖·无模型掺水，极速售后，99.9% 可用性。新账户注册每日签到就送 0.5 元测试额度，充值 1:1。</td>
-</tr>
-<tr>
-<td width="180" align="center" valign="middle">
-  <a href="https://hezu.ink/sign-up?aff=jCQK"><img src="https://github.com/user-attachments/assets/ffef7d1d-8dfc-4549-8263-8334aaf104d3" alt="合租巴士" width="150"></a>
-</td>
-<td valign="middle"><b><a href="https://hezu.ink/sign-up?aff=jCQK">合租巴士</a></b>&nbsp;是一家可靠高效 AI 中转服务平台，主要提供 Claude Code、Codex 等主流模型的高稳定中转能力，充值比例透明（1:1），Codex 倍率补贴低至 0.15。<a href="https://hezu.ink/sign-up?aff=jCQK">进群送 3 刀体验金</a></td>
-</tr>
-</table>
-
----
-
-## 📸 界面预览
-
-<details>
-<summary><b>点击展开截图展示</b></summary>
-<br>
-
-<div align="center">
-  <b>桌面端主界面</b><br>
-  <img src="docs/images/example_pc_1.jpg" alt="桌面端主界面" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>任务详情与实际参数</b><br>
-  <img src="docs/images/example_pc_2.jpg" alt="任务详情与实际参数" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>桌面端批量选择</b><br>
-  <img src="docs/images/example_pc_3.jpg" alt="桌面端批量选择" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>桌面端 Agent 模式</b><br>
-  <img src="docs/images/example_pc_4.jpg" alt="桌面端 Agent 模式" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>移动端主界面</b><br>
-  <img src="docs/images/example_mb_1.jpg" alt="移动端主界面" width="420" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>移动端侧滑多选</b><br>
-  <img src="docs/images/example_mb_2.jpg" alt="移动端侧滑多选" width="420" />
-</div>
-
-</details>
-
----
-
-## ✨ 核心特性
-
-### 🎨 强大的图像生成与编辑
-- **参考图与遮罩**：支持上传最多 16 张参考图（支持剪贴板和拖拽）。内置可视化遮罩编辑器，自动预处理以符合官方分辨率限制。
-- **批量与迭代**：支持单次多图生成；一键将满意结果转为参考图，无缝开启下一轮修改。
-- **流式生成预览**：`Images API` 与 `Responses API` 模式均支持流式接收中间步骤图像，缓解连接超时问题。
-- **透明背景后处理**：画廊模式下选择 PNG 格式后可开启透明背景功能，自动在提示词末尾追加工作流说明，要求模型使用纯绿色或纯洋红色背景，并在结果返回后本地去除原图中的背景色，保存为带透明通道的 PNG。
-
-  > 透明背景后处理功能为本地后处理流程，适用于图标、贴纸、单主体素材等场景，并非 API 原生透明通道（GPT-Image-2 不支持）。若主体边缘存在复杂发丝、半透明材质、强反光或与背景色接近的颜色，可能出现边缘残留或误抠。
-
-### 🤖 Agent 多轮对话模式
-- **多轮对话与上下文记忆**：基于 Responses API 的对话式生成，Agent 会理解上下文并按需调用图像工具；支持 `@` 引用参考图或前面轮次生成的图片，并自动识别上下文中的图片。
-- **并发批量生成**：内置 `generate_image_batch` 工具，让 Agent 在一次轮次中并发生成多张关联图像，并通过 `continue_generation` 自动追加新一轮以处理依赖关系。
-- **分支与重新生成**：编辑某轮消息重新发送或重新生成某轮消息会产生可切换的分支，引用解析严格限定在当前分支路径内，避免误用其他分支的图片。
-- **画廊同步与隔离删除**：Agent 生成的图片会同步到画廊；删除对话默认保留画廊记录，删除画廊任务时也会自动清理对话中残留的图片引用。
-- **可选 Web 搜索**：可开启 `web_search` 工具，Agent 会在需要时搜索网络信息并附带引用链接。
-
-### ⚙️ 精细化参数追踪
-- **智能尺寸控制**：提供 1K/2K/4K 快速预设，自定义宽高时会自动规整至模型安全范围（16 的倍数、总像素校验等）。
-- **实际参数对比**：自动提取 API 响应中真实生效的尺寸、质量、耗时以及**模型改写后的提示词**，与你的请求参数高亮对比。支持定制化的参数列表横向平滑滚动体验。
-
-### 📁 高效历史管理 (纯本地)
-- **瀑布流与画廊**：历史任务自动保存，支持按状态过滤、全屏大图预览与快捷下载。
-- **多收藏夹管理**：支持创建多个命名收藏夹，同一任务可归入多个收藏夹。提供独立的收藏夹概览视图（展示封面缩略图与任务数量），点击进入具体收藏夹后仍可叠加搜索与状态筛选。收藏夹支持拖拽排序、重命名、设置默认收藏夹，以及按收藏夹为单位批量打包下载 ZIP。
-- **快捷批量操作**：桌面端支持鼠标拖拽框选、Ctrl/⌘ 连选，移动端支持顺滑侧滑多选；轻松实现批量收藏与清理。
-- **优化的图片查看与下载**：大图预览支持左右滑动切换、移动端长按弹出操作菜单，支持快捷下载与批量下载。
-- **极致性能与隐私**：所有记录与图片均存放在浏览器 IndexedDB 中（采用 SHA-256 去重压缩），不经过任何第三方服务器。支持一键打包导出 ZIP 备份。
-
-### 🔌 多配置与服务商增强
-- **多配置管理**：支持创建并保存多个 API 配置（包含服务商、API Key、模型等），按需快速切换；支持一键复制当前配置到列表底部，并通过拖拽对配置列表与服务商列表进行自定义排序。
-- **多服务商接入**：内置 OpenAI 兼容接口（含 `Images API` 和 `Responses API`）、fal.ai（支持队列），并支持通过 JSON 导入自定义 HTTP 服务商配置（兼容同步/异步任务）。
-- **Agent 模式独立 API 配置**：支持为 Agent 模式使用原生（Response API）或混合（Response API + Image API）的独立 API 配置，解决部分服务商/模型不支持 `image_generation` 工具的问题。
-- **API 代理**：OpenAI 兼容接口与 fal.ai 均可配置自定义代理。其中 OpenAI 兼容接口可开启同源 `/api-proxy/` 代理，交由 Docker 或本地开发环境转发至真实 API，绕开浏览器 CORS 限制。
-- **Codex CLI 兼容模式**：对上游为 Codex CLI 的 API，开启后应用 Codex CLI 实际支持的参数，并将多图生成拆分为并发单图。
-- **提示词防改写**：Responses API 会始终在请求文本前加入强制指令防止提示词被改写；开启 Codex CLI 模式后，Images API 也会获得同等保护。
-- **智能诊断提示**：当检测到接口异常改写行为或缺少常规参数时，自动提示开启相应的兼容模式。
-- **习惯配置**：支持设置提交后清空输入、重启后保留历史输入、临时复用历史任务 API 配置、关闭提示词防改写等。
-
----
-
-## 🚀 部署与使用
-
-支持多种部署与开发方式。无论使用哪种方式，你都可以预设默认的 API 节点。
-
-<details>
-<summary><strong>▲ 方式一：Vercel 一键部署 (推荐)</strong></summary>
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FCookSleep%2Fgpt_image_playground&project-name=gpt-image-playground&repository-name=gpt-image-playground)
-
-点击上方按钮导入仓库即可，Vercel 会自动执行构建并部署静态文件。
-
-**配置默认 API URL**：在 Vercel 项目的 **Settings → Environment Variables** 中添加 `VITE_DEFAULT_API_URL`（如 `https://api.openai.com/v1`），然后重新部署即可生效。
-
-**携带默认配置参数**：`VITE_DEFAULT_API_URL` 支持通过 URL 查询参数预设默认配置，可用参数参考下方的：“URL 传参快速填充”：`apiUrl`、`apiKey`、`apiMode`、`model`、`profileName`、`codexCli`、`streamImages`、`streamPartialImages`。
-
-**导入自定义服务商配置**：`VITE_DEFAULT_API_URL` 除了填写普通 API 地址外，也支持直接填写 `.json` 配置 URL 或带 `settings` 参数的分享 URL。设为配置 URL 时，页面启动后会自动导入其中的自定义服务商和 API 配置。
-
-**仅展示默认配置**：设置 `VITE_SHOW_DEFAULT_CONFIG_ONLY=true` 后，如果已配置默认 API URL 或默认代理，前端会禁用“当前配置”和“服务商类型”的下拉切换，只允许使用默认配置和默认服务商类型。通过页面 URL 参数传入的配置只会覆盖当前配置字段，不会新建配置、切换服务商类型或导入自定义服务商；`VITE_DEFAULT_API_URL` 本身仍可使用配置 URL 来定义部署端默认服务商。
-
-**绑定自定义域名 (国内直连)**：Vercel 默认分配的 `.vercel.app` 域名在国内通常无法直接访问。如果你希望在国内直连访问，请在 Vercel 项目的 **Settings → Domains** 中绑定你自己的域名。
-
-**配置自动更新**：
-
-本项目已在 `vercel.json` 中关闭了默认的自动部署。若需在同步 GitHub 上游代码后自动更新 Vercel 部署：
-
-1. 在 Vercel 项目设置 **Settings -> Git** 的 **Deploy Hooks** 中创建一个名为 `Release` 的 Hook（Branch 填 `main`）并复制生成的 URL。
-2. 在你 Fork 的 GitHub 仓库设置 **Settings -> Secrets and variables -> Actions** 中，新建 Secret `VERCEL_DEPLOY_HOOK`，填入刚才的 URL。
-
-此后，每次在 GitHub 点击 **Sync fork** 同步上游，都会自动触发 Vercel 构建部署最新版。
-
-</details>
-
-<details>
-<summary><strong>☁️ 方式二：Cloudflare Workers 部署</strong></summary>
-
-项目已内置 Wrangler 配置，可将 Vite 构建产物作为 Cloudflare Workers 静态资源部署。
-
-**1. 登录 Cloudflare**
-
-```bash
-npx wrangler login
-```
-
-**2. 部署到 Workers**
-
-```bash
-npm run deploy:cf
-```
-
-部署脚本会先执行 `npm run build`，再通过 `wrangler deploy` 上传 `dist/` 目录。
-
-**配置默认 API URL**：Cloudflare Workers 的环境变量不会自动改写已经构建好的静态文件。若需预设默认 API 地址，请在构建前设置 `VITE_DEFAULT_API_URL` 后再部署。
-
-```bash
-VITE_DEFAULT_API_URL=https://api.openai.com/v1 npm run deploy:cf
-```
-
-PowerShell 示例：
-
-```powershell
-$env:VITE_DEFAULT_API_URL="https://api.openai.com/v1"; npm run deploy:cf
-```
-
-**携带默认配置参数**：`VITE_DEFAULT_API_URL` 支持通过 URL 查询参数预设默认配置，可用参数参考下方的：“URL 传参快速填充”：`apiUrl`、`apiKey`、`apiMode`、`model`、`profileName`、`codexCli`、`streamImages`、`streamPartialImages`。
-
-**导入自定义服务商配置**：`VITE_DEFAULT_API_URL` 除了填写普通 API 地址外，也支持直接填写 `.json` 配置 URL 或带 `settings` 参数的分享 URL。设为配置 URL 时，页面启动后会自动导入其中的自定义服务商和 API 配置。
-
-**仅展示默认配置**：构建前设置 `VITE_SHOW_DEFAULT_CONFIG_ONLY=true` 后，如果已配置默认 API URL 或默认代理，前端会禁用“当前配置”和“服务商类型”的下拉切换。通过页面 URL 参数传入的配置只会覆盖当前配置字段，不会新建配置、切换服务商类型或导入自定义服务商；`VITE_DEFAULT_API_URL` 本身仍可使用配置 URL 来定义部署端默认服务商。
-
-</details>
-
-<details>
-<summary><strong>🐳 方式三：Docker 部署</strong></summary>
-
-官方镜像已发布至 GitHub Container Registry。Docker 部署支持在运行时注入默认配置。
-
-**环境变量说明：**
-
-- `DEFAULT_API_URL`：设置页面上默认显示的 API 地址（如 `https://api.openai.com/v1`）。也支持填写 `.json` 配置 URL 或带 `settings` 参数的分享 URL 来导入自定义服务商配置（详见下方说明）。还支持通过 URL 查询参数预设默认配置，可用参数参考下方的：“URL 传参快速填充”：`apiUrl`、`apiKey`、`apiMode`、`model`、`profileName`、`codexCli`、`streamImages`、`streamPartialImages`。
-- `API_PROXY_URL`：配置内置代理实际转发到的完整 API 基础地址（仅开启代理时有效）。代理不会自动补 `/v1`，OpenAI 兼容接口通常必须填写到版本前缀，如 `https://api.openai.com/v1`。
-- `ENABLE_API_PROXY`：设为 `true` 开启容器内置 Nginx 同源代理，用于解决浏览器跨域（CORS）限制。开启后，前端 **API 代理** 开关默认开启，浏览器会请求同源的 `/api-proxy/{接口相对路径}`，再由 Nginx 拼接到 `API_PROXY_URL` 后转发；用户仍可在设置中手动关闭。
-- `LOCK_API_PROXY`：设为 `true` 时，在 `ENABLE_API_PROXY=true` 的前提下将前端 **API 代理** 开关强制锁定为开启，用户无法关闭。
-- `SHOW_DEFAULT_CONFIG_ONLY`：设为 `true` 后，如果已配置默认 API URL 或默认代理，前端会禁用“当前配置”和“服务商类型”的下拉切换，只允许使用默认配置和默认服务商类型。通过页面 URL 参数传入的配置只会覆盖当前配置字段，不会新建配置、切换服务商类型或导入自定义服务商；`DEFAULT_API_URL` 本身仍可使用配置 URL 来定义部署端默认服务商。
-- `HOST` / `PORT`：指定容器内 Nginx 监听的地址和端口（默认 `0.0.0.0:80`）。
-
-> ⚠️ **安全警告**：开启 API 代理后，任何人都能将你的服务器作为代理来请求目标 API。建议仅在有访问控制（如 IP 白名单）或本地网络中开启。
-
-> 💡 **导入自定义服务商配置**：`DEFAULT_API_URL` 除了填写普通 API 地址外，也支持直接填写 `.json` 配置 URL 或带 `settings` 参数的分享 URL。设为配置 URL 时，页面启动后会自动导入其中的自定义服务商和 API 配置。
-
-> 💡 **隐藏真实 API 地址**：如果不希望用户在前端看到真实的 API 上游地址，可以配合 `ENABLE_API_PROXY=true` 和 `LOCK_API_PROXY=true` 强制所有请求走服务器代理，再将 `API_PROXY_URL` 设为真实的 API 上游地址。根据使用的服务商类型，`DEFAULT_API_URL` 的填法不同：
->
-> - **OpenAI 兼容接口**：将 `DEFAULT_API_URL` 留空或填写一个占位地址（如 `https://proxy`）。
-> - **自定义服务商配置**：将 `DEFAULT_API_URL` 设为配置 URL（`.json` 或带 `settings` 参数的分享 URL），配置 JSON 中 profile 的 `baseUrl` 留空或填占位地址，并设置 `apiProxy:true`。
->
-> 这样前端设置页只会显示空值或占位地址，真实 API 地址仅存在于服务器侧的 `API_PROXY_URL`，不会暴露给用户。
->
-> 自定义服务商开启代理仅支持同步返回图片的配置；包含 `taskIdPath` 或 `poll` 的异步任务自定义服务商暂不支持 API 代理。
-
-> 💡 **兼容迁移**：旧版本中的 `API_URL` 已拆分为 `DEFAULT_API_URL` 和 `API_PROXY_URL`。容器启动时会自动将遗留的 `API_URL` 作为两个新变量的兜底值，实现无缝兼容。建议更新配置文件，逐步迁移至新变量。
-
-**1. Docker CLI 示例**
-
-```bash
-docker run -d -p 8080:80 \
-  -e DEFAULT_API_URL=https://api.openai.com/v1 \
-  -e ENABLE_API_PROXY=true \
-  -e LOCK_API_PROXY=true \
-  -e API_PROXY_URL=https://api.openai.com/v1 \
-  ghcr.io/cooksleep/gpt_image_playground:latest
-```
-
-**隐藏真实 API 地址示例（OpenAI 兼容接口）：**
-
-```bash
-docker run -d -p 8080:80 \
-  -e DEFAULT_API_URL= \
-  -e API_PROXY_URL=https://real-api.example.com/v1 \
-  -e ENABLE_API_PROXY=true \
-  -e LOCK_API_PROXY=true \
-  ghcr.io/cooksleep/gpt_image_playground:latest
-```
-
-> 上例中设置页的 API URL 为空，实际请求通过代理转发到 `API_PROXY_URL`。
-
-**隐藏真实 API 地址示例（同步自定义服务商配置）：**
-
-```bash
-docker run -d -p 8080:80 \
-  -e DEFAULT_API_URL='https://example.com/?settings={"customProviders":[...],"profiles":[{"baseUrl":"","apiProxy":true,...}]}' \
-  -e API_PROXY_URL=https://real-api.example.com/v1 \
-  -e ENABLE_API_PROXY=true \
-  -e LOCK_API_PROXY=true \
-  ghcr.io/cooksleep/gpt_image_playground:latest
-```
-
-> 上例中 `DEFAULT_API_URL` 为同步自定义服务商配置分享 URL，profile 的 `baseUrl` 留空且 `apiProxy:true`；真实 API 地址仅在 `API_PROXY_URL` 中配置，前端不可见。异步任务自定义服务商暂不支持开启代理。
-
-*(注：使用 host 网络时加 `--network host`，修改容器监听端口使用 `-e PORT=28080`)*
-
-**2. Docker Compose 示例**
-
-```yaml
-services:
-  gpt-image-playground:
-    image: ghcr.io/cooksleep/gpt_image_playground:latest
-    environment:
-      - DEFAULT_API_URL=https://api.openai.com/v1
-    ports:
-      - "8080:80"
-    restart: unless-stopped
-```
-
-**更新说明：**
-
-使用 `latest` 标签时，重新拉取镜像并重启即可更新（如 `docker compose pull && docker compose up -d`）。若需固定版本可使用官方提供的版本号标签（如 `0.2.x`）。
-
-</details>
-
-<details>
-<summary><strong>💻 方式四：本地开发与静态构建</strong></summary>
-
-**1. 环境准备与启动**
-
-你可以在项目根目录新建 `.env.local` 文件配置默认 API URL（如 `VITE_DEFAULT_API_URL=https://api.openai.com/v1`）。然后安装依赖并启动：
-
-**携带默认配置参数**：`VITE_DEFAULT_API_URL` 支持通过 URL 查询参数预设默认配置，可用参数参考下方的：“URL 传参快速填充”：`apiUrl`、`apiKey`、`apiMode`、`model`、`profileName`、`codexCli`、`streamImages`、`streamPartialImages`。
-
-**导入自定义服务商配置**：`VITE_DEFAULT_API_URL` 除了填写普通 API 地址外，也支持直接填写 `.json` 配置 URL 或带 `settings` 参数的分享 URL。设为配置 URL 时，页面启动后会自动导入其中的自定义服务商和 API 配置。
-
-**仅展示默认配置**：在 `.env.local` 中加入 `VITE_SHOW_DEFAULT_CONFIG_ONLY=true` 后，如果已配置默认 API URL 或默认代理，前端会禁用“当前配置”和“服务商类型”的下拉切换。通过页面 URL 参数传入的配置只会覆盖当前配置字段，不会新建配置、切换服务商类型或导入自定义服务商；`VITE_DEFAULT_API_URL` 本身仍可使用配置 URL 来定义部署端默认服务商。
+安装前端依赖：
 
 ```bash
 npm install
-npm run dev
 ```
 
-**2. 本地开发跨域代理 (可选)**
-
-如果在本地开发时遇到浏览器的 CORS 限制，可开启本地代理转发：
+安装后端依赖：
 
 ```bash
-cp dev-proxy.config.example.json dev-proxy.config.json
+cd backend
+npm install
 ```
 
-修改 `dev-proxy.config.json`，将 `target` 设置为真实的完整 API 基础地址。代理不会自动补 `/v1`，OpenAI 兼容接口通常必须填写到版本前缀，如 `https://api.example.com/v1`。重启开发服务器后，在页面设置中开启 **API 代理** 即可（请求将被转发如 `http://localhost:5173/api-proxy/... -> target/...`）。此功能仅在 `npm run dev` 阶段生效，不会影响打包产物。
+如果暂时没有 PostgreSQL / MinIO，可以先用内存联调服务：
 
-**3. 本地故障模拟 API (可选)**
-
-如果需要复现图片 URL 跨域、接口返回结构异常、原始响应查看等问题，可启动内置模拟服务：
-
-```powershell
-npm run mock:api
+```bash
+cd backend
+npm run dev:memory
 ```
 
-使用方式见 [本地故障模拟 API](docs/mock-image-api.md)。
+另开一个终端启动前端：
 
-**4. 构建静态产物**
+```bash
+npm run dev -- --port 5178
+```
+
+访问：
+
+```text
+http://localhost:5178
+```
+
+内存联调默认管理员：
+
+```text
+账号：admin
+密码：admin123456
+```
+
+## Docker 本地联调
+
+Docker Desktop 正常启动后执行：
+
+```bash
+docker compose -f docker-compose.local.yml up --build
+```
+
+访问：
+
+```text
+http://localhost:8088
+```
+
+本地 compose 会启动：
+
+- frontend
+- backend
+- PostgreSQL
+- MinIO
+- mock OpenAI-compatible API
+
+## 服务器部署
+
+复制环境变量模板：
+
+```bash
+cp .env.example .env
+```
+
+按实际服务器配置填写：
+
+```env
+DATABASE_URL=
+SESSION_SECRET=
+ADMIN_USERNAME=
+ADMIN_PASSWORD=
+OPENAI_BASE_URL=
+OPENAI_API_KEY=
+DEFAULT_IMAGE_MODEL=gpt-image-2
+S3_ENDPOINT=
+S3_REGION=
+S3_BUCKET=
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=
+S3_FORCE_PATH_STYLE=true
+FRONTEND_PORT=8088
+```
+
+启动：
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+```
+
+更详细的部署说明见：
+
+[DEPLOYMENT.md](./DEPLOYMENT.md)
+
+## 验证
 
 ```bash
 npm run build
+npm test
+
+cd backend
+npm test
 ```
 
-构建输出的文件位于 `dist/` 目录下，可将其部署至任何静态文件服务器（如普通 Nginx、GitHub Pages、Netlify 等）。
+当前已验证：
 
-</details>
+- 前端构建通过
+- 前端测试通过
+- 后端核心测试通过
+- 注册、审核、登录、生图、扣额度、历史、图片代理下载流程通过
 
----
+## 说明
 
-## 🛠️ URL 传参快速填充
+本项目是个人用途的极简改造版，保留原项目的图片生成基础能力，但产品方向已收敛为“带账号和额度管理的小型生图站”。
 
-应用支持通过 URL 查询参数快速填入配置，非常适合创建书签或集成分享。根据你的服务商类型，选择对应的方式：
-
-**方式一：标准 OpenAI 兼容服务商**
-直接使用简短的查询参数配置：
-- `?apiUrl=https://你的代理地址.com`
-- `?apiKey=sk-xxxx`
-- `?apiMode=images` 或 `?apiMode=responses`（未传时默认为 `images`）
-- `?model=gpt-image-2`（未传时按 `apiMode` 使用默认模型）
-- `?profileName=我的配置`（设置配置名称，未传时默认为 `URL 参数配置`）
-- `?codexCli=true`（开启 Codex CLI 兼容模式）
-- `?streamImages=true`（开启流式传输）
-- `?streamPartialImages=2`（请求中间步骤图像数，需配合 `streamImages=true` 使用）
-
-例如，集成到 New API 的聊天系统：
+原项目地址：
 
 ```text
-https://gpt-image-playground.cooksleep.dev?apiUrl={address}&apiKey={key}&model={model}
+https://github.com/CookSleep/gpt_image_playground
 ```
-
-```text
-https://cooksleep.github.io/gpt_image_playground?apiUrl={address}&apiKey={key}&model={model}
-```
-
-**方式二：自定义格式服务商**
-如果需要导入自定义格式的 API 配置，请使用 `settings` 参数并传入 URL 编码后的完整 JSON：
-- `?settings={URL编码后的JSON}`（只读取 `customProviders` 和 `profiles` 列表）
-
-> 推荐先在项目内完成配置生成与导入：
->
-> **设置 - API 配置 - 服务商类型 - 创建自定义服务商 - AI 一键生成与导入**
->
-> 完成后可在 **API 配置 - 当前配置** 使用右侧快捷按钮：
->
-> - **链接按钮**：复制可导入配置的 URL。复制时可选择不包含 API Key，并使用 `{address}`、`{key}`、`{model}` 等变量，便于在 New API 等平台中集成分享。
-> - **复制按钮**：将当前配置复制一份到配置列表底部，新配置名称会追加“（复制）”。
-
-JSON 结构示例：
-
-```json
-{
-  "customProviders": [
-    {
-      "id": "custom-example-task",
-      "name": "示例异步任务服务商",
-      "submit": {
-        "path": "images/generations",
-        "method": "POST",
-        "contentType": "json",
-        "body": {
-          "model": "$profile.model",
-          "prompt": "$prompt",
-          "size": "$params.size",
-          "quality": "$params.quality",
-          "output_format": "$params.output_format",
-          "output_compression": "$params.output_compression",
-          "n": "$params.n",
-          "image_urls": "$inputImages.dataUrls"
-        },
-        "taskIdPath": "data.0.task_id"
-      },
-      "poll": {
-        "path": "tasks/{task_id}",
-        "method": "GET",
-        "intervalSeconds": 5,
-        "statusPath": "data.status",
-        "successValues": ["completed"],
-        "failureValues": ["failed", "cancelled"],
-        "errorPath": "data.error.message",
-        "result": {
-          "imageUrlPaths": ["data.result.images.*.url.*"],
-          "b64JsonPaths": []
-        }
-      }
-    }
-  ],
-  "profiles": [
-    {
-      "name": "示例异步任务服务商",
-      "provider": "custom-example-task",
-      "baseUrl": "https://api.example.com/v1",
-      "model": "example-image-model",
-      "apiMode": "images"
-    }
-  ]
-}
-```
-
-第三方服务商可以参考 [自定义服务商 LLM 提示词](docs/custom-provider-llm-prompt.md)，让 LLM 根据自己的 API 文档生成可导入的完整配置。导入后只需要在设置里补充 API Key。
-
----
-
-## 💻 技术栈
-
-<div align="center">
-  <br>
-  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React_19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React 19" /></a>
-  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" /></a>
-  <a href="https://vite.dev/"><img src="https://img.shields.io/badge/Vite-B73BFE?style=for-the-badge&logo=vite&logoColor=FFD62E" alt="Vite" /></a>
-  <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind_CSS_3-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="Tailwind CSS 3" /></a>
-  <a href="https://zustand.docs.pmnd.rs/"><img src="https://img.shields.io/badge/Zustand-764ABC?style=for-the-badge&logo=react&logoColor=white" alt="Zustand" /></a>
-  <br>
-  <br>
-</div>
-
-## 📄 许可证 & 致谢
-
-本项目基于 [MIT License](LICENSE) 开源。
-
-特别致谢：[LINUX DO](https://linux.do)
-
-## 💜 赞助支持
-
-<div align="center">
-
-如果这个项目对你有帮助，欢迎通过爱发电赞助支持，你的每一份鼓励都是持续更新的动力！
-
-<br>
-<br>
-
-<a href="https://www.ifdian.net/a/cooksleep">
-  <img src="https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E8%B5%9E%E5%8A%A9%E4%BD%9C%E8%80%85-946ce6?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyMS4zNWwtMS40NS0xLjMyQzUuNCAxNS4zNiAyIDEyLjI4IDIgOC41IDIgNS40MiA0LjQyIDMgNy41IDNjMS43NCAwIDMuNDEuODEgNC41IDIuMDlDMTMuMDkgMy44MSAxNC43NiAzIDE2LjUgMyAxOS41OCAzIDIyIDUuNDIgMjIgOC41YzAgMy43OC0zLjQgNi44Ni04LjU1IDExLjU0TDEyIDIxLjM1eiIvPjwvc3ZnPg==&logoColor=white" alt="爱发电赞助" />
-</a>
-
-<br>
-<br>
-
-</div>
-
-## ⭐ Star History
-
-<div align="center">
-  <a href="https://www.star-history.com/#CookSleep/gpt_image_playground&Date">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=CookSleep/gpt_image_playground&type=Date&theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=CookSleep/gpt_image_playground&type=Date" />
-      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=CookSleep/gpt_image_playground&type=Date" />
-    </picture>
-  </a>
-</div>
