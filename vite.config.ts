@@ -43,7 +43,12 @@ export default defineConfig(({ command }) => {
                   ),
               },
             }
-          : undefined,
+          : {
+              '/api': {
+                target: 'http://localhost:3000',
+                changeOrigin: true,
+              },
+            },
     },
   }
 })

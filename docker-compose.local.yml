@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: minimal_image_site
+      POSTGRES_USER: minimal
+      POSTGRES_PASSWORD: minimal
+    ports:
+      - "55432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minimal -d minimal_image_site"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  create-bucket:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 2; done;
+      mc mb -p local/minimal-images;
+      exit 0;
+      "
+
+  mock-api:
+    build:
+      context: .
+      dockerfile: mock-api.Dockerfile
+    environment:
+      PORT: 4010
+    ports:
+      - "4010:4010"
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      create-bucket:
+        condition: service_completed_successfully
+      mock-api:
+        condition: service_started
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://minimal:minimal@postgres:5432/minimal_image_site
+      SESSION_SECRET: local-dev-session-secret
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: admin123456
+      OPENAI_BASE_URL: http://mock-api:4010/v1
+      OPENAI_API_KEY: local-mock-key
+      DEFAULT_IMAGE_MODEL: gpt-image-2
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: minimal-images
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+      S3_FORCE_PATH_STYLE: "true"
+    ports:
+      - "3000:3000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      - backend
+    environment:
+      BACKEND_URL: http://backend:3000
+      PORT: 80
+    ports:
+      - "8088:80"
+
+volumes:
+  pg-data:
+  minio-data:
+
