@@ -1,12 +1,12 @@
 {
-  "name": "GPT Image Playground",
-  "short_name": "GPT Image",
-  "description": "GPT Image Playground 图像生成工作台",
+  "name": "极简生图",
+  "short_name": "极简生图",
+  "description": "专注图片生成的轻量创作工作台",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#030712",
-  "theme_color": "#111827",
+  "background_color": "#f4f9ff",
+  "theme_color": "#f4f9ff",
   "icons": [
     {
       "src": "./pwa-icon.svg",
