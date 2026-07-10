@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertCircleIcon, CheckCircleIcon, ChevronRightIcon, HistoryIcon, ImageIcon, LogOutIcon, RefreshIcon, SparklesIcon } from './components/icons'
 import { getGenerationProgress } from './lib/generationProgress'
 import { apiRequest, imageUrl, type ApiGeneration, type ApiKeyOption, type ApiUser } from './lib/minimalApi'
 
@@ -119,19 +120,22 @@ export default function App() {
 
   return (
     <div className="minimal-app">
-      <header className="app-topbar">
+      <header className="app-topbar studio-topbar">
         <div className="brand">
-          <div className="brand-mark">图</div>
+          <div className="brand-mark"><ImageIcon /></div>
           <div>
             <strong>极简生图</strong>
-            <span>只做图片生成</span>
+            <span>让创作只保留必要步骤</span>
           </div>
         </div>
-        <nav>
-          <button className="quota-pill">sub2api <b>{accountName(user)}</b></button>
-          <button className="active">工作台</button>
-          <button onClick={logout}>退出</button>
-        </nav>
+        <div className="studio-top-actions">
+          <div className="service-status"><i />服务运行正常</div>
+          <div className="studio-account-chip">
+            <span>{accountName(user).slice(0, 1).toUpperCase()}</span>
+            <div><b>{accountName(user)}</b><small>sub2api 账号</small></div>
+          </div>
+          <button className="topbar-icon-button" onClick={logout} title="退出" aria-label="退出"><LogOutIcon /></button>
+        </div>
       </header>
       <GalleryPage user={user} onUserChange={setUser} />
     </div>
@@ -165,33 +169,53 @@ function AuthPage(props: {
   }
 
   return (
-    <main className="auth-page">
-      <section className="auth-panel">
-        <div className="brand auth-brand">
-          <div className="brand-mark">图</div>
-          <div>
-            <strong>极简生图</strong>
-            <span>sub2api 账号入口</span>
-          </div>
-        </div>
-        <h1>登录 sub2api 账号</h1>
-        <p>登录后选择你在 sub2api 已创建的 API Key，再生成图片。Key 明文只在后端使用。</p>
-        <form onSubmit={submit}>
-          <label>邮箱<input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="请输入 sub2api 邮箱" autoComplete="email" /></label>
-          <label>密码<input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="请输入密码" type="password" autoComplete="current-password" /></label>
-          <button className="primary full" disabled={busy}>{busy ? '登录中...' : '登录'}</button>
-        </form>
-        {props.message ? <div className="inline-message error">{props.message}</div> : null}
-      </section>
+    <main className="auth-page auth-v3">
       <section className="auth-preview">
-        <div className="preview-image" />
-        <b>用 sub2api 已有 Key 生成图片</b>
-        <div className="preview-meta"><span>前端不显示 API Key</span><span>计费走 sub2api</span></div>
-        <div className="pending-card">
-          <span>钥</span>
-          <div>
-            <b>按次(图片)</b>
-            <p>本站只负责选择 Key、提交生成和保存历史，账号与计费由 sub2api 统一管理。</p>
+        <div className="brand auth-preview-brand">
+          <div className="brand-mark"><ImageIcon /></div>
+          <div><strong>极简生图</strong><span>Image creation studio</span></div>
+        </div>
+        <div className="auth-preview-copy">
+          <span>FOCUSED IMAGE WORKSPACE</span>
+          <h1>专注图片生成，<br />从描述到成图只需一个页面。</h1>
+          <p>选择已授权的 API Key，输入画面描述，即可创建图片任务并查看完整生成记录。</p>
+        </div>
+        <div className="auth-preview-grid">
+          <article>
+            <div className="auth-preview-image completed"><span><i />已完成 · 38 秒</span></div>
+            <div><b>透明香水产品图</b><small>1024×1024 · High</small></div>
+          </article>
+          <article>
+            <div className="auth-preview-image running">
+              <span><i />生成中 · 00:27</span>
+              <div><b>正在精炼材质与光线</b><i><span /></i></div>
+            </div>
+            <div><b>未来感随身相机</b><small>预计 30–90 秒</small></div>
+          </article>
+        </div>
+        <div className="auth-feature-list">
+          <span><CheckCircleIcon />直接使用 sub2api 已有账号和 API Key</span>
+          <span><CheckCircleIcon />API Key 明文仅由服务端读取</span>
+          <span><CheckCircleIcon />生成历史仅与当前登录账号关联</span>
+        </div>
+      </section>
+
+      <section className="auth-panel">
+        <div className="auth-panel-inner">
+          <div className="auth-panel-heading">
+            <span>ACCOUNT ACCESS</span>
+            <h1>登录极简生图</h1>
+            <p>使用你的 sub2api 账号进入图片工作台。</p>
+          </div>
+          <form onSubmit={submit}>
+            <label><span>邮箱</span><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="请输入 sub2api 账号邮箱" type="email" autoComplete="email" required /></label>
+            <label><span>密码</span><input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="请输入账号密码" type="password" autoComplete="current-password" required /></label>
+            <button className="primary full auth-submit" disabled={busy}>{busy ? '正在验证账号…' : '登录并进入工作台'}<ChevronRightIcon /></button>
+          </form>
+          {props.message ? <div className="inline-message error auth-error"><AlertCircleIcon />{props.message}</div> : null}
+          <div className="auth-security-note">
+            <span><i />安全说明</span>
+            <p>账号认证、API Key 和计费由 sub2api 统一管理。本站不会在浏览器中保存 API Key 明文。</p>
           </div>
         </div>
       </section>
@@ -201,24 +225,20 @@ function AuthPage(props: {
 
 function AccountDisabledPage(props: { user: ApiUser; onLogout: () => void; onRefresh: () => void }) {
   return (
-    <main className="pending-page">
+    <main className="pending-page disabled-v3">
       <section className="pending-box">
-        <div className="brand auth-brand">
-          <div className="brand-mark">停</div>
-          <div>
-            <strong>账号不可用</strong>
-            <span>{accountName(props.user)}</span>
-          </div>
-        </div>
-        <h1>sub2api 账号已停用</h1>
-        <p>当前账号状态不可生成图片。请先在 sub2api 中确认账号状态，恢复后刷新页面。</p>
-        <div className="status-box">
-          <b>当前状态：禁用</b>
-          <span>图片站不会单独管理账号和额度。</span>
-        </div>
+        <div className="disabled-icon"><AlertCircleIcon /></div>
+        <span className="disabled-eyebrow">ACCOUNT STATUS</span>
+        <h1>当前账号不可用</h1>
+        <p>该账号目前无法使用图片生成服务。请前往 sub2api 检查账号状态，恢复后重新进入工作台。</p>
+        <dl className="disabled-details">
+          <div><dt>当前账号</dt><dd>{accountName(props.user)}</dd></div>
+          <div><dt>账号状态</dt><dd><span>已停用</span></dd></div>
+          <div><dt>处理位置</dt><dd>sub2api 控制台</dd></div>
+        </dl>
         <div className="button-row">
-          <button className="primary" onClick={props.onRefresh}>刷新状态</button>
-          <button onClick={props.onLogout}>退出登录</button>
+          <button className="primary" onClick={props.onRefresh}><RefreshIcon />重新检查账号状态</button>
+          <button onClick={props.onLogout}><LogOutIcon />退出登录</button>
         </div>
       </section>
     </main>
@@ -331,71 +351,68 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   const errorCount = generations.filter((item) => item.status === 'error').length
 
   return (
-    <main className="workspace studio-workspace">
-      <aside className="side-nav">
-        <h2>工作台</h2>
-        <p>选择 sub2api Key，生成、历史和下载集中在一个页面。</p>
-        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部图片 <span>{generations.length}</span></button>
-        <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>生成成功 <span>{doneCount}</span></button>
-        <button className={filter === 'running' ? 'active' : ''} onClick={() => setFilter('running')}>生成中 <span>{runningCount}</span></button>
-        <button className={filter === 'error' ? 'active' : ''} onClick={() => setFilter('error')}>生成失败 <span>{errorCount}</span></button>
-        <div className="quota-card">
-          <span>当前 API Key</span>
-          <b>{selectedKey ? selectedKey.name : '未选择'}</b>
-          <small>{selectedKey?.groupName ? `分组：${selectedKey.groupName}` : '计费和余额由 sub2api 处理'}</small>
-        </div>
+    <main className="workspace studio-workspace studio-v3">
+      <aside className="studio-rail" aria-label="任务筛选">
+        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')} title={`全部图片 ${generations.length}`} aria-label={`全部图片 ${generations.length}`}><ImageIcon /></button>
+        <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')} title={`生成成功 ${doneCount}`} aria-label={`生成成功 ${doneCount}`}><CheckCircleIcon /></button>
+        <button className={filter === 'running' ? 'active' : ''} onClick={() => setFilter('running')} title={`生成中 ${runningCount}`} aria-label={`生成中 ${runningCount}`}><HistoryIcon /></button>
+        <button className={filter === 'error' ? 'active' : ''} onClick={() => setFilter('error')} title={`生成失败 ${errorCount}`} aria-label={`生成失败 ${errorCount}`}><AlertCircleIcon /></button>
       </aside>
-      <section className="studio-main">
+      <section className="studio-main studio-content">
+        <div className="studio-heading">
+          <div>
+            <span>IMAGE CREATION STUDIO</span>
+            <h1>今天想创造什么画面？</h1>
+            <p>选择已授权的 Key，描述画面，其余流程交给系统。</p>
+          </div>
+          <div className="studio-heading-meta"><i />GPT-IMAGE-2</div>
+        </div>
         <section className="generator-panel">
-          <div className="generator-copy">
-            <span className="eyebrow">图片生成</span>
-            <h1>选择 Key 后生成图片</h1>
-            <p>使用 sub2api 已创建的 API Key。Key 明文只在后端读取，前端只显示名称、分组和状态。</p>
-          </div>
-          <div className="generator-stats">
-            <div><span>当前账号</span><b title={accountName(props.user)}>{accountName(props.user)}</b></div>
-            <div><span>当前 Key</span><b title={keyLabel(selectedKey)}>{keyLabel(selectedKey)}</b></div>
-            <div><span>成功任务</span><b>{doneCount}</b></div>
-          </div>
           <form className="prompt-form" onSubmit={submit}>
-            <label>
-              <span>提示词</span>
-              <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="例如：浅蓝背景上的极简产品图，柔和自然光，干净构图..." />
-            </label>
-            {inputImages.length ? (
-              <div className="reference-strip">
-                {inputImages.map((item, index) => <img key={item} src={item} alt={`参考图 ${index + 1}`} />)}
-                <button type="button" onClick={() => setInputImages([])}>清空参考图</button>
+            <section className="prompt-stage">
+              <div className="prompt-stage-head">
+                <div><h2>画面描述</h2><p>描述主体、环境、光线和构图，可获得更稳定的结果。</p></div>
+                <span><i />GPT-IMAGE-2</span>
               </div>
-            ) : null}
-            <div className="param-row">
-              <select className="api-key-select" value={selectedApiKeyId} onChange={(e) => setSelectedApiKeyId(e.target.value)} aria-label="sub2api API Key">
-                <option value="">{keysLoading ? '正在读取 Key...' : '选择 API Key'}</option>
-                {apiKeys.map((item) => <option key={item.id} value={item.id}>{keyLabel(item)}</option>)}
-              </select>
-              <select value={size} onChange={(e) => setSize(e.target.value)} aria-label="图片尺寸">{sizeOptions.map((item) => <option key={item}>{item}</option>)}</select>
-              <select value={quality} onChange={(e) => setQuality(e.target.value)} aria-label="图片质量">{qualityOptions.map((item) => <option key={item}>{item}</option>)}</select>
-              <select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select>
-              <select value={imageCount} onChange={(e) => setImageCount(Number(e.target.value))} aria-label="图片数量">{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item} 张</option>)}</select>
-              <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
-              <button type="button" onClick={() => fileInputRef.current?.click()}>参考图 {inputImages.length ? inputImages.length : ''}</button>
-              <button type="submit" className="primary" disabled={busy || keysLoading || !selectedApiKeyId}>{busy ? '提交中...' : '生成图片'}</button>
-            </div>
-            {error ? <div className="inline-message error">{error}</div> : null}
+              <div className="prompt-editor">
+                <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} maxLength={2000} placeholder="例如：浅蓝背景上的极简产品图，柔和自然光，干净构图..." aria-label="提示词" />
+                <div><span>提示词仅用于本次图片生成</span><b>{prompt.length} / 2000</b></div>
+              </div>
+              <div className="reference-strip">
+                <span>参考图</span>
+                {inputImages.map((item, index) => <img key={item} src={item} alt={`参考图 ${index + 1}`} />)}
+                <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
+                <button type="button" className="reference-add" onClick={() => fileInputRef.current?.click()}>+</button>
+                {inputImages.length ? <button type="button" className="reference-clear" onClick={() => setInputImages([])}>清空</button> : null}
+                <small>最多 4 张</small>
+              </div>
+            </section>
+
+            <aside className="generation-controls">
+              <div className="controls-head"><h2>生成设置</h2><span>前端不显示 Key 明文</span></div>
+              <label><span>API Key</span><select className="api-key-select" value={selectedApiKeyId} onChange={(e) => setSelectedApiKeyId(e.target.value)} aria-label="sub2api API Key"><option value="">{keysLoading ? '正在读取 Key...' : '选择 API Key'}</option>{apiKeys.map((item) => <option key={item.id} value={item.id}>{keyLabel(item)}</option>)}</select></label>
+              <div className="control-group"><span>画面尺寸</span><div className="segment-options">{sizeOptions.map((item) => <button key={item} type="button" className={size === item ? 'active' : ''} onClick={() => setSize(item)}>{item.replace('x', '×')}</button>)}</div></div>
+              <div className="control-group"><span>生成质量</span><div className="segment-options four">{qualityOptions.map((item) => <button key={item} type="button" className={quality === item ? 'active' : ''} onClick={() => setQuality(item)}>{item}</button>)}</div></div>
+              <div className="control-row">
+                <label><span>输出格式</span><select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
+                <label><span>图片数量</span><select value={imageCount} onChange={(e) => setImageCount(Number(e.target.value))} aria-label="图片数量">{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item} 张</option>)}</select></label>
+              </div>
+              <div className="billing-note"><span>计费方式</span><b>按次（图片）</b></div>
+              <button type="submit" className="primary generate-button" disabled={busy || keysLoading || !selectedApiKeyId || !prompt.trim()}><SparklesIcon />{busy ? '提交中...' : '生成图片'}</button>
+              {error ? <div className="inline-message error">{error}</div> : null}
+            </aside>
           </form>
         </section>
 
         <section className="gallery-panel">
           <div className="section-head">
-            <div>
-              <h1>最近任务</h1>
-              <p>按状态筛选任务，点击图片查看详情和下载。</p>
+            <div><h1>最近创作</h1><p>任务状态、生成时长和结果集中展示，点击图片查看详情和下载。</p></div>
+            <div className="gallery-actions">
+              <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button>
+              <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>已完成</button>
+              <button className={filter === 'running' ? 'active' : ''} onClick={() => setFilter('running')}>生成中</button>
+              <button onClick={() => void refresh()}><RefreshIcon />刷新</button>
             </div>
-            <button onClick={() => void refresh()}>刷新</button>
-          </div>
-          <div className="toolbar">
-            <span>{visible.length} 条记录</span>
-            <div><span>{filter === 'all' ? '全部状态' : statusText(filter)}</span></div>
           </div>
           <div className="task-grid">
             {visible.map((item) => {
@@ -404,7 +421,8 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
                 <article key={item.id} className="task-card" onClick={() => setSelected(item)}>
                   <div className={`thumb ${item.status}`}>
                     {item.images[0] ? <img src={imageUrl(item.images[0].id)} alt={item.prompt} /> : <div className="thumb-placeholder" />}
-                    <span>{statusText(item.status)}</span>
+                    <span className="task-status"><i />{statusText(item.status)}</span>
+                    {item.status === 'running' ? <div className="task-running-overlay"><div><span>{progress.hint || '正在生成图片'}</span><b>{progress.timingText}</b></div><i><span /></i></div> : null}
                   </div>
                   <div className="task-body">
                     <b>{item.prompt}</b>
