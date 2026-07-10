@@ -145,7 +145,7 @@ img {
 }
 
 .minimal-app {
-  width: min(100%, 1270px);
+  width: min(100%, 1480px);
   margin: 0 auto;
   padding: 26px;
   color: var(--ink);
@@ -238,7 +238,7 @@ img {
 .workspace,
 .admin-workspace {
   display: grid;
-  grid-template-columns: 210px minmax(0, 1fr);
+  grid-template-columns: 230px minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -347,9 +347,8 @@ img {
 
 .generator-panel {
   display: grid;
-  grid-template-columns: minmax(620px, 1fr) minmax(260px, 320px);
-  align-items: start;
-  gap: 24px;
+  grid-template-columns: 1fr;
+  gap: 18px;
   overflow: hidden;
   padding: 24px;
   background:
@@ -357,14 +356,10 @@ img {
     #fff;
 }
 
-.generator-main {
-  min-width: 0;
-}
-
 .generator-copy {
   display: grid;
   gap: 8px;
-  margin-bottom: 18px;
+  max-width: 820px;
 }
 
 .eyebrow {
@@ -468,13 +463,14 @@ img {
 .generator-stats {
   min-width: 0;
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   align-content: start;
 }
 
 .generator-stats div {
   min-width: 0;
-  min-height: 84px;
+  min-height: 82px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: #fff;
@@ -490,7 +486,7 @@ img {
   color: #143f70;
   display: block;
   width: 100%;
-  font-size: clamp(20px, 1.6vw, 24px);
+  font-size: clamp(18px, 1.45vw, 24px);
   line-height: 1.16;
   max-width: 100%;
   overflow: hidden;

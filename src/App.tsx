@@ -338,44 +338,42 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
       </aside>
       <section className="studio-main">
         <section className="generator-panel">
-          <div className="generator-main">
-            <div className="generator-copy">
-              <span className="eyebrow">图片生成</span>
-              <h1>选择 Key 后生成图片</h1>
-              <p>使用 sub2api 已创建的 API Key。Key 明文只在后端读取，前端只显示名称、分组和状态。</p>
-            </div>
-            <form className="prompt-form" onSubmit={submit}>
-              <label>
-                <span>提示词</span>
-                <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="例如：浅蓝背景上的极简产品图，柔和自然光，干净构图..." />
-              </label>
-              {inputImages.length ? (
-                <div className="reference-strip">
-                  {inputImages.map((item, index) => <img key={item} src={item} alt={`参考图 ${index + 1}`} />)}
-                  <button type="button" onClick={() => setInputImages([])}>清空参考图</button>
-                </div>
-              ) : null}
-              <div className="param-row">
-                <select className="api-key-select" value={selectedApiKeyId} onChange={(e) => setSelectedApiKeyId(e.target.value)} aria-label="sub2api API Key">
-                  <option value="">{keysLoading ? '正在读取 Key...' : '选择 API Key'}</option>
-                  {apiKeys.map((item) => <option key={item.id} value={item.id}>{keyLabel(item)}</option>)}
-                </select>
-                <select value={size} onChange={(e) => setSize(e.target.value)} aria-label="图片尺寸">{sizeOptions.map((item) => <option key={item}>{item}</option>)}</select>
-                <select value={quality} onChange={(e) => setQuality(e.target.value)} aria-label="图片质量">{qualityOptions.map((item) => <option key={item}>{item}</option>)}</select>
-                <select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select>
-                <select value={imageCount} onChange={(e) => setImageCount(Number(e.target.value))} aria-label="图片数量">{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item} 张</option>)}</select>
-                <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
-                <button type="button" onClick={() => fileInputRef.current?.click()}>参考图 {inputImages.length ? inputImages.length : ''}</button>
-                <button type="submit" className="primary" disabled={busy || keysLoading || !selectedApiKeyId}>{busy ? '提交中...' : '生成图片'}</button>
-              </div>
-              {error ? <div className="inline-message error">{error}</div> : null}
-            </form>
+          <div className="generator-copy">
+            <span className="eyebrow">图片生成</span>
+            <h1>选择 Key 后生成图片</h1>
+            <p>使用 sub2api 已创建的 API Key。Key 明文只在后端读取，前端只显示名称、分组和状态。</p>
           </div>
           <div className="generator-stats">
             <div><span>当前账号</span><b title={accountName(props.user)}>{accountName(props.user)}</b></div>
             <div><span>当前 Key</span><b title={keyLabel(selectedKey)}>{keyLabel(selectedKey)}</b></div>
             <div><span>成功任务</span><b>{doneCount}</b></div>
           </div>
+          <form className="prompt-form" onSubmit={submit}>
+            <label>
+              <span>提示词</span>
+              <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="例如：浅蓝背景上的极简产品图，柔和自然光，干净构图..." />
+            </label>
+            {inputImages.length ? (
+              <div className="reference-strip">
+                {inputImages.map((item, index) => <img key={item} src={item} alt={`参考图 ${index + 1}`} />)}
+                <button type="button" onClick={() => setInputImages([])}>清空参考图</button>
+              </div>
+            ) : null}
+            <div className="param-row">
+              <select className="api-key-select" value={selectedApiKeyId} onChange={(e) => setSelectedApiKeyId(e.target.value)} aria-label="sub2api API Key">
+                <option value="">{keysLoading ? '正在读取 Key...' : '选择 API Key'}</option>
+                {apiKeys.map((item) => <option key={item.id} value={item.id}>{keyLabel(item)}</option>)}
+              </select>
+              <select value={size} onChange={(e) => setSize(e.target.value)} aria-label="图片尺寸">{sizeOptions.map((item) => <option key={item}>{item}</option>)}</select>
+              <select value={quality} onChange={(e) => setQuality(e.target.value)} aria-label="图片质量">{qualityOptions.map((item) => <option key={item}>{item}</option>)}</select>
+              <select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select>
+              <select value={imageCount} onChange={(e) => setImageCount(Number(e.target.value))} aria-label="图片数量">{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item} 张</option>)}</select>
+              <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
+              <button type="button" onClick={() => fileInputRef.current?.click()}>参考图 {inputImages.length ? inputImages.length : ''}</button>
+              <button type="submit" className="primary" disabled={busy || keysLoading || !selectedApiKeyId}>{busy ? '提交中...' : '生成图片'}</button>
+            </div>
+            {error ? <div className="inline-message error">{error}</div> : null}
+          </form>
         </section>
 
         <section className="gallery-panel">
