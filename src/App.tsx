@@ -128,8 +128,9 @@ export default function App() {
           </div>
         </div>
         <nav>
-          <div className="account-pill"><span>sub2api</span><b>{accountName(user)}</b></div>
-          <button className="logout-button" onClick={logout}>退出</button>
+          <button className="quota-pill">sub2api <b>{accountName(user)}</b></button>
+          <button className="active">工作台</button>
+          <button onClick={logout}>退出</button>
         </nav>
       </header>
       <GalleryPage user={user} onUserChange={setUser} />
@@ -242,6 +243,11 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   const [error, setError] = useState('')
   const [now, setNow] = useState(() => Date.now())
 
+  const selectedKey = useMemo(
+    () => apiKeys.find((item) => item.id === selectedApiKeyId) ?? null,
+    [apiKeys, selectedApiKeyId],
+  )
+
   async function refresh() {
     const payload = await apiRequest<{ generations: ApiGeneration[] }>('/api/generations')
     setGenerations(payload.generations)
@@ -327,32 +333,34 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   return (
     <main className="workspace studio-workspace">
       <aside className="side-nav">
-        <div className="side-heading">
-          <span>LIBRARY</span>
-          <h2>图片库</h2>
+        <h2>工作台</h2>
+        <p>选择 sub2api Key，生成、历史和下载集中在一个页面。</p>
+        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部图片 <span>{generations.length}</span></button>
+        <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>生成成功 <span>{doneCount}</span></button>
+        <button className={filter === 'running' ? 'active' : ''} onClick={() => setFilter('running')}>生成中 <span>{runningCount}</span></button>
+        <button className={filter === 'error' ? 'active' : ''} onClick={() => setFilter('error')}>生成失败 <span>{errorCount}</span></button>
+        <div className="quota-card">
+          <span>当前 API Key</span>
+          <b>{selectedKey ? selectedKey.name : '未选择'}</b>
+          <small>{selectedKey?.groupName ? `分组：${selectedKey.groupName}` : '计费和余额由 sub2api 处理'}</small>
         </div>
-        <nav className="task-filters">
-          <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}><i className="filter-dot all" />全部图片 <span>{generations.length}</span></button>
-          <button className={filter === 'running' ? 'active' : ''} onClick={() => setFilter('running')}><i className="filter-dot running" />生成中 <span>{runningCount}</span></button>
-          <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}><i className="filter-dot done" />已完成 <span>{doneCount}</span></button>
-          <button className={filter === 'error' ? 'active' : ''} onClick={() => setFilter('error')}><i className="filter-dot error" />失败 <span>{errorCount}</span></button>
-        </nav>
-        <div className="side-foot"><span>MODEL</span><b>gpt-image-2</b><small>计费由 sub2api 处理</small></div>
       </aside>
       <section className="studio-main">
         <section className="generator-panel">
           <div className="generator-copy">
-            <div>
-              <span className="eyebrow">CREATE / IMAGE</span>
-              <h1>描述你想生成的画面</h1>
-              <p>选择已有 Key，设置画面规格，然后提交生成。</p>
-            </div>
-            <div className="generator-context"><span>gpt-image-2</span><span>按次（图片）</span></div>
+            <span className="eyebrow">图片生成</span>
+            <h1>选择 Key 后生成图片</h1>
+            <p>使用 sub2api 已创建的 API Key。Key 明文只在后端读取，前端只显示名称、分组和状态。</p>
+          </div>
+          <div className="generator-stats">
+            <div><span>当前账号</span><b title={accountName(props.user)}>{accountName(props.user)}</b></div>
+            <div><span>当前 Key</span><b title={keyLabel(selectedKey)}>{keyLabel(selectedKey)}</b></div>
+            <div><span>成功任务</span><b>{doneCount}</b></div>
           </div>
           <form className="prompt-form" onSubmit={submit}>
-            <label className="prompt-editor">
-              <span><b>画面描述</b><small>尽量描述主体、环境、光线与构图</small></span>
-              <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="例如：一张极简产品摄影，冷白背景，柔和侧光，干净构图，细腻材质..." />
+            <label>
+              <span>提示词</span>
+              <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="例如：浅蓝背景上的极简产品图，柔和自然光，干净构图..." />
             </label>
             {inputImages.length ? (
               <div className="reference-strip">
@@ -361,17 +369,17 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
               </div>
             ) : null}
             <div className="param-row">
-              <label className="control-field key-field"><span>API KEY</span><select className="api-key-select" value={selectedApiKeyId} onChange={(e) => setSelectedApiKeyId(e.target.value)} aria-label="sub2api API Key">
-                  <option value="">{keysLoading ? '正在读取 Key...' : '选择 API Key'}</option>
-                  {apiKeys.map((item) => <option key={item.id} value={item.id}>{keyLabel(item)}</option>)}
-                </select></label>
-              <label className="control-field"><span>尺寸</span><select value={size} onChange={(e) => setSize(e.target.value)} aria-label="图片尺寸">{sizeOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
-              <label className="control-field"><span>质量</span><select value={quality} onChange={(e) => setQuality(e.target.value)} aria-label="图片质量">{qualityOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
-              <label className="control-field"><span>格式</span><select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
-              <label className="control-field"><span>数量</span><select value={imageCount} onChange={(e) => setImageCount(Number(e.target.value))} aria-label="图片数量">{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item} 张</option>)}</select></label>
+              <select className="api-key-select" value={selectedApiKeyId} onChange={(e) => setSelectedApiKeyId(e.target.value)} aria-label="sub2api API Key">
+                <option value="">{keysLoading ? '正在读取 Key...' : '选择 API Key'}</option>
+                {apiKeys.map((item) => <option key={item.id} value={item.id}>{keyLabel(item)}</option>)}
+              </select>
+              <select value={size} onChange={(e) => setSize(e.target.value)} aria-label="图片尺寸">{sizeOptions.map((item) => <option key={item}>{item}</option>)}</select>
+              <select value={quality} onChange={(e) => setQuality(e.target.value)} aria-label="图片质量">{qualityOptions.map((item) => <option key={item}>{item}</option>)}</select>
+              <select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select>
+              <select value={imageCount} onChange={(e) => setImageCount(Number(e.target.value))} aria-label="图片数量">{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item} 张</option>)}</select>
               <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
-              <button className="reference-action" type="button" onClick={() => fileInputRef.current?.click()}>＋ 参考图 {inputImages.length ? inputImages.length : ''}</button>
-              <button type="submit" className="primary generate-action" disabled={busy || keysLoading || !selectedApiKeyId}>{busy ? '提交中...' : '生成图片 →'}</button>
+              <button type="button" onClick={() => fileInputRef.current?.click()}>参考图 {inputImages.length ? inputImages.length : ''}</button>
+              <button type="submit" className="primary" disabled={busy || keysLoading || !selectedApiKeyId}>{busy ? '提交中...' : '生成图片'}</button>
             </div>
             {error ? <div className="inline-message error">{error}</div> : null}
           </form>
