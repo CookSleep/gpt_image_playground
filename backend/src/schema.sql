@@ -65,4 +65,6 @@ alter table sessions add column if not exists sub2api_token_expires_at timestamp
 alter table generations add column if not exists api_key_id text;
 alter table generations add column if not exists api_key_name text;
 
-create unique index if not exists users_external_identity_idx on users(external_provider, external_user_id);
+delete from users where external_user_id = '';
+drop index if exists users_external_identity_idx;
+create unique index users_external_identity_idx on users(external_provider, external_user_id);
