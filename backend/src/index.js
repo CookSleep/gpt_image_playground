@@ -37,7 +37,6 @@ const app = buildApp({
   imageClient: createOpenAIImageClient({
     baseUrl: process.env.OPENAI_BASE_URL || `${sub2apiBaseUrl.replace(/\/+$/, '')}/v1`,
     apiKey: process.env.OPENAI_API_KEY,
-    streamImages: boolEnv('OPENAI_IMAGE_STREAM', true),
     partialImages: intEnv('OPENAI_IMAGE_PARTIAL_IMAGES', 2),
     timeoutMs: intEnv('OPENAI_IMAGE_TIMEOUT_MS', 10 * 60 * 1000),
   }),

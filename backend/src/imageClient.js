@@ -182,12 +182,8 @@ async function callGeneration(config, headers, input, signal) {
     output_format: input.params.output_format,
     n: input.params.n,
   }
-  if (config.streamImages) {
-    body.stream = true
-    body.partial_images = config.partialImages ?? 2
-  } else {
-    body.response_format = 'b64_json'
-  }
+  body.stream = true
+  body.partial_images = config.partialImages ?? 2
 
   return fetch(joinUrl(config.baseUrl, '/images/generations'), {
     method: 'POST',
@@ -205,12 +201,8 @@ async function callEdit(config, headers, input, signal) {
   form.set('quality', input.params.quality)
   form.set('output_format', input.params.output_format)
   form.set('n', String(input.params.n))
-  if (config.streamImages) {
-    form.set('stream', 'true')
-    form.set('partial_images', String(config.partialImages ?? 2))
-  } else {
-    form.set('response_format', 'b64_json')
-  }
+  form.set('stream', 'true')
+  form.set('partial_images', String(config.partialImages ?? 2))
   input.inputImages.forEach((dataUrl, idx) => {
     const file = dataUrlToBytes(dataUrl)
     form.append('image', new Blob([file.body], { type: file.contentType }), `reference-${idx}.png`)
