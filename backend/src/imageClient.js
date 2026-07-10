@@ -105,7 +105,9 @@ export function createOpenAIImageClient(config) {
   return {
     async generate(input) {
       const fallbackContentType = contentTypeFromFormat(input.params.output_format)
-      const headers = { Authorization: `Bearer ${config.apiKey}` }
+      const apiKey = input.apiKey || config.apiKey
+      if (!apiKey) throw new Error('缺少用于生成图片的 sub2api API Key')
+      const headers = { Authorization: `Bearer ${apiKey}` }
       const controller = new AbortController()
       const timeoutMs = Number(config.timeoutMs || 0)
       const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null

@@ -1,13 +1,24 @@
 export interface ApiUser {
   id: string
+  email: string
   username: string
   nickname: string
   role: 'user' | 'admin'
-  status: 'pending' | 'active' | 'disabled'
-  quotaRemaining: number
-  quotaUsed: number
+  status: 'active' | 'disabled'
   createdAt: string
   updatedAt: string
+}
+
+export interface ApiKeyOption {
+  id: string
+  name: string
+  status: string
+  groupId: string | null
+  groupName: string | null
+  quota: number
+  quotaUsed: number
+  expiresAt: string | null
+  lastUsedAt: string | null
 }
 
 export interface ApiGenerationImage {
@@ -18,6 +29,8 @@ export interface ApiGenerationImage {
 
 export interface ApiGeneration {
   id: string
+  apiKeyId: string | null
+  apiKeyName: string | null
   prompt: string
   params: {
     size: string
@@ -63,4 +76,3 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
 export function imageUrl(id: string) {
   return `/api/images/${encodeURIComponent(id)}`
 }
-

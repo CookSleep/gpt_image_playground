@@ -41,6 +41,8 @@ function normalizeParams(params = {}) {
 function publicGeneration(generation) {
   return {
     id: generation.id,
+    apiKeyId: generation.apiKeyId ?? null,
+    apiKeyName: generation.apiKeyName ?? null,
     prompt: generation.prompt,
     params: generation.params,
     status: generation.status,
@@ -53,10 +55,37 @@ function publicGeneration(generation) {
   }
 }
 
+function publicUser(user) {
+  if (!user) return null
+  return {
+    id: user.id,
+    email: user.email ?? user.username,
+    username: user.username,
+    nickname: user.nickname,
+    role: user.role,
+    status: user.status,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  }
+}
+
+function publicApiKey(key) {
+  return {
+    id: String(key.id),
+    name: key.name,
+    status: key.status,
+    groupId: key.group_id == null ? null : String(key.group_id),
+    groupName: key.group?.name ?? null,
+    quota: key.quota ?? 0,
+    quotaUsed: key.quota_used ?? 0,
+    expiresAt: key.expires_at ?? null,
+    lastUsedAt: key.last_used_at ?? null,
+  }
+}
+
 export function buildApp(options) {
   const app = Fastify({ logger: false, bodyLimit: 80 * 1024 * 1024 })
   const ready = (async () => {
-    await options.store.ensureAdmin(options.admin)
     await options.store.failInterruptedRunningGenerations?.('服务重启，生成任务已中断，请重新生成')
   })()
 
@@ -64,7 +93,9 @@ export function buildApp(options) {
     await ready
     const token = parseCookies(request.headers.cookie)[COOKIE_NAME]
     if (!token) return null
-    return options.store.getSessionUser(hashToken(token, options.sessionSecret))
+    const sessionTokenHash = hashToken(token, options.sessionSecret)
+    const user = await options.store.getSessionUser(sessionTokenHash)
+    return user ? { ...user, sessionTokenHash } : null
   }
 
   async function requireUser(request, reply) {
@@ -76,24 +107,45 @@ export function buildApp(options) {
     return user
   }
 
-  async function requireAdmin(request, reply) {
-    const user = await requireUser(request, reply)
-    if (!user) return null
-    if (user.role !== 'admin') {
-      sendError(reply, 403, '需要管理员权限')
-      return null
+  async function ensureSub2apiAccess(user) {
+    if (!user.sub2apiAccessToken) {
+      const error = new Error('sub2api 登录已过期，请重新登录')
+      error.statusCode = 401
+      throw error
     }
-    return user
+    const expiresAt = Date.parse(user.sub2apiTokenExpiresAt || '')
+    if (!Number.isFinite(expiresAt) || expiresAt - Date.now() > 120 * 1000) return user
+    if (!user.sub2apiRefreshToken) {
+      const error = new Error('sub2api 登录已过期，请重新登录')
+      error.statusCode = 401
+      throw error
+    }
+    const refreshed = await options.sub2apiClient.refresh(user.sub2apiRefreshToken)
+    const tokenExpiresAt = refreshed.expires_in ? new Date(Date.now() + refreshed.expires_in * 1000).toISOString() : null
+    await options.store.updateSessionTokens?.(user.sessionTokenHash, {
+      accessToken: refreshed.access_token,
+      refreshToken: refreshed.refresh_token,
+      tokenExpiresAt,
+    })
+    return {
+      ...user,
+      sub2apiAccessToken: refreshed.access_token,
+      sub2apiRefreshToken: refreshed.refresh_token ?? user.sub2apiRefreshToken,
+      sub2apiTokenExpiresAt: tokenExpiresAt,
+    }
   }
 
   async function processGeneration(generation, payload) {
     const startedAt = Date.now()
     try {
+      const selectedKey = await options.sub2apiClient.getKey(generation.sub2apiAccessToken, generation.apiKeyId)
+      if (!selectedKey?.key) throw new Error('选择的 sub2api API Key 不存在或不可用')
       const result = await options.imageClient.generate({
         prompt: generation.prompt,
         params: generation.params,
         inputImages: payload.inputImages ?? [],
         model: options.defaultModel,
+        apiKey: selectedKey.key,
       })
       const outputImages = []
       for (let idx = 0; idx < result.images.length; idx += 1) {
@@ -111,33 +163,26 @@ export function buildApp(options) {
 
   app.get('/api/health', async () => ({ ok: true }))
 
-  app.post('/api/auth/register', async (request, reply) => {
-    const body = request.body ?? {}
-    const username = String(body.username ?? '').trim()
-    const password = String(body.password ?? '')
-    const nickname = String(body.nickname ?? '').trim()
-    if (!/^[A-Za-z0-9_]{3,32}$/.test(username)) return sendError(reply, 400, '账号需为 3-32 位字母、数字或下划线')
-    if (password.length < 6) return sendError(reply, 400, '密码至少 6 位')
-
-    try {
-      const user = await options.store.createUser({ username, password, nickname })
-      return reply.code(201).send({ user })
-    } catch (err) {
-      return sendError(reply, err.statusCode ?? 500, err.message)
-    }
-  })
-
   app.post('/api/auth/login', async (request, reply) => {
     await ready
     const body = request.body ?? {}
-    const user = await options.store.verifyUser(String(body.username ?? '').trim(), String(body.password ?? ''))
-    if (!user) return sendError(reply, 401, '账号或密码错误')
-    if (user.status === 'disabled') return sendError(reply, 403, '账号已禁用')
-
-    const token = createToken()
-    await options.store.createSession(user.id, hashToken(token, options.sessionSecret), createExpiresAt())
-    reply.header('set-cookie', `${COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${SESSION_DAYS * 24 * 60 * 60}`)
-    return { user }
+    const email = String(body.email ?? body.username ?? '').trim()
+    const password = String(body.password ?? '')
+    if (!email || !password) return sendError(reply, 400, '请输入 sub2api 邮箱和密码')
+    try {
+      const auth = await options.sub2apiClient.login(email, password)
+      const user = await options.store.upsertExternalUser(auth.user)
+      const token = createToken()
+      await options.store.createSession(user.id, hashToken(token, options.sessionSecret), createExpiresAt(), {
+        accessToken: auth.access_token,
+        refreshToken: auth.refresh_token,
+        tokenExpiresAt: auth.expires_in ? new Date(Date.now() + auth.expires_in * 1000).toISOString() : null,
+      })
+      reply.header('set-cookie', `${COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${SESSION_DAYS * 24 * 60 * 60}`)
+      return { user: publicUser(user) }
+    } catch (err) {
+      return sendError(reply, err.statusCode ?? 401, err.message || 'sub2api 登录失败')
+    }
   })
 
   app.post('/api/auth/logout', async (request, reply) => {
@@ -147,71 +192,58 @@ export function buildApp(options) {
     return { ok: true }
   })
 
-  app.post('/api/auth/change-password', async (request, reply) => {
-    const user = await requireUser(request, reply)
-    if (!user) return
-    const currentPassword = String(request.body?.currentPassword ?? '')
-    const newPassword = String(request.body?.newPassword ?? '')
-    if (newPassword.length < 6) return sendError(reply, 400, '新密码至少 6 位')
-
-    const verified = await options.store.verifyUser(user.username, currentPassword)
-    if (!verified) return sendError(reply, 400, '当前密码不正确')
-
-    await options.store.updatePassword(user.id, newPassword)
-    return { ok: true }
-  })
-
   app.get('/api/me', async (request, reply) => {
     const user = await requireUser(request, reply)
     if (!user) return
-    return { user }
-  })
-
-  app.get('/api/admin/users', async (request, reply) => {
-    const admin = await requireAdmin(request, reply)
-    if (!admin) return
-    return { users: await options.store.listUsers() }
-  })
-
-  app.patch('/api/admin/users/:id/status', async (request, reply) => {
-    const admin = await requireAdmin(request, reply)
-    if (!admin) return
-    const status = request.body?.status
-    if (!['pending', 'active', 'disabled'].includes(status)) return sendError(reply, 400, '状态不合法')
     try {
-      return { user: await options.store.updateUserStatus(request.params.id, status, admin.id) }
+      const authedUser = await ensureSub2apiAccess(user)
+      return { user: publicUser(authedUser) }
     } catch (err) {
-      return sendError(reply, err.statusCode ?? 500, err.message)
+      return sendError(reply, err.statusCode ?? 401, err.message || 'sub2api 登录已过期，请重新登录')
     }
   })
 
-  app.post('/api/admin/users/:id/quota', async (request, reply) => {
-    const admin = await requireAdmin(request, reply)
-    if (!admin) return
-    const delta = Number(request.body?.delta)
-    if (!Number.isInteger(delta) || delta === 0) return sendError(reply, 400, '额度调整值必须为非 0 整数')
+  app.get('/api/sub2api/keys', async (request, reply) => {
+    let user = await requireUser(request, reply)
+    if (!user) return
     try {
-      return { user: await options.store.adjustQuota(request.params.id, delta, request.body?.reason, admin.id) }
+      user = await ensureSub2apiAccess(user)
+      const data = await options.sub2apiClient.listKeys(user.sub2apiAccessToken, { status: 'active' })
+      const items = Array.isArray(data?.items) ? data.items : []
+      return { keys: items.map(publicApiKey) }
     } catch (err) {
-      return sendError(reply, err.statusCode ?? 500, err.message)
+      return sendError(reply, err.statusCode ?? 502, err.message || '读取 sub2api API Key 失败')
     }
   })
 
   app.post('/api/generations', async (request, reply) => {
-    const user = await requireUser(request, reply)
+    let user = await requireUser(request, reply)
     if (!user) return
-    if (user.status !== 'active') return sendError(reply, 403, '账号待审核或已禁用')
+    if (user.status !== 'active') return sendError(reply, 403, 'sub2api 账号不可用')
 
     const prompt = String(request.body?.prompt ?? '').trim()
     if (!prompt) return sendError(reply, 400, '请输入提示词')
     const params = normalizeParams(request.body?.params)
-    if (user.role !== 'admin' && user.quotaRemaining < params.n) return sendError(reply, 403, `可用额度不足，本次需要 ${params.n} 次`)
+    const apiKeyId = String(request.body?.apiKeyId ?? '').trim()
+    if (!apiKeyId) return sendError(reply, 400, '请选择 sub2api API Key')
+    let apiKeyName = ''
+    try {
+      user = await ensureSub2apiAccess(user)
+      const selectedKey = await options.sub2apiClient.getKey(user.sub2apiAccessToken, apiKeyId)
+      if (!selectedKey?.key || selectedKey.status !== 'active') return sendError(reply, 400, '选择的 sub2api API Key 不可用')
+      apiKeyName = selectedKey.name || `API Key ${apiKeyId}`
+    } catch (err) {
+      return sendError(reply, err.statusCode ?? 400, err.message || '选择的 sub2api API Key 不可用')
+    }
     const generation = await options.store.createGeneration({
       userId: user.id,
+      apiKeyId,
+      apiKeyName,
       prompt,
       params,
       model: options.defaultModel,
     })
+    generation.sub2apiAccessToken = user.sub2apiAccessToken
 
     if (options.runJobsInline) {
       const done = await processGeneration(generation, request.body ?? {})
@@ -232,7 +264,7 @@ export function buildApp(options) {
   app.get('/api/generations/:id', async (request, reply) => {
     const user = await requireUser(request, reply)
     if (!user) return
-    const generation = await options.store.getGeneration(request.params.id, user.role === 'admin' ? null : user.id)
+    const generation = await options.store.getGeneration(request.params.id, user.id)
     if (!generation) return sendError(reply, 404, '任务不存在')
     return { generation: publicGeneration(generation) }
   })
@@ -240,7 +272,7 @@ export function buildApp(options) {
   app.get('/api/generations/:id/events', async (request, reply) => {
     const user = await requireUser(request, reply)
     if (!user) return
-    const generation = await options.store.getGeneration(request.params.id, user.role === 'admin' ? null : user.id)
+    const generation = await options.store.getGeneration(request.params.id, user.id)
     if (!generation) return sendError(reply, 404, '任务不存在')
     reply.raw.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
@@ -256,7 +288,7 @@ export function buildApp(options) {
     if (!user) return
     const image = await options.store.getImage(request.params.id)
     if (!image) return sendError(reply, 404, '图片不存在')
-    if (user.role !== 'admin' && image.userId !== user.id) return sendError(reply, 403, '无权访问图片')
+    if (image.userId !== user.id) return sendError(reply, 403, '无权访问图片')
     const object = await options.storage.getObject(image.objectKey)
     if (!object) return sendError(reply, 404, '图片文件不存在')
     reply.type(object.contentType)

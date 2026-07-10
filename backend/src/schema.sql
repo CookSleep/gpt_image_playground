@@ -2,6 +2,9 @@ create table if not exists users (
   id bigserial primary key,
   username text not null unique,
   password_hash text not null,
+  email text,
+  external_provider text,
+  external_user_id text,
   nickname text not null,
   role text not null check (role in ('user', 'admin')),
   status text not null check (status in ('pending', 'active', 'disabled')),
@@ -15,12 +18,17 @@ create table if not exists sessions (
   token_hash text primary key,
   user_id bigint not null references users(id) on delete cascade,
   expires_at timestamptz not null,
+  sub2api_access_token text,
+  sub2api_refresh_token text,
+  sub2api_token_expires_at timestamptz,
   created_at timestamptz not null default now()
 );
 
 create table if not exists generations (
   id bigserial primary key,
   user_id bigint not null references users(id) on delete cascade,
+  api_key_id text,
+  api_key_name text,
   prompt text not null,
   params jsonb not null default '{}'::jsonb,
   status text not null check (status in ('running', 'done', 'error')),
@@ -65,3 +73,13 @@ create index if not exists generations_user_created_idx on generations(user_id, 
 create index if not exists generation_images_user_idx on generation_images(user_id);
 create index if not exists sessions_expires_idx on sessions(expires_at);
 
+alter table users add column if not exists email text;
+alter table users add column if not exists external_provider text;
+alter table users add column if not exists external_user_id text;
+alter table sessions add column if not exists sub2api_access_token text;
+alter table sessions add column if not exists sub2api_refresh_token text;
+alter table sessions add column if not exists sub2api_token_expires_at timestamptz;
+alter table generations add column if not exists api_key_id text;
+alter table generations add column if not exists api_key_name text;
+
+create unique index if not exists users_external_identity_idx on users(external_provider, external_user_id) where external_provider is not null and external_user_id is not null;

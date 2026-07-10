@@ -7,13 +7,13 @@
 ## 功能
 
 - 中文界面
-- 账号注册、登录、退出
-- 注册后默认待审核，额度为 0
-- 管理员启用/禁用用户、调整额度
-- 登录用户生成图片、查看自己的历史记录
-- 生成成功扣 1 次额度，失败不扣
-- 前端不暴露上游 API Key
-- 后端统一转发到 OpenAI-compatible API
+- 使用 sub2api 账号登录、退出
+- 读取用户在 sub2api 中已创建的 API Key
+- 用户手动选择 API Key 后生成图片
+- 前端不展示 API Key 明文
+- 登录用户生成图片、查看自己的历史记录和下载图片
+- 账号、Key 分组、计费和额度由 sub2api 统一处理
+- 后端统一通过 sub2api 的 OpenAI-compatible 网关生成图片
 - 默认模型：`gpt-image-2`
 - 图片存储使用 S3 兼容对象存储，例如 MinIO、Cloudflare R2
 - 支持 Docker 部署和 nginx 反向代理
@@ -60,11 +60,11 @@ npm run dev -- --port 5178
 http://localhost:5178
 ```
 
-内存联调默认管理员：
+内存联调账号：
 
 ```text
-账号：admin
-密码：admin123456
+邮箱：任意邮箱
+密码：任意非空密码
 ```
 
 ## Docker 本地联调
@@ -87,7 +87,7 @@ http://localhost:8088
 - backend
 - PostgreSQL
 - MinIO
-- mock OpenAI-compatible API
+- mock sub2api / OpenAI-compatible API
 
 ## 服务器部署
 
@@ -102,8 +102,8 @@ cp .env.example .env
 ```env
 DATABASE_URL=
 SESSION_SECRET=
-ADMIN_USERNAME=
-ADMIN_PASSWORD=
+SUB2API_BASE_URL=http://host.docker.internal:8080
+SUB2API_TIMEOUT_MS=30000
 OPENAI_BASE_URL=
 OPENAI_API_KEY=
 DEFAULT_IMAGE_MODEL=gpt-image-2
@@ -141,11 +141,11 @@ npm test
 - 前端构建通过
 - 前端测试通过
 - 后端核心测试通过
-- 注册、审核、登录、生图、扣额度、历史、图片代理下载流程通过
+- sub2api 登录、Key 脱敏列表、选择 Key 生图、历史、图片代理下载流程通过
 
 ## 说明
 
-本项目是个人用途的极简改造版，保留原项目的图片生成基础能力，但产品方向已收敛为“带账号和额度管理的小型生图站”。
+本项目是个人用途的极简改造版，保留原项目的图片生成基础能力，但产品方向已收敛为“接入 sub2api 账号体系的小型生图站”。
 
 原项目地址：
 

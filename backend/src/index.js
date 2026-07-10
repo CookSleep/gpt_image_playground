@@ -2,6 +2,7 @@ import { buildApp } from './app.js'
 import { createOpenAIImageClient } from './imageClient.js'
 import { createPgStore } from './pgStore.js'
 import { createS3Storage } from './s3Storage.js'
+import { createSub2apiClient } from './sub2apiClient.js'
 
 function boolEnv(name, fallback = false) {
   const value = process.env[name]
@@ -21,6 +22,7 @@ function intEnv(name, fallback) {
 }
 
 const port = Number(process.env.PORT || 3000)
+const sub2apiBaseUrl = requireEnv('SUB2API_BASE_URL')
 const store = await createPgStore(requireEnv('DATABASE_URL'))
 const app = buildApp({
   store,
@@ -33,18 +35,18 @@ const app = buildApp({
     forcePathStyle: boolEnv('S3_FORCE_PATH_STYLE', true),
   }),
   imageClient: createOpenAIImageClient({
-    baseUrl: requireEnv('OPENAI_BASE_URL'),
-    apiKey: requireEnv('OPENAI_API_KEY'),
+    baseUrl: process.env.OPENAI_BASE_URL || `${sub2apiBaseUrl.replace(/\/+$/, '')}/v1`,
+    apiKey: process.env.OPENAI_API_KEY,
     streamImages: boolEnv('OPENAI_IMAGE_STREAM', true),
     partialImages: intEnv('OPENAI_IMAGE_PARTIAL_IMAGES', 2),
     timeoutMs: intEnv('OPENAI_IMAGE_TIMEOUT_MS', 10 * 60 * 1000),
   }),
+  sub2apiClient: createSub2apiClient({
+    baseUrl: sub2apiBaseUrl,
+    timeoutMs: intEnv('SUB2API_TIMEOUT_MS', 30000),
+  }),
   sessionSecret: requireEnv('SESSION_SECRET'),
   defaultModel: process.env.DEFAULT_IMAGE_MODEL || 'gpt-image-2',
-  admin: {
-    username: requireEnv('ADMIN_USERNAME'),
-    password: requireEnv('ADMIN_PASSWORD'),
-  },
 })
 
 try {

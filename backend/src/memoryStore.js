@@ -22,6 +22,9 @@ export function createMemoryStore() {
 
   const publicUser = (user) => ({
     id: String(user.id),
+    externalProvider: user.externalProvider ?? null,
+    externalUserId: user.externalUserId ?? null,
+    email: user.email ?? user.username,
     username: user.username,
     nickname: user.nickname,
     role: user.role,
@@ -30,10 +33,36 @@ export function createMemoryStore() {
     quotaUsed: user.quotaUsed,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
+    sub2apiAccessToken: user.sub2apiAccessToken,
+    sub2apiRefreshToken: user.sub2apiRefreshToken,
+    sub2apiTokenExpiresAt: user.sub2apiTokenExpiresAt ?? null,
   })
 
   return {
     objects,
+
+    async upsertExternalUser(input) {
+      const externalUserId = String(input.id)
+      const existing = users.find((user) => user.externalProvider === 'sub2api' && user.externalUserId === externalUserId)
+      const createdAt = nowIso()
+      const next = existing ?? {
+        id: nextUserId++,
+        username: `sub2api:${externalUserId}`,
+        passwordHash: 'sub2api-managed',
+        quotaRemaining: 0,
+        quotaUsed: 0,
+        createdAt,
+      }
+      next.externalProvider = 'sub2api'
+      next.externalUserId = externalUserId
+      next.email = input.email ?? ''
+      next.nickname = input.username || input.email || `sub2api-${externalUserId}`
+      next.role = input.role === 'admin' ? 'admin' : 'user'
+      next.status = input.status && input.status !== 'active' ? 'disabled' : 'active'
+      next.updatedAt = nowIso()
+      if (!existing) users.push(next)
+      return publicUser(next)
+    },
 
     async ensureAdmin(admin) {
       const existing = users.find((user) => user.role === 'admin')
@@ -103,8 +132,14 @@ export function createMemoryStore() {
       return user ? publicUser(user) : null
     },
 
-    async createSession(userId, tokenHash, expiresAt) {
-      sessions.set(tokenHash, { userId: String(userId), expiresAt })
+    async createSession(userId, tokenHash, expiresAt, session = {}) {
+      sessions.set(tokenHash, {
+        userId: String(userId),
+        expiresAt,
+        sub2apiAccessToken: session.accessToken ?? null,
+        sub2apiRefreshToken: session.refreshToken ?? null,
+        sub2apiTokenExpiresAt: session.tokenExpiresAt ?? null,
+      })
     },
 
     async getSessionUser(tokenHash) {
@@ -114,7 +149,21 @@ export function createMemoryStore() {
         sessions.delete(tokenHash)
         return null
       }
-      return this.getUserById(session.userId)
+      const user = await this.getUserById(session.userId)
+      return user ? {
+        ...user,
+        sub2apiAccessToken: session.sub2apiAccessToken,
+        sub2apiRefreshToken: session.sub2apiRefreshToken,
+        sub2apiTokenExpiresAt: session.sub2apiTokenExpiresAt,
+      } : null
+    },
+
+    async updateSessionTokens(tokenHash, sessionPatch = {}) {
+      const session = sessions.get(tokenHash)
+      if (!session) return
+      session.sub2apiAccessToken = sessionPatch.accessToken ?? session.sub2apiAccessToken
+      session.sub2apiRefreshToken = sessionPatch.refreshToken ?? session.sub2apiRefreshToken
+      session.sub2apiTokenExpiresAt = sessionPatch.tokenExpiresAt ?? session.sub2apiTokenExpiresAt
     },
 
     async deleteSession(tokenHash) {
@@ -171,6 +220,8 @@ export function createMemoryStore() {
       const generation = {
         id: String(nextGenerationId++),
         userId: String(input.userId),
+        apiKeyId: input.apiKeyId ?? null,
+        apiKeyName: input.apiKeyName ?? null,
         prompt: input.prompt,
         params: clone(input.params),
         status: 'running',
@@ -201,46 +252,6 @@ export function createMemoryStore() {
     async finishGenerationSuccess(generationId, outputImages, upstream, elapsedMs) {
       const generation = generations.find((item) => item.id === String(generationId))
       if (!generation) throw new Error('任务不存在')
-      const user = users.find((item) => String(item.id) === generation.userId)
-      if (user?.role === 'admin') {
-        generation.status = 'done'
-        generation.upstream = upstream
-        generation.elapsedMs = elapsedMs
-        generation.finishedAt = nowIso()
-        for (const image of outputImages) {
-          images.push({
-            id: String(nextImageId++),
-            generationId: generation.id,
-            userId: generation.userId,
-            objectKey: image.objectKey,
-            contentType: image.contentType,
-            revisedPrompt: image.revisedPrompt ?? null,
-            createdAt: nowIso(),
-          })
-        }
-        return this.getGeneration(generation.id, generation.userId)
-      }
-      const charge = outputImages.length
-      if (!user || user.quotaRemaining < charge) {
-        generation.status = 'error'
-        generation.error = '额度不足，扣费失败'
-        generation.finishedAt = nowIso()
-        return this.getGeneration(generationId, generation.userId)
-      }
-
-      user.quotaRemaining -= charge
-      user.quotaUsed += charge
-      user.updatedAt = nowIso()
-      quotaLedger.push({
-        id: quotaLedger.length + 1,
-        userId: String(user.id),
-        actorId: null,
-        delta: -charge,
-        reason: `生成任务 ${generation.id} 成功扣费（${charge} 张图片）`,
-        balanceAfter: user.quotaRemaining,
-        createdAt: nowIso(),
-      })
-
       generation.status = 'done'
       generation.upstream = upstream ?? null
       generation.elapsedMs = elapsedMs

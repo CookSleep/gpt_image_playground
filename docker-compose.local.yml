@@ -62,10 +62,10 @@ services:
       PORT: 3000
       DATABASE_URL: postgres://minimal:minimal@postgres:5432/minimal_image_site
       SESSION_SECRET: local-dev-session-secret
-      ADMIN_USERNAME: admin
-      ADMIN_PASSWORD: admin123456
+      SUB2API_BASE_URL: http://mock-api:4010
+      SUB2API_TIMEOUT_MS: 30000
       OPENAI_BASE_URL: http://mock-api:4010/v1
-      OPENAI_API_KEY: local-mock-key
+      OPENAI_API_KEY:
       DEFAULT_IMAGE_MODEL: gpt-image-2
       OPENAI_IMAGE_STREAM: "true"
       OPENAI_IMAGE_PARTIAL_IMAGES: 2

@@ -1,8 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { apiRequest, imageUrl, type ApiGeneration, type ApiUser } from './lib/minimalApi'
-
-type AuthMode = 'login' | 'register'
-type MainView = 'gallery' | 'admin'
+import { apiRequest, imageUrl, type ApiGeneration, type ApiKeyOption, type ApiUser } from './lib/minimalApi'
 
 const clientLoggedOutKey = 'minimal-image-site-client-logged-out'
 const sizeOptions = ['1024x1024', '1024x1536', '1536x1024']
@@ -25,10 +22,13 @@ function statusText(status: ApiGeneration['status']) {
   return '失败'
 }
 
-function userStatusText(status: ApiUser['status']) {
-  if (status === 'active') return '正常'
-  if (status === 'disabled') return '禁用'
-  return '待审核'
+function accountName(user: ApiUser) {
+  return user.nickname || user.email || user.username
+}
+
+function keyLabel(key: ApiKeyOption | null) {
+  if (!key) return '未选择'
+  return key.groupName ? `${key.name} · ${key.groupName}` : key.name
 }
 
 function fileToDataUrl(file: File) {
@@ -66,11 +66,8 @@ function clearClientLoggedOut() {
 
 export default function App() {
   const [user, setUser] = useState<ApiUser | null>(null)
-  const [authMode, setAuthMode] = useState<AuthMode>('login')
-  const [view, setView] = useState<MainView>('gallery')
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
-  const [showPasswordModal, setShowPasswordModal] = useState(false)
 
   async function loadMe() {
     if (isClientLoggedOut()) {
@@ -81,7 +78,6 @@ export default function App() {
     try {
       const payload = await apiRequest<{ user: ApiUser }>('/api/me')
       setUser(payload.user)
-      if (payload.user.role !== 'admin') setView('gallery')
     } catch {
       setUser(null)
     } finally {
@@ -92,7 +88,6 @@ export default function App() {
   async function logout() {
     markClientLoggedOut()
     setUser(null)
-    setView('gallery')
     try {
       await apiRequest('/api/auth/logout', { method: 'POST' })
     } catch {
@@ -103,7 +98,6 @@ export default function App() {
   function handleAuthed(nextUser: ApiUser) {
     clearClientLoggedOut()
     setUser(nextUser)
-    setView('gallery')
   }
 
   useEffect(() => {
@@ -115,19 +109,11 @@ export default function App() {
   }
 
   if (!user) {
-    return (
-      <AuthPage
-        mode={authMode}
-        message={message}
-        onModeChange={setAuthMode}
-        onMessage={setMessage}
-        onAuthed={handleAuthed}
-      />
-    )
+    return <AuthPage message={message} onMessage={setMessage} onAuthed={handleAuthed} />
   }
 
-  if (user.status === 'pending') {
-    return <PendingPage user={user} onLogout={logout} onRefresh={loadMe} />
+  if (user.status === 'disabled') {
+    return <AccountDisabledPage user={user} onLogout={logout} onRefresh={loadMe} />
   }
 
   return (
@@ -141,92 +127,22 @@ export default function App() {
           </div>
         </div>
         <nav>
-          <button className="quota-pill">剩余额度 <b>{user.quotaRemaining}</b></button>
-          <button className={view === 'gallery' ? 'active' : ''} onClick={() => setView('gallery')}>工作台</button>
-          {user.role === 'admin' ? <button className={view === 'admin' ? 'active' : ''} onClick={() => setView('admin')}>管理</button> : null}
-          <button onClick={() => setShowPasswordModal(true)}>改密码</button>
+          <button className="quota-pill">sub2api <b>{accountName(user)}</b></button>
+          <button className="active">工作台</button>
           <button onClick={logout}>退出</button>
         </nav>
       </header>
-      {view === 'admin' && user.role === 'admin' ? (
-        <AdminPage currentUser={user} onUserChange={setUser} />
-      ) : (
-        <GalleryPage user={user} onUserChange={setUser} />
-      )}
-      {showPasswordModal ? <ChangePasswordModal onClose={() => setShowPasswordModal(false)} /> : null}
-    </div>
-  )
-}
-
-function ChangePasswordModal(props: { onClose: () => void }) {
-  const [currentPassword, setCurrentPassword] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [message, setMessage] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    setMessage('')
-    if (newPassword.length < 6) {
-      setMessage('新密码至少 6 位')
-      return
-    }
-    if (newPassword !== confirmPassword) {
-      setMessage('两次输入的新密码不一致')
-      return
-    }
-    setBusy(true)
-    try {
-      await apiRequest('/api/auth/change-password', {
-        method: 'POST',
-        body: JSON.stringify({ currentPassword, newPassword }),
-      })
-      setCurrentPassword('')
-      setNewPassword('')
-      setConfirmPassword('')
-      setMessage('密码已修改')
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="modal-backdrop" onClick={props.onClose}>
-      <section className="password-modal" onClick={(e) => e.stopPropagation()}>
-        <header>
-          <div>
-            <b>修改密码</b>
-            <span>修改后下次登录请使用新密码。</span>
-          </div>
-          <button onClick={props.onClose}>关闭</button>
-        </header>
-        <form onSubmit={submit}>
-          <label>当前密码<input value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} type="password" autoComplete="current-password" /></label>
-          <label>新密码<input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} type="password" autoComplete="new-password" /></label>
-          <label>确认新密码<input value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} type="password" autoComplete="new-password" /></label>
-          {message ? <div className={`inline-message ${message.includes('已修改') ? '' : 'error'}`}>{message}</div> : null}
-          <div className="button-row">
-            <button type="button" onClick={props.onClose}>取消</button>
-            <button className="primary" disabled={busy}>{busy ? '保存中...' : '保存密码'}</button>
-          </div>
-        </form>
-      </section>
+      <GalleryPage user={user} onUserChange={setUser} />
     </div>
   )
 }
 
 function AuthPage(props: {
-  mode: AuthMode
   message: string
-  onModeChange: (mode: AuthMode) => void
   onMessage: (message: string) => void
   onAuthed: (user: ApiUser) => void
 }) {
-  const [username, setUsername] = useState('')
-  const [nickname, setNickname] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -235,18 +151,9 @@ function AuthPage(props: {
     setBusy(true)
     props.onMessage('')
     try {
-      if (props.mode === 'register') {
-        await apiRequest('/api/auth/register', {
-          method: 'POST',
-          body: JSON.stringify({ username, nickname, password }),
-        })
-        props.onMessage('注册申请已提交，请等待管理员审核。')
-        props.onModeChange('login')
-        return
-      }
       const payload = await apiRequest<{ user: ApiUser }>('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ email, password }),
       })
       props.onAuthed(payload.user)
     } catch (err) {
@@ -263,31 +170,27 @@ function AuthPage(props: {
           <div className="brand-mark">图</div>
           <div>
             <strong>极简生图</strong>
-            <span>账号入口</span>
+            <span>sub2api 账号入口</span>
           </div>
         </div>
-        <h1>{props.mode === 'login' ? '登录账号' : '注册账号'}</h1>
-        <p>登录后可使用图片生成、查看个人历史和剩余额度。</p>
+        <h1>登录 sub2api 账号</h1>
+        <p>登录后选择你在 sub2api 已创建的 API Key，再生成图片。Key 明文只在后端使用。</p>
         <form onSubmit={submit}>
-          <label>账号<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="请输入账号" autoComplete="username" /></label>
-          {props.mode === 'register' ? <label>昵称<input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="请输入昵称" /></label> : null}
-          <label>密码<input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="请输入密码" type="password" autoComplete={props.mode === 'login' ? 'current-password' : 'new-password'} /></label>
-          <button className="primary full" disabled={busy}>{busy ? '处理中...' : props.mode === 'login' ? '登录' : '提交注册'}</button>
+          <label>邮箱<input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="请输入 sub2api 邮箱" autoComplete="email" /></label>
+          <label>密码<input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="请输入密码" type="password" autoComplete="current-password" /></label>
+          <button className="primary full" disabled={busy}>{busy ? '登录中...' : '登录'}</button>
         </form>
-        {props.message ? <div className="inline-message">{props.message}</div> : null}
-        <button className="link-button" onClick={() => props.onModeChange(props.mode === 'login' ? 'register' : 'login')}>
-          {props.mode === 'login' ? '还没有账号？注册账号' : '已有账号？返回登录'}
-        </button>
+        {props.message ? <div className="inline-message error">{props.message}</div> : null}
       </section>
       <section className="auth-preview">
         <div className="preview-image" />
-        <b>极简产品摄影，上传参考图后继续编辑</b>
-        <div className="preview-meta"><span>无需配置 API Key</span><span>额度 12</span></div>
+        <b>用 sub2api 已有 Key 生成图片</b>
+        <div className="preview-meta"><span>前端不显示 API Key</span><span>计费走 sub2api</span></div>
         <div className="pending-card">
-          <span>审</span>
+          <span>钥</span>
           <div>
-            <b>账号待审核</b>
-            <p>注册后默认待审核，管理员启用并分配额度后即可开始生成。</p>
+            <b>按次(图片)</b>
+            <p>本站只负责选择 Key、提交生成和保存历史，账号与计费由 sub2api 统一管理。</p>
           </div>
         </div>
       </section>
@@ -295,22 +198,22 @@ function AuthPage(props: {
   )
 }
 
-function PendingPage(props: { user: ApiUser; onLogout: () => void; onRefresh: () => void }) {
+function AccountDisabledPage(props: { user: ApiUser; onLogout: () => void; onRefresh: () => void }) {
   return (
     <main className="pending-page">
       <section className="pending-box">
         <div className="brand auth-brand">
-          <div className="brand-mark">审</div>
+          <div className="brand-mark">停</div>
           <div>
-            <strong>账号待审核</strong>
-            <span>{props.user.nickname}</span>
+            <strong>账号不可用</strong>
+            <span>{accountName(props.user)}</span>
           </div>
         </div>
-        <h1>等待管理员启用</h1>
-        <p>你的账号已经提交注册申请。管理员启用账号并分配额度后，即可开始生成图片。</p>
+        <h1>sub2api 账号已停用</h1>
+        <p>当前账号状态不可生成图片。请先在 sub2api 中确认账号状态，恢复后刷新页面。</p>
         <div className="status-box">
-          <b>当前状态：待审核</b>
-          <span>当前额度：0</span>
+          <b>当前状态：禁用</b>
+          <span>图片站不会单独管理账号和额度。</span>
         </div>
         <div className="button-row">
           <button className="primary" onClick={props.onRefresh}>刷新状态</button>
@@ -324,6 +227,8 @@ function PendingPage(props: { user: ApiUser; onLogout: () => void; onRefresh: ()
 function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => void }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [generations, setGenerations] = useState<ApiGeneration[]>([])
+  const [apiKeys, setApiKeys] = useState<ApiKeyOption[]>([])
+  const [selectedApiKeyId, setSelectedApiKeyId] = useState('')
   const [selected, setSelected] = useState<ApiGeneration | null>(null)
   const [prompt, setPrompt] = useState('')
   const [size, setSize] = useState('1024x1024')
@@ -333,7 +238,13 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   const [inputImages, setInputImages] = useState<string[]>([])
   const [filter, setFilter] = useState<'all' | ApiGeneration['status']>('all')
   const [busy, setBusy] = useState(false)
+  const [keysLoading, setKeysLoading] = useState(false)
   const [error, setError] = useState('')
+
+  const selectedKey = useMemo(
+    () => apiKeys.find((item) => item.id === selectedApiKeyId) ?? null,
+    [apiKeys, selectedApiKeyId],
+  )
 
   async function refresh() {
     const payload = await apiRequest<{ generations: ApiGeneration[] }>('/api/generations')
@@ -342,25 +253,47 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
     props.onUserChange(me.user)
   }
 
+  async function refreshKeys() {
+    setKeysLoading(true)
+    try {
+      const payload = await apiRequest<{ keys: ApiKeyOption[] }>('/api/sub2api/keys')
+      setApiKeys(payload.keys)
+      setSelectedApiKeyId((current) => {
+        if (current && payload.keys.some((item) => item.id === current)) return current
+        return payload.keys[0]?.id ?? ''
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setKeysLoading(false)
+    }
+  }
+
   useEffect(() => {
-    void refresh()
+    void refresh().catch((err) => setError(err instanceof Error ? err.message : String(err)))
+    void refreshKeys()
   }, [])
 
   useEffect(() => {
     if (!generations.some((item) => item.status === 'running')) return
-    const timer = window.setInterval(() => void refresh(), 2500)
+    const timer = window.setInterval(() => void refresh().catch(() => undefined), 2500)
     return () => window.clearInterval(timer)
   }, [generations])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!prompt.trim()) return
+    if (!selectedApiKeyId) {
+      setError('请先选择 sub2api API Key')
+      return
+    }
     setBusy(true)
     setError('')
     try {
       const payload = await apiRequest<{ generation: ApiGeneration }>('/api/generations', {
         method: 'POST',
         body: JSON.stringify({
+          apiKeyId: selectedApiKeyId,
           prompt,
           inputImages,
           params: { size, quality, output_format: format, n: imageCount },
@@ -385,21 +318,22 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
 
   const visible = useMemo(() => generations.filter((item) => filter === 'all' || item.status === filter), [generations, filter])
   const doneCount = generations.filter((item) => item.status === 'done').length
-  const quotaBlocked = props.user.role !== 'admin' && props.user.quotaRemaining < imageCount
+  const runningCount = generations.filter((item) => item.status === 'running').length
+  const errorCount = generations.filter((item) => item.status === 'error').length
 
   return (
     <main className="workspace studio-workspace">
       <aside className="side-nav">
         <h2>工作台</h2>
-        <p>生成、历史和下载集中在一个页面。</p>
+        <p>选择 sub2api Key，生成、历史和下载集中在一个页面。</p>
         <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部图片 <span>{generations.length}</span></button>
         <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>生成成功 <span>{doneCount}</span></button>
-        <button className={filter === 'running' ? 'active' : ''} onClick={() => setFilter('running')}>生成中 <span>{generations.filter((item) => item.status === 'running').length}</span></button>
-        <button className={filter === 'error' ? 'active' : ''} onClick={() => setFilter('error')}>失败未扣费 <span>{generations.filter((item) => item.status === 'error').length}</span></button>
+        <button className={filter === 'running' ? 'active' : ''} onClick={() => setFilter('running')}>生成中 <span>{runningCount}</span></button>
+        <button className={filter === 'error' ? 'active' : ''} onClick={() => setFilter('error')}>生成失败 <span>{errorCount}</span></button>
         <div className="quota-card">
-          <span>可用额度</span>
-          <b>{props.user.quotaRemaining}</b>
-          <small>失败不扣，成功按图片张数扣费</small>
+          <span>当前 API Key</span>
+          <b>{selectedKey ? selectedKey.name : '未选择'}</b>
+          <small>{selectedKey?.groupName ? `分组：${selectedKey.groupName}` : '计费和余额由 sub2api 处理'}</small>
         </div>
       </aside>
       <section className="studio-main">
@@ -407,8 +341,8 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
           <div className="generator-main">
             <div className="generator-copy">
               <span className="eyebrow">图片生成</span>
-              <h1>先写提示词，再生成图片</h1>
-              <p>支持参考图、尺寸、质量、格式和图片数量设置。提交后在下方查看任务状态，成功后按图片张数扣费。</p>
+              <h1>选择 Key 后生成图片</h1>
+              <p>使用 sub2api 已创建的 API Key。Key 明文只在后端读取，前端只显示名称、分组和状态。</p>
             </div>
             <form className="prompt-form" onSubmit={submit}>
               <label>
@@ -422,20 +356,24 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
                 </div>
               ) : null}
               <div className="param-row">
+                <select className="api-key-select" value={selectedApiKeyId} onChange={(e) => setSelectedApiKeyId(e.target.value)} aria-label="sub2api API Key">
+                  <option value="">{keysLoading ? '正在读取 Key...' : '选择 API Key'}</option>
+                  {apiKeys.map((item) => <option key={item.id} value={item.id}>{keyLabel(item)}</option>)}
+                </select>
                 <select value={size} onChange={(e) => setSize(e.target.value)} aria-label="图片尺寸">{sizeOptions.map((item) => <option key={item}>{item}</option>)}</select>
                 <select value={quality} onChange={(e) => setQuality(e.target.value)} aria-label="图片质量">{qualityOptions.map((item) => <option key={item}>{item}</option>)}</select>
                 <select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select>
                 <select value={imageCount} onChange={(e) => setImageCount(Number(e.target.value))} aria-label="图片数量">{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item} 张</option>)}</select>
                 <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
                 <button type="button" onClick={() => fileInputRef.current?.click()}>参考图 {inputImages.length ? inputImages.length : ''}</button>
-                <button type="submit" className="primary" disabled={busy || quotaBlocked}>{busy ? '提交中...' : quotaBlocked ? '额度不足' : '生成图片'}</button>
+                <button type="submit" className="primary" disabled={busy || keysLoading || !selectedApiKeyId}>{busy ? '提交中...' : '生成图片'}</button>
               </div>
               {error ? <div className="inline-message error">{error}</div> : null}
             </form>
           </div>
           <div className="generator-stats">
-            <div><span>{props.user.role === 'admin' ? '管理员生成' : '可用额度'}</span><b>{props.user.role === 'admin' ? '不限' : props.user.quotaRemaining}</b></div>
-            <div><span>默认模型</span><b>gpt-image-2</b></div>
+            <div><span>当前账号</span><b title={accountName(props.user)}>{accountName(props.user)}</b></div>
+            <div><span>当前 Key</span><b title={keyLabel(selectedKey)}>{keyLabel(selectedKey)}</b></div>
             <div><span>成功任务</span><b>{doneCount}</b></div>
           </div>
         </section>
@@ -446,7 +384,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
               <h1>最近任务</h1>
               <p>按状态筛选任务，点击图片查看详情和下载。</p>
             </div>
-            <button onClick={refresh}>刷新</button>
+            <button onClick={() => void refresh()}>刷新</button>
           </div>
           <div className="toolbar">
             <span>{visible.length} 条记录</span>
@@ -461,7 +399,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
                 </div>
                 <div className="task-body">
                   <b>{item.prompt}</b>
-                  <div><span>{item.model}</span><span>{item.elapsedMs ? `${Math.round(item.elapsedMs / 1000)}s` : formatTime(item.createdAt)}</span></div>
+                  <div><span>{item.apiKeyName || item.model}</span><span>{item.elapsedMs ? `${Math.round(item.elapsedMs / 1000)}s` : formatTime(item.createdAt)}</span></div>
                 </div>
               </article>
             ))}
@@ -469,7 +407,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
           {!visible.length ? (
             <div className="empty-state compact">
               <b>还没有图片</b>
-              <span>在上方输入提示词，生成后的任务会显示在这里。</span>
+              <span>选择 API Key 并输入提示词，生成后的任务会显示在这里。</span>
             </div>
           ) : null}
         </section>
@@ -511,14 +449,14 @@ function GenerationDetail(props: { generation: ApiGeneration; onClose: () => voi
             <section className="detail-section">
               <h3>生成参数</h3>
               <dl>
+                <div><dt>API Key</dt><dd>{props.generation.apiKeyName || '-'}</dd></div>
                 <div><dt>模型</dt><dd>{props.generation.model}</dd></div>
                 <div><dt>尺寸</dt><dd>{props.generation.params.size}</dd></div>
                 <div><dt>质量</dt><dd>{props.generation.params.quality}</dd></div>
                 <div><dt>格式</dt><dd>{props.generation.params.output_format}</dd></div>
                 <div><dt>图片数</dt><dd>{imageCount} 张</dd></div>
                 <div><dt>耗时</dt><dd>{props.generation.elapsedMs ? `${Math.round(props.generation.elapsedMs / 1000)} 秒` : '-'}</dd></div>
-                <div><dt>状态</dt><dd>{statusText(props.generation.status)}</dd></div>
-                <div><dt>额度</dt><dd>{props.generation.status === 'done' ? `已扣除 ${imageCount} 次` : '未扣费'}</dd></div>
+                <div><dt>计费</dt><dd>由 sub2api 处理</dd></div>
               </dl>
             </section>
             {props.generation.error ? <div className="inline-message error">{props.generation.error}</div> : null}
@@ -529,97 +467,5 @@ function GenerationDetail(props: { generation: ApiGeneration; onClose: () => voi
         </div>
       </section>
     </div>
-  )
-}
-
-function AdminPage(props: { currentUser: ApiUser; onUserChange: (user: ApiUser) => void }) {
-  const [users, setUsers] = useState<ApiUser[]>([])
-  const [message, setMessage] = useState('')
-
-  async function refresh() {
-    const payload = await apiRequest<{ users: ApiUser[] }>('/api/admin/users')
-    setUsers(payload.users.filter((item) => item.role !== 'admin'))
-    const me = await apiRequest<{ user: ApiUser }>('/api/me')
-    props.onUserChange(me.user)
-  }
-
-  useEffect(() => {
-    void refresh()
-  }, [])
-
-  async function updateStatus(user: ApiUser, status: ApiUser['status']) {
-    setMessage('')
-    try {
-      await apiRequest(`/api/admin/users/${user.id}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status }),
-      })
-      await refresh()
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  async function adjustQuota(user: ApiUser) {
-    const value = window.prompt(`给 ${user.nickname} 调整额度，正数增加、负数扣减`, '10')
-    if (value == null) return
-    const delta = Number(value)
-    if (!Number.isInteger(delta) || delta === 0) {
-      setMessage('请输入非 0 整数')
-      return
-    }
-    setMessage('')
-    try {
-      await apiRequest(`/api/admin/users/${user.id}/quota`, {
-        method: 'POST',
-        body: JSON.stringify({ delta, reason: '管理员调整' }),
-      })
-      await refresh()
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  return (
-    <main className="admin-workspace">
-      <aside className="side-nav">
-        <h2>管理后台</h2>
-        <p>只保留用户审核、启停和额度管理。</p>
-        <button className="active">用户管理</button>
-      </aside>
-      <section className="admin-content">
-        <div className="section-head">
-          <div>
-            <h1>用户管理</h1>
-            <p>审核新用户、启用或禁用账号，并调整可用额度。</p>
-          </div>
-          <button onClick={refresh}>刷新列表</button>
-        </div>
-        <div className="summary-row">
-          <div className="summary-card focus"><span>待审核</span><b>{users.filter((item) => item.status === 'pending').length}</b></div>
-          <div className="summary-card"><span>正常用户</span><b>{users.filter((item) => item.status === 'active').length}</b></div>
-          <div className="summary-card"><span>总剩余额度</span><b>{users.reduce((sum, item) => sum + item.quotaRemaining, 0)}</b></div>
-          <div className="summary-card"><span>已用额度</span><b>{users.reduce((sum, item) => sum + item.quotaUsed, 0)}</b></div>
-        </div>
-        {message ? <div className="inline-message error">{message}</div> : null}
-        <div className="user-table">
-          <div className="user-row head"><span>账号</span><span>昵称</span><span>状态</span><span>剩余额度</span><span>已用</span><span>操作</span></div>
-          {users.map((item) => (
-            <div className="user-row" key={item.id}>
-              <b>{item.username}</b>
-              <span>{item.nickname}</span>
-              <span className={`badge ${item.status}`}>{userStatusText(item.status)}</span>
-              <span>{item.quotaRemaining}</span>
-              <span>{item.quotaUsed}</span>
-              <span className="actions-cell">
-                {item.status !== 'active' ? <button onClick={() => updateStatus(item, 'active')}>启用</button> : null}
-                <button onClick={() => adjustQuota(item)}>调额度</button>
-                {item.status !== 'disabled' ? <button className="danger" onClick={() => updateStatus(item, 'disabled')}>禁用</button> : null}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
-    </main>
   )
 }

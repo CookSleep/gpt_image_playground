@@ -225,6 +225,10 @@ img {
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent-strong);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .quota-pill b {
@@ -311,6 +315,15 @@ img {
   margin-top: 10px;
   color: var(--muted);
   line-height: 1.5;
+}
+
+.quota-card b {
+  max-width: 100%;
+  font-size: 18px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .studio-main,
@@ -409,11 +422,15 @@ img {
 
 .param-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(112px, 1fr)) minmax(104px, auto) minmax(120px, auto);
+  grid-template-columns: minmax(180px, 1.5fr) repeat(4, minmax(104px, 1fr)) minmax(96px, auto) minmax(118px, auto);
 }
 
 .param-row select {
   width: 100%;
+  min-width: 0;
+}
+
+.api-key-select {
   min-width: 0;
 }
 
@@ -468,7 +485,10 @@ img {
 .generator-stats b {
   color: #143f70;
   font-size: 26px;
-  overflow-wrap: anywhere;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gallery-panel {

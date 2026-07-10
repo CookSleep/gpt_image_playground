@@ -21,7 +21,6 @@ const app = buildApp({
   store,
   sessionSecret: 'dev-memory-secret',
   defaultModel: 'gpt-image-2',
-  admin: { username: 'admin', password: 'admin123456' },
   runJobsInline: true,
   storage: {
     async putObject(key, body, contentType) {
@@ -29,6 +28,50 @@ const app = buildApp({
     },
     async getObject(key) {
       return store.objects.get(key) ?? null
+    },
+  },
+  sub2apiClient: {
+    async login(email, password) {
+      if (!email || !password) {
+        const error = new Error('请输入 sub2api 邮箱和密码')
+        error.statusCode = 400
+        throw error
+      }
+      return {
+        access_token: 'dev-access-token',
+        refresh_token: 'dev-refresh-token',
+        expires_in: 3600,
+        user: { id: 1, email, username: 'local-user', role: 'user', status: 'active' },
+      }
+    },
+    async refresh() {
+      return {
+        access_token: 'dev-access-token-refreshed',
+        refresh_token: 'dev-refresh-token-refreshed',
+        expires_in: 3600,
+      }
+    },
+    async listKeys() {
+      return {
+        items: [{
+          id: 101,
+          name: 'codex仅生图-gpt-image-2',
+          status: 'active',
+          key: 'dev-hidden-key',
+          quota: 100,
+          quota_used: 0,
+          group: { id: 1, name: '按次(图片)' },
+        }],
+      }
+    },
+    async getKey() {
+      return {
+        id: 101,
+        name: 'codex仅生图-gpt-image-2',
+        status: 'active',
+        key: 'dev-hidden-key',
+        group: { id: 1, name: '按次(图片)' },
+      }
     },
   },
   imageClient: {

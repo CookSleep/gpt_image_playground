@@ -7,8 +7,62 @@ function getCookie(response) {
   return Array.isArray(header) ? header[0].split(';')[0] : String(header).split(';')[0]
 }
 
+function createSub2apiMock(overrides = {}) {
+  const keys = overrides.keys ?? [
+    {
+      id: 101,
+      name: 'codex仅生图-gpt-image-2',
+      status: 'active',
+      key: 'sk-sub2api-hidden',
+      quota: 100,
+      quota_used: 8,
+      group: { id: 7, name: '按次(图片)' },
+    },
+  ]
+  return {
+    async login(email, password) {
+      if (password === 'bad-pass') {
+        const error = new Error('邮箱或密码错误')
+        error.statusCode = 401
+        throw error
+      }
+      return {
+        access_token: 'access-token',
+        refresh_token: 'refresh-token',
+        expires_in: 3600,
+        user: {
+          id: 42,
+          email,
+          username: 'wxppppppp',
+          role: overrides.role ?? 'user',
+          status: overrides.userStatus ?? 'active',
+        },
+      }
+    },
+    async listKeys() {
+      return { items: keys }
+    },
+    async getKey(_accessToken, id) {
+      const found = keys.find((item) => String(item.id) === String(id))
+      if (!found) {
+        const error = new Error('API Key 不存在')
+        error.statusCode = 404
+        throw error
+      }
+      return found
+    },
+    async refresh() {
+      return {
+        access_token: 'access-token',
+        refresh_token: 'refresh-token',
+        expires_in: 3600,
+      }
+    },
+  }
+}
+
 function createHarness(overrides = {}) {
-  const store = createMemoryStore()
+  const store = overrides.store ?? createMemoryStore()
   const storage = overrides.storage ?? {
     async putObject(key, body, contentType) {
       store.objects.set(key, { body, contentType })
@@ -18,7 +72,8 @@ function createHarness(overrides = {}) {
     },
   }
   const imageClient = overrides.imageClient ?? {
-    async generate() {
+    async generate(input) {
+      expect(input.apiKey).toBe('sk-sub2api-hidden')
       return {
         images: [{
           bytes: Buffer.from('generated-image'),
@@ -33,335 +88,216 @@ function createHarness(overrides = {}) {
     store,
     storage,
     imageClient,
+    sub2apiClient: overrides.sub2apiClient ?? createSub2apiMock(overrides.sub2api ?? {}),
     sessionSecret: 'test-secret',
     defaultModel: 'gpt-image-2',
-    admin: { username: 'admin', password: 'admin-pass' },
     runJobsInline: true,
   })
   return { app, store }
 }
 
-async function login(app, username, password) {
+async function login(app, email = 'user@example.com', password = 'secret123') {
   const response = await app.inject({
     method: 'POST',
     url: '/api/auth/login',
-    payload: { username, password },
+    payload: { email, password },
   })
   return { response, cookie: getCookie(response) }
 }
 
-describe('认证与审核', () => {
-  test('注册用户默认待审核且额度为 0', async () => {
+describe('sub2api 账号登录', () => {
+  test('登录后创建本地会话，但响应不暴露 sub2api token', async () => {
     const { app } = createHarness()
 
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/auth/register',
-      payload: { username: 'zhangsan', password: 'secret123', nickname: '张三' },
-    })
+    const { response } = await login(app, 'wxpppp.wzx@gmail.com')
 
-    expect(response.statusCode).toBe(201)
+    expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({
-      user: { username: 'zhangsan', nickname: '张三', role: 'user', status: 'pending', quotaRemaining: 0, quotaUsed: 0 },
+      user: {
+        email: 'wxpppp.wzx@gmail.com',
+        nickname: 'wxppppppp',
+        role: 'user',
+        status: 'active',
+      },
     })
-
-    const loginResult = await login(app, 'zhangsan', 'secret123')
-    expect(loginResult.response.statusCode).toBe(200)
-    expect(loginResult.response.json().user.status).toBe('pending')
+    expect(JSON.stringify(response.json())).not.toContain('access-token')
+    expect(JSON.stringify(response.json())).not.toContain('refresh-token')
   })
 
-  test('禁用用户不可登录', async () => {
+  test('登录失败时返回 sub2api 错误', async () => {
     const { app } = createHarness()
-    const admin = await login(app, 'admin', 'admin-pass')
 
-    await app.inject({
-      method: 'POST',
-      url: '/api/auth/register',
-      payload: { username: 'lisi', password: 'secret123', nickname: '李四' },
-    })
-    await app.inject({
-      method: 'PATCH',
-      url: '/api/admin/users/2/status',
-      headers: { cookie: admin.cookie },
-      payload: { status: 'disabled' },
-    })
+    const { response } = await login(app, 'wxpppp.wzx@gmail.com', 'bad-pass')
 
-    const response = await login(app, 'lisi', 'secret123')
-    expect(response.response.statusCode).toBe(403)
-    expect(response.response.json().message).toContain('禁用')
+    expect(response.statusCode).toBe(401)
+    expect(response.json().message).toContain('邮箱或密码错误')
   })
 
-  test('登录用户可以修改自己的密码', async () => {
+  test('退出后当前会话不可继续访问', async () => {
     const { app } = createHarness()
-    const admin = await login(app, 'admin', 'admin-pass')
+    const { cookie } = await login(app)
 
-    const changed = await app.inject({
-      method: 'POST',
-      url: '/api/auth/change-password',
-      headers: { cookie: admin.cookie },
-      payload: { currentPassword: 'admin-pass', newPassword: 'new-admin-pass' },
-    })
+    const logout = await app.inject({ method: 'POST', url: '/api/auth/logout', headers: { cookie } })
+    const me = await app.inject({ method: 'GET', url: '/api/me', headers: { cookie } })
 
-    expect(changed.statusCode).toBe(200)
-    expect(changed.json()).toMatchObject({ ok: true })
-
-    const oldLogin = await login(app, 'admin', 'admin-pass')
-    expect(oldLogin.response.statusCode).toBe(401)
-
-    const newLogin = await login(app, 'admin', 'new-admin-pass')
-    expect(newLogin.response.statusCode).toBe(200)
-  })
-
-  test('旧密码错误时不能修改密码', async () => {
-    const { app } = createHarness()
-    const admin = await login(app, 'admin', 'admin-pass')
-
-    const changed = await app.inject({
-      method: 'POST',
-      url: '/api/auth/change-password',
-      headers: { cookie: admin.cookie },
-      payload: { currentPassword: 'wrong-pass', newPassword: 'new-admin-pass' },
-    })
-
-    expect(changed.statusCode).toBe(400)
-    expect(changed.json().message).toContain('当前密码')
-
-    const oldLogin = await login(app, 'admin', 'admin-pass')
-    expect(oldLogin.response.statusCode).toBe(200)
+    expect(logout.statusCode).toBe(200)
+    expect(me.statusCode).toBe(401)
   })
 })
 
-describe('管理员额度与生成', () => {
-  test('服务启动时会把遗留的生成中任务标记为失败', async () => {
-    const store = createMemoryStore()
-    await store.ensureAdmin({ username: 'admin', password: 'admin-pass' })
-    await store.createGeneration({
-      userId: '1',
-      prompt: '部署前还在生成的任务',
-      params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 1 },
-      model: 'gpt-image-2',
-    })
-    const app = buildApp({
-      store,
-      storage: {
-        async putObject() {},
-        async getObject() {
-          return null
-        },
-      },
-      imageClient: {
-        async generate() {
-          throw new Error('不应恢复调用上游')
-        },
-      },
-      sessionSecret: 'test-secret',
-      defaultModel: 'gpt-image-2',
-      admin: { username: 'admin', password: 'admin-pass' },
-      runJobsInline: true,
-    })
-
-    const admin = await login(app, 'admin', 'admin-pass')
-    const list = await app.inject({ method: 'GET', url: '/api/generations', headers: { cookie: admin.cookie } })
-
-    expect(list.json().generations[0]).toMatchObject({
-      status: 'error',
-      error: '服务重启，生成任务已中断，请重新生成',
-    })
-  })
-
-  test('管理员可以在无额度时生成图片且不扣额度', async () => {
+describe('sub2api API Key 与生成', () => {
+  test('API Key 列表会脱敏，不把真实 key 给前端', async () => {
     const { app } = createHarness()
-    const admin = await login(app, 'admin', 'admin-pass')
+    const { cookie } = await login(app)
 
-    const created = await app.inject({
-      method: 'POST',
-      url: '/api/generations',
-      headers: { cookie: admin.cookie },
-      payload: {
-        prompt: '后台管理员测试生成',
-        params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 1 },
-      },
+    const response = await app.inject({ method: 'GET', url: '/api/sub2api/keys', headers: { cookie } })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      keys: [{ id: '101', name: 'codex仅生图-gpt-image-2', groupName: '按次(图片)' }],
     })
-
-    expect(created.statusCode).toBe(202)
-    expect(created.json()).toMatchObject({ generation: { status: 'done', prompt: '后台管理员测试生成' } })
-
-    const me = await app.inject({ method: 'GET', url: '/api/me', headers: { cookie: admin.cookie } })
-    expect(me.json().user).toMatchObject({ role: 'admin', quotaRemaining: 0, quotaUsed: 0 })
+    expect(JSON.stringify(response.json())).not.toContain('sk-sub2api-hidden')
   })
 
-  test('管理员启用用户并分配额度后，生成成功按图片张数扣费并可代理下载图片', async () => {
+  test('sub2api access token 过期时会用 refresh token 自动续期', async () => {
+    const calls = []
     const { app } = createHarness({
-      imageClient: {
-        async generate() {
+      sub2apiClient: {
+        async login(email) {
           return {
-            images: [
-              { bytes: Buffer.from('generated-image-1'), contentType: 'image/png', revisedPrompt: 'revised prompt 1' },
-              { bytes: Buffer.from('generated-image-2'), contentType: 'image/png', revisedPrompt: 'revised prompt 2' },
-            ],
-            upstream: { id: 'mock-response' },
+            access_token: 'expired-token',
+            refresh_token: 'refresh-token',
+            expires_in: -10,
+            user: { id: 42, email, username: 'wxppppppp', role: 'user', status: 'active' },
           }
+        },
+        async refresh(refreshToken) {
+          expect(refreshToken).toBe('refresh-token')
+          return { access_token: 'fresh-token', refresh_token: 'fresh-refresh-token', expires_in: 3600 }
+        },
+        async listKeys(accessToken) {
+          calls.push(accessToken)
+          return {
+            items: [{
+              id: 101,
+              name: 'codex仅生图-gpt-image-2',
+              status: 'active',
+              key: 'sk-sub2api-hidden',
+            }],
+          }
+        },
+        async getKey() {
+          throw new Error('not needed')
         },
       },
     })
-    const admin = await login(app, 'admin', 'admin-pass')
+    const { cookie } = await login(app)
 
-    await app.inject({
-      method: 'POST',
-      url: '/api/auth/register',
-      payload: { username: 'user1', password: 'secret123', nickname: '用户一' },
-    })
-    await app.inject({
-      method: 'PATCH',
-      url: '/api/admin/users/2/status',
-      headers: { cookie: admin.cookie },
-      payload: { status: 'active' },
-    })
-    await app.inject({
-      method: 'POST',
-      url: '/api/admin/users/2/quota',
-      headers: { cookie: admin.cookie },
-      payload: { delta: 3, reason: '测试分配' },
-    })
+    const response = await app.inject({ method: 'GET', url: '/api/sub2api/keys', headers: { cookie } })
 
-    const user = await login(app, 'user1', 'secret123')
-    const created = await app.inject({
-      method: 'POST',
-      url: '/api/generations',
-      headers: { cookie: user.cookie },
-      payload: {
-        prompt: '白色陶瓷杯，极简产品摄影',
-        params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 2 },
-      },
-    })
-
-    expect(created.statusCode).toBe(202)
-    expect(created.json()).toMatchObject({ generation: { status: 'done', prompt: '白色陶瓷杯，极简产品摄影' } })
-    expect(created.json().generation.images).toHaveLength(2)
-
-    const me = await app.inject({ method: 'GET', url: '/api/me', headers: { cookie: user.cookie } })
-    expect(me.json().user).toMatchObject({ quotaRemaining: 1, quotaUsed: 2 })
-
-    const list = await app.inject({ method: 'GET', url: '/api/generations', headers: { cookie: user.cookie } })
-    const firstImageId = list.json().generations[0].images[0].id
-    const image = await app.inject({ method: 'GET', url: `/api/images/${firstImageId}`, headers: { cookie: user.cookie } })
-    expect(image.statusCode).toBe(200)
-    expect(image.headers['content-type']).toContain('image/png')
-    expect(image.body).toBe('generated-image-1')
+    expect(response.statusCode).toBe(200)
+    expect(calls).toEqual(['fresh-token'])
   })
 
-  test('普通用户额度少于请求图片数时拒绝生成且不调用上游', async () => {
-    let upstreamCalls = 0
-    const { app: guardedApp } = createHarness({
-      imageClient: {
-        async generate() {
-          upstreamCalls += 1
-          return {
-            images: [{ bytes: Buffer.from('generated-image'), contentType: 'image/png' }],
-            upstream: { id: 'mock-response' },
-          }
-        },
-      },
-    })
-    const admin = await login(guardedApp, 'admin', 'admin-pass')
-
-    await guardedApp.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'user3', password: 'secret123', nickname: '用户三' } })
-    await guardedApp.inject({ method: 'PATCH', url: '/api/admin/users/2/status', headers: { cookie: admin.cookie }, payload: { status: 'active' } })
-    await guardedApp.inject({ method: 'POST', url: '/api/admin/users/2/quota', headers: { cookie: admin.cookie }, payload: { delta: 1, reason: '测试分配' } })
-
-    const user = await login(guardedApp, 'user3', 'secret123')
-    const created = await guardedApp.inject({
-      method: 'POST',
-      url: '/api/generations',
-      headers: { cookie: user.cookie },
-      payload: {
-        prompt: '两张图但额度不足',
-        params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 2 },
-      },
-    })
-
-    expect(created.statusCode).toBe(403)
-    expect(created.json().message).toContain('可用额度不足')
-    expect(upstreamCalls).toBe(0)
-
-    const me = await guardedApp.inject({ method: 'GET', url: '/api/me', headers: { cookie: user.cookie } })
-    expect(me.json().user).toMatchObject({ quotaRemaining: 1, quotaUsed: 0 })
-  })
-
-  test('管理员启用用户并分配额度后，单张生成成功扣 1 次并可代理下载图片', async () => {
+  test('创建生成任务必须选择 sub2api API Key', async () => {
     const { app } = createHarness()
-    const admin = await login(app, 'admin', 'admin-pass')
+    const { cookie } = await login(app)
 
-    await app.inject({
-      method: 'POST',
-      url: '/api/auth/register',
-      payload: { username: 'user1', password: 'secret123', nickname: '用户一' },
-    })
-    await app.inject({
-      method: 'PATCH',
-      url: '/api/admin/users/2/status',
-      headers: { cookie: admin.cookie },
-      payload: { status: 'active' },
-    })
-    await app.inject({
-      method: 'POST',
-      url: '/api/admin/users/2/quota',
-      headers: { cookie: admin.cookie },
-      payload: { delta: 2, reason: '测试分配' },
-    })
-
-    const user = await login(app, 'user1', 'secret123')
     const created = await app.inject({
       method: 'POST',
       url: '/api/generations',
-      headers: { cookie: user.cookie },
+      headers: { cookie },
       payload: {
+        prompt: '浅蓝背景上的极简产品图',
+        params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 1 },
+      },
+    })
+
+    expect(created.statusCode).toBe(400)
+    expect(created.json().message).toContain('请选择 sub2api API Key')
+  })
+
+  test('生成成功时后端使用所选 sub2api key 明文，前端只看到 key 名称和历史图片', async () => {
+    const { app } = createHarness()
+    const { cookie } = await login(app)
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/generations',
+      headers: { cookie },
+      payload: {
+        apiKeyId: '101',
         prompt: '白色陶瓷杯，极简产品摄影',
         params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 1 },
       },
     })
 
     expect(created.statusCode).toBe(202)
-    expect(created.json()).toMatchObject({ generation: { status: 'done', prompt: '白色陶瓷杯，极简产品摄影' } })
+    expect(created.json()).toMatchObject({
+      generation: {
+        status: 'done',
+        apiKeyId: '101',
+        apiKeyName: 'codex仅生图-gpt-image-2',
+        prompt: '白色陶瓷杯，极简产品摄影',
+      },
+    })
+    expect(JSON.stringify(created.json())).not.toContain('sk-sub2api-hidden')
 
-    const me = await app.inject({ method: 'GET', url: '/api/me', headers: { cookie: user.cookie } })
-    expect(me.json().user).toMatchObject({ quotaRemaining: 1, quotaUsed: 1 })
-
-    const list = await app.inject({ method: 'GET', url: '/api/generations', headers: { cookie: user.cookie } })
+    const list = await app.inject({ method: 'GET', url: '/api/generations', headers: { cookie } })
     const firstImageId = list.json().generations[0].images[0].id
-    const image = await app.inject({ method: 'GET', url: `/api/images/${firstImageId}`, headers: { cookie: user.cookie } })
+    const image = await app.inject({ method: 'GET', url: `/api/images/${firstImageId}`, headers: { cookie } })
     expect(image.statusCode).toBe(200)
     expect(image.headers['content-type']).toContain('image/png')
     expect(image.body).toBe('generated-image')
   })
 
-  test('上游生成失败不扣额度', async () => {
+  test('上游失败只记录失败任务，不产生图片', async () => {
     const { app } = createHarness({
       imageClient: {
-        async generate() {
+        async generate(input) {
+          expect(input.apiKey).toBe('sk-sub2api-hidden')
           throw new Error('upstream failed')
         },
       },
     })
-    const admin = await login(app, 'admin', 'admin-pass')
+    const { cookie } = await login(app)
 
-    await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'user2', password: 'secret123', nickname: '用户二' } })
-    await app.inject({ method: 'PATCH', url: '/api/admin/users/2/status', headers: { cookie: admin.cookie }, payload: { status: 'active' } })
-    await app.inject({ method: 'POST', url: '/api/admin/users/2/quota', headers: { cookie: admin.cookie }, payload: { delta: 1, reason: '测试分配' } })
-
-    const user = await login(app, 'user2', 'secret123')
     const created = await app.inject({
       method: 'POST',
       url: '/api/generations',
-      headers: { cookie: user.cookie },
-      payload: { prompt: '失败测试', params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 1 } },
+      headers: { cookie },
+      payload: {
+        apiKeyId: '101',
+        prompt: '失败测试',
+        params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 1 },
+      },
     })
 
     expect(created.statusCode).toBe(202)
     expect(created.json().generation.status).toBe('error')
     expect(created.json().generation.error).toContain('upstream failed')
+    expect(created.json().generation.images).toHaveLength(0)
+  })
 
-    const me = await app.inject({ method: 'GET', url: '/api/me', headers: { cookie: user.cookie } })
-    expect(me.json().user).toMatchObject({ quotaRemaining: 1, quotaUsed: 0 })
+  test('服务启动时会把遗留生成中任务标记为失败', async () => {
+    const store = createMemoryStore()
+    const user = await store.upsertExternalUser({ id: 42, email: 'user@example.com', username: 'user', status: 'active' })
+    await store.createGeneration({
+      userId: user.id,
+      apiKeyId: '101',
+      apiKeyName: 'codex仅生图-gpt-image-2',
+      prompt: '部署前还在生成的任务',
+      params: { size: '1024x1024', quality: 'high', output_format: 'png', n: 1 },
+      model: 'gpt-image-2',
+    })
+    const { app } = createHarness({ store })
+    const { cookie } = await login(app)
+
+    const list = await app.inject({ method: 'GET', url: '/api/generations', headers: { cookie } })
+
+    expect(list.json().generations[0]).toMatchObject({
+      status: 'error',
+      error: '服务重启，生成任务已中断，请重新生成',
+    })
   })
 })

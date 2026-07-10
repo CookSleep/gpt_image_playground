@@ -11,6 +11,9 @@ function rowUser(row) {
   if (!row) return null
   return {
     id: String(row.id),
+    externalProvider: row.external_provider ?? null,
+    externalUserId: row.external_user_id == null ? null : String(row.external_user_id),
+    email: row.email ?? row.username,
     username: row.username,
     nickname: row.nickname,
     role: row.role,
@@ -19,6 +22,9 @@ function rowUser(row) {
     quotaUsed: row.quota_used,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
+    sub2apiAccessToken: row.sub2api_access_token,
+    sub2apiRefreshToken: row.sub2api_refresh_token,
+    sub2apiTokenExpiresAt: row.sub2api_token_expires_at?.toISOString?.() ?? row.sub2api_token_expires_at ?? null,
   }
 }
 
@@ -27,6 +33,8 @@ function rowGeneration(row, images = []) {
   return {
     id: String(row.id),
     userId: String(row.user_id),
+    apiKeyId: row.api_key_id == null ? null : String(row.api_key_id),
+    apiKeyName: row.api_key_name ?? null,
     prompt: row.prompt,
     params: row.params,
     status: row.status,
@@ -67,6 +75,24 @@ export async function createPgStore(databaseUrl) {
 
     async close() {
       await pool.end()
+    },
+
+    async upsertExternalUser(input) {
+      const externalUserId = String(input.id)
+      const email = String(input.email ?? '').trim()
+      const username = `sub2api:${externalUserId}`
+      const nickname = String(input.username || email || `sub2api-${externalUserId}`).trim()
+      const role = input.role === 'admin' ? 'admin' : 'user'
+      const status = input.status && input.status !== 'active' ? 'disabled' : 'active'
+      const result = await pool.query(
+        `insert into users (username, password_hash, email, external_provider, external_user_id, nickname, role, status, quota_remaining, quota_used)
+         values ($1, 'sub2api-managed', $2, 'sub2api', $3, $4, $5, $6, 0, 0)
+         on conflict (external_provider, external_user_id) where external_provider is not null and external_user_id is not null
+         do update set username = excluded.username, email = excluded.email, nickname = excluded.nickname, role = excluded.role, status = excluded.status, updated_at = now()
+         returning *`,
+        [username, email || null, externalUserId, nickname, role, status],
+      )
+      return rowUser(result.rows[0])
     },
 
     async ensureAdmin(admin) {
@@ -131,17 +157,33 @@ export async function createPgStore(databaseUrl) {
       return rowUser(result.rows[0])
     },
 
-    async createSession(userId, tokenHash, expiresAt) {
-      await pool.query('insert into sessions (token_hash, user_id, expires_at) values ($1, $2, $3)', [tokenHash, userId, expiresAt])
+    async createSession(userId, tokenHash, expiresAt, session = {}) {
+      await pool.query(
+        `insert into sessions (token_hash, user_id, expires_at, sub2api_access_token, sub2api_refresh_token, sub2api_token_expires_at)
+         values ($1, $2, $3, $4, $5, $6)`,
+        [tokenHash, userId, expiresAt, session.accessToken ?? null, session.refreshToken ?? null, session.tokenExpiresAt ?? null],
+      )
     },
 
     async getSessionUser(tokenHash) {
       const result = await pool.query(
-        `select users.* from sessions join users on users.id = sessions.user_id
+        `select users.*, sessions.sub2api_access_token, sessions.sub2api_refresh_token, sessions.sub2api_token_expires_at
+         from sessions join users on users.id = sessions.user_id
          where sessions.token_hash = $1 and sessions.expires_at > now()`,
         [tokenHash],
       )
       return rowUser(result.rows[0])
+    },
+
+    async updateSessionTokens(tokenHash, sessionPatch = {}) {
+      await pool.query(
+        `update sessions
+         set sub2api_access_token = coalesce($2, sub2api_access_token),
+             sub2api_refresh_token = coalesce($3, sub2api_refresh_token),
+             sub2api_token_expires_at = coalesce($4, sub2api_token_expires_at)
+         where token_hash = $1`,
+        [tokenHash, sessionPatch.accessToken ?? null, sessionPatch.refreshToken ?? null, sessionPatch.tokenExpiresAt ?? null],
+      )
     },
 
     async deleteSession(tokenHash) {
@@ -201,10 +243,10 @@ export async function createPgStore(databaseUrl) {
 
     async createGeneration(input) {
       const result = await pool.query(
-        `insert into generations (user_id, prompt, params, status, model)
-         values ($1, $2, $3, 'running', $4)
+        `insert into generations (user_id, api_key_id, api_key_name, prompt, params, status, model)
+         values ($1, $2, $3, $4, $5, 'running', $6)
          returning *`,
-        [input.userId, input.prompt, input.params, input.model],
+        [input.userId, input.apiKeyId ?? null, input.apiKeyName ?? null, input.prompt, input.params, input.model],
       )
       return rowGeneration(result.rows[0])
     },
@@ -226,47 +268,7 @@ export async function createPgStore(databaseUrl) {
         const generation = generationResult.rows[0]
         if (!generation) throw new Error('任务不存在')
 
-        const ownerResult = await client.query('select * from users where id = $1 for update', [generation.user_id])
-        const owner = ownerResult.rows[0]
-        if (owner?.role === 'admin') {
-          const done = await client.query(
-            `update generations set status = 'done', upstream = $2, elapsed_ms = $3, finished_at = now()
-             where id = $1 returning *`,
-            [generationId, upstream ?? null, elapsedMs],
-          )
-          for (const image of outputImages) {
-            await client.query(
-              `insert into generation_images (generation_id, user_id, object_key, content_type, revised_prompt)
-               values ($1, $2, $3, $4, $5)`,
-              [generationId, generation.user_id, image.objectKey, image.contentType, image.revisedPrompt ?? null],
-            )
-          }
-          await client.query('commit')
-          return this.getGeneration(done.rows[0].id, generation.user_id)
-        }
-
-        const charge = outputImages.length
-        const userResult = await client.query(
-          `update users set quota_remaining = quota_remaining - $2, quota_used = quota_used + $2, updated_at = now()
-           where id = $1 and quota_remaining >= $2
-           returning *`,
-          [generation.user_id, charge],
-        )
-        if (!userResult.rows[0]) {
-          const failed = await client.query(
-            `update generations set status = 'error', error = $2, finished_at = now()
-             where id = $1 returning *`,
-            [generationId, '额度不足，扣费失败'],
-          )
-          await client.query('commit')
-          return rowGeneration(failed.rows[0], [])
-        }
-
         await client.query(
-          'insert into quota_ledger (user_id, actor_id, delta, reason, balance_after) values ($1, null, $2, $3, $4)',
-          [generation.user_id, -charge, `生成任务 ${generationId} 成功扣费（${charge} 张图片）`, userResult.rows[0].quota_remaining],
-        )
-        const done = await client.query(
           `update generations set status = 'done', upstream = $2, elapsed_ms = $3, finished_at = now()
            where id = $1 returning *`,
           [generationId, upstream ?? null, elapsedMs],
