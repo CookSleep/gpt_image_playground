@@ -1,15 +1,12 @@
 create table if not exists users (
   id bigserial primary key,
   username text not null unique,
-  password_hash text not null,
   email text,
-  external_provider text,
-  external_user_id text,
+  external_provider text not null,
+  external_user_id text not null,
   nickname text not null,
   role text not null check (role in ('user', 'admin')),
-  status text not null check (status in ('pending', 'active', 'disabled')),
-  quota_remaining integer not null default 0 check (quota_remaining >= 0),
-  quota_used integer not null default 0 check (quota_used >= 0),
+  status text not null check (status in ('active', 'disabled')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -50,36 +47,22 @@ create table if not exists generation_images (
   created_at timestamptz not null default now()
 );
 
-create table if not exists quota_ledger (
-  id bigserial primary key,
-  user_id bigint not null references users(id) on delete cascade,
-  actor_id bigint references users(id) on delete set null,
-  delta integer not null,
-  reason text not null,
-  balance_after integer not null,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists audit_logs (
-  id bigserial primary key,
-  actor_id bigint references users(id) on delete set null,
-  action text not null,
-  target_user_id bigint references users(id) on delete set null,
-  detail jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
-);
-
 create index if not exists generations_user_created_idx on generations(user_id, created_at desc);
 create index if not exists generation_images_user_idx on generation_images(user_id);
 create index if not exists sessions_expires_idx on sessions(expires_at);
 
+drop table if exists quota_ledger;
+drop table if exists audit_logs;
+alter table users drop column if exists password_hash;
+alter table users drop column if exists quota_remaining;
+alter table users drop column if exists quota_used;
 alter table users add column if not exists email text;
-alter table users add column if not exists external_provider text;
-alter table users add column if not exists external_user_id text;
+alter table users add column if not exists external_provider text not null default 'sub2api';
+alter table users add column if not exists external_user_id text not null default '';
 alter table sessions add column if not exists sub2api_access_token text;
 alter table sessions add column if not exists sub2api_refresh_token text;
 alter table sessions add column if not exists sub2api_token_expires_at timestamptz;
 alter table generations add column if not exists api_key_id text;
 alter table generations add column if not exists api_key_name text;
 
-create unique index if not exists users_external_identity_idx on users(external_provider, external_user_id) where external_provider is not null and external_user_id is not null;
+create unique index if not exists users_external_identity_idx on users(external_provider, external_user_id);

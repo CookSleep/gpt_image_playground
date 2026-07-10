@@ -1,5 +1,3 @@
-import bcrypt from 'bcryptjs'
-
 function nowIso() {
   return new Date().toISOString()
 }
@@ -13,8 +11,6 @@ export function createMemoryStore() {
   const sessions = new Map()
   const generations = []
   const images = []
-  const quotaLedger = []
-  const auditLogs = []
   const objects = new Map()
   let nextUserId = 1
   let nextGenerationId = 1
@@ -29,8 +25,6 @@ export function createMemoryStore() {
     nickname: user.nickname,
     role: user.role,
     status: user.status,
-    quotaRemaining: user.quotaRemaining,
-    quotaUsed: user.quotaUsed,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     sub2apiAccessToken: user.sub2apiAccessToken,
@@ -48,9 +42,6 @@ export function createMemoryStore() {
       const next = existing ?? {
         id: nextUserId++,
         username: `sub2api:${externalUserId}`,
-        passwordHash: 'sub2api-managed',
-        quotaRemaining: 0,
-        quotaUsed: 0,
         createdAt,
       }
       next.externalProvider = 'sub2api'
@@ -62,69 +53,6 @@ export function createMemoryStore() {
       next.updatedAt = nowIso()
       if (!existing) users.push(next)
       return publicUser(next)
-    },
-
-    async ensureAdmin(admin) {
-      const existing = users.find((user) => user.role === 'admin')
-      if (existing) return publicUser(existing)
-
-      const createdAt = nowIso()
-      const user = {
-        id: nextUserId++,
-        username: admin.username,
-        passwordHash: bcrypt.hashSync(admin.password, 4),
-        nickname: '管理员',
-        role: 'admin',
-        status: 'active',
-        quotaRemaining: 0,
-        quotaUsed: 0,
-        createdAt,
-        updatedAt: createdAt,
-      }
-      users.push(user)
-      return publicUser(user)
-    },
-
-    async createUser(input) {
-      if (users.some((user) => user.username === input.username)) {
-        const err = new Error('账号已存在')
-        err.statusCode = 409
-        throw err
-      }
-      const createdAt = nowIso()
-      const user = {
-        id: nextUserId++,
-        username: input.username,
-        passwordHash: bcrypt.hashSync(input.password, 4),
-        nickname: input.nickname || input.username,
-        role: 'user',
-        status: 'pending',
-        quotaRemaining: 0,
-        quotaUsed: 0,
-        createdAt,
-        updatedAt: createdAt,
-      }
-      users.push(user)
-      return publicUser(user)
-    },
-
-    async verifyUser(username, password) {
-      const user = users.find((item) => item.username === username)
-      if (!user) return null
-      if (!bcrypt.compareSync(password, user.passwordHash)) return null
-      return publicUser(user)
-    },
-
-    async updatePassword(userId, password) {
-      const user = users.find((item) => String(item.id) === String(userId))
-      if (!user) {
-        const err = new Error('用户不存在')
-        err.statusCode = 404
-        throw err
-      }
-      user.passwordHash = bcrypt.hashSync(password, 4)
-      user.updatedAt = nowIso()
-      return publicUser(user)
     },
 
     async getUserById(id) {
@@ -168,51 +96,6 @@ export function createMemoryStore() {
 
     async deleteSession(tokenHash) {
       sessions.delete(tokenHash)
-    },
-
-    async listUsers() {
-      return users.map(publicUser)
-    },
-
-    async updateUserStatus(userId, status, actorId) {
-      const user = users.find((item) => String(item.id) === String(userId))
-      if (!user || user.role === 'admin') {
-        const err = new Error('用户不存在')
-        err.statusCode = 404
-        throw err
-      }
-      user.status = status
-      user.updatedAt = nowIso()
-      auditLogs.push({ id: auditLogs.length + 1, actorId, action: 'update_status', targetUserId: String(user.id), detail: { status }, createdAt: nowIso() })
-      return publicUser(user)
-    },
-
-    async adjustQuota(userId, delta, reason, actorId) {
-      const user = users.find((item) => String(item.id) === String(userId))
-      if (!user || user.role === 'admin') {
-        const err = new Error('用户不存在')
-        err.statusCode = 404
-        throw err
-      }
-      const nextQuota = user.quotaRemaining + delta
-      if (nextQuota < 0) {
-        const err = new Error('剩余额度不能小于 0')
-        err.statusCode = 400
-        throw err
-      }
-      user.quotaRemaining = nextQuota
-      user.updatedAt = nowIso()
-      quotaLedger.push({
-        id: quotaLedger.length + 1,
-        userId: String(user.id),
-        actorId,
-        delta,
-        reason: reason || '管理员调整',
-        balanceAfter: user.quotaRemaining,
-        createdAt: nowIso(),
-      })
-      auditLogs.push({ id: auditLogs.length + 1, actorId, action: 'adjust_quota', targetUserId: String(user.id), detail: { delta, reason }, createdAt: nowIso() })
-      return publicUser(user)
     },
 
     async createGeneration(input) {

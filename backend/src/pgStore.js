@@ -1,11 +1,9 @@
 import fs from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import bcrypt from 'bcryptjs'
 import pg from 'pg'
 
 const { Pool } = pg
-const SALT_ROUNDS = 10
 
 function rowUser(row) {
   if (!row) return null
@@ -18,8 +16,6 @@ function rowUser(row) {
     nickname: row.nickname,
     role: row.role,
     status: row.status,
-    quotaRemaining: row.quota_remaining,
-    quotaUsed: row.quota_used,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
     sub2apiAccessToken: row.sub2api_access_token,
@@ -85,70 +81,13 @@ export async function createPgStore(databaseUrl) {
       const role = input.role === 'admin' ? 'admin' : 'user'
       const status = input.status && input.status !== 'active' ? 'disabled' : 'active'
       const result = await pool.query(
-        `insert into users (username, password_hash, email, external_provider, external_user_id, nickname, role, status, quota_remaining, quota_used)
-         values ($1, 'sub2api-managed', $2, 'sub2api', $3, $4, $5, $6, 0, 0)
-         on conflict (external_provider, external_user_id) where external_provider is not null and external_user_id is not null
+        `insert into users (username, email, external_provider, external_user_id, nickname, role, status)
+         values ($1, $2, 'sub2api', $3, $4, $5, $6)
+         on conflict (external_provider, external_user_id)
          do update set username = excluded.username, email = excluded.email, nickname = excluded.nickname, role = excluded.role, status = excluded.status, updated_at = now()
          returning *`,
         [username, email || null, externalUserId, nickname, role, status],
       )
-      return rowUser(result.rows[0])
-    },
-
-    async ensureAdmin(admin) {
-      const existing = await pool.query('select * from users where role = $1 order by id asc limit 1', ['admin'])
-      if (existing.rows[0]) return rowUser(existing.rows[0])
-
-      const passwordHash = await bcrypt.hash(admin.password, SALT_ROUNDS)
-      const created = await pool.query(
-        `insert into users (username, password_hash, nickname, role, status)
-         values ($1, $2, $3, 'admin', 'active')
-         on conflict (username) do update set role = 'admin', status = 'active', updated_at = now()
-         returning *`,
-        [admin.username, passwordHash, '管理员'],
-      )
-      return rowUser(created.rows[0])
-    },
-
-    async createUser(input) {
-      const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS)
-      try {
-        const result = await pool.query(
-          `insert into users (username, password_hash, nickname, role, status, quota_remaining, quota_used)
-           values ($1, $2, $3, 'user', 'pending', 0, 0)
-           returning *`,
-          [input.username, passwordHash, input.nickname || input.username],
-        )
-        return rowUser(result.rows[0])
-      } catch (err) {
-        if (err.code === '23505') {
-          const e = new Error('账号已存在')
-          e.statusCode = 409
-          throw e
-        }
-        throw err
-      }
-    },
-
-    async verifyUser(username, password) {
-      const result = await pool.query('select * from users where username = $1', [username])
-      const row = result.rows[0]
-      if (!row) return null
-      if (!(await bcrypt.compare(password, row.password_hash))) return null
-      return rowUser(row)
-    },
-
-    async updatePassword(userId, password) {
-      const passwordHash = await bcrypt.hash(password, SALT_ROUNDS)
-      const result = await pool.query(
-        'update users set password_hash = $1, updated_at = now() where id = $2 returning *',
-        [passwordHash, userId],
-      )
-      if (!result.rows[0]) {
-        const err = new Error('用户不存在')
-        err.statusCode = 404
-        throw err
-      }
       return rowUser(result.rows[0])
     },
 
@@ -188,57 +127,6 @@ export async function createPgStore(databaseUrl) {
 
     async deleteSession(tokenHash) {
       await pool.query('delete from sessions where token_hash = $1', [tokenHash])
-    },
-
-    async listUsers() {
-      const result = await pool.query('select * from users order by role asc, id asc')
-      return result.rows.map(rowUser)
-    },
-
-    async updateUserStatus(userId, status, actorId) {
-      const result = await pool.query(
-        `update users set status = $1, updated_at = now()
-         where id = $2 and role <> 'admin'
-         returning *`,
-        [status, userId],
-      )
-      if (!result.rows[0]) {
-        const err = new Error('用户不存在')
-        err.statusCode = 404
-        throw err
-      }
-      await pool.query('insert into audit_logs (actor_id, action, target_user_id, detail) values ($1, $2, $3, $4)', [actorId, 'update_status', userId, { status }])
-      return rowUser(result.rows[0])
-    },
-
-    async adjustQuota(userId, delta, reason, actorId) {
-      const client = await pool.connect()
-      try {
-        await client.query('begin')
-        const result = await client.query(
-          `update users set quota_remaining = quota_remaining + $1, updated_at = now()
-           where id = $2 and role <> 'admin' and quota_remaining + $1 >= 0
-           returning *`,
-          [delta, userId],
-        )
-        if (!result.rows[0]) {
-          const err = new Error('用户不存在或剩余额度不能小于 0')
-          err.statusCode = 400
-          throw err
-        }
-        await client.query(
-          'insert into quota_ledger (user_id, actor_id, delta, reason, balance_after) values ($1, $2, $3, $4, $5)',
-          [userId, actorId, delta, reason || '管理员调整', result.rows[0].quota_remaining],
-        )
-        await client.query('insert into audit_logs (actor_id, action, target_user_id, detail) values ($1, $2, $3, $4)', [actorId, 'adjust_quota', userId, { delta, reason }])
-        await client.query('commit')
-        return rowUser(result.rows[0])
-      } catch (err) {
-        await client.query('rollback')
-        throw err
-      } finally {
-        client.release()
-      }
     },
 
     async createGeneration(input) {
