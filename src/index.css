@@ -347,9 +347,11 @@ img {
 
 .generator-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 250px;
-  gap: 20px;
-  padding: 22px;
+  grid-template-columns: minmax(620px, 1fr) minmax(260px, 320px);
+  align-items: start;
+  gap: 24px;
+  overflow: hidden;
+  padding: 24px;
   background:
     linear-gradient(180deg, rgba(245, 250, 255, .92), #fff 44%),
     #fff;
@@ -422,7 +424,7 @@ img {
 
 .param-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.5fr) repeat(4, minmax(104px, 1fr)) minmax(96px, auto) minmax(118px, auto);
+  grid-template-columns: minmax(220px, 1.5fr) repeat(4, minmax(96px, .8fr)) minmax(92px, .7fr) minmax(118px, .8fr);
 }
 
 .param-row select {
@@ -464,17 +466,19 @@ img {
 }
 
 .generator-stats {
+  min-width: 0;
   display: grid;
   gap: 12px;
   align-content: start;
 }
 
 .generator-stats div {
-  min-height: 88px;
+  min-width: 0;
+  min-height: 84px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: #fff;
-  padding: 16px;
+  padding: 15px 16px;
 }
 
 .generator-stats div:first-child {
@@ -484,7 +488,10 @@ img {
 
 .generator-stats b {
   color: #143f70;
-  font-size: 26px;
+  display: block;
+  width: 100%;
+  font-size: clamp(20px, 1.6vw, 24px);
+  line-height: 1.16;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1145,7 +1152,7 @@ img {
   }
 
   .generator-stats {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     gap: 8px;
   }
 
