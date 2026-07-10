@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircleIcon, CheckCircleIcon, ChevronRightIcon, HistoryIcon, ImageIcon, LogOutIcon, RefreshIcon, SparklesIcon } from './components/icons'
+import { AlertCircleIcon, CheckCircleIcon, ChevronRightIcon, ImageIcon, LogOutIcon, RefreshIcon, SparklesIcon } from './components/icons'
 import { getGenerationProgress } from './lib/generationProgress'
 import { apiRequest, imageUrl, type ApiGeneration, type ApiKeyOption, type ApiUser } from './lib/minimalApi'
 
@@ -352,12 +352,6 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
 
   return (
     <main className="workspace studio-workspace studio-v3">
-      <aside className="studio-rail" aria-label="任务筛选">
-        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')} title={`全部图片 ${generations.length}`} aria-label={`全部图片 ${generations.length}`}><ImageIcon /></button>
-        <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')} title={`生成成功 ${doneCount}`} aria-label={`生成成功 ${doneCount}`}><CheckCircleIcon /></button>
-        <button className={filter === 'running' ? 'active' : ''} onClick={() => setFilter('running')} title={`生成中 ${runningCount}`} aria-label={`生成中 ${runningCount}`}><HistoryIcon /></button>
-        <button className={filter === 'error' ? 'active' : ''} onClick={() => setFilter('error')} title={`生成失败 ${errorCount}`} aria-label={`生成失败 ${errorCount}`}><AlertCircleIcon /></button>
-      </aside>
       <section className="studio-main studio-content">
         <div className="studio-heading">
           <div>
@@ -411,6 +405,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
               <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button>
               <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>已完成</button>
               <button className={filter === 'running' ? 'active' : ''} onClick={() => setFilter('running')}>生成中</button>
+              <button className={filter === 'error' ? 'active' : ''} onClick={() => setFilter('error')}>失败</button>
               <button onClick={() => void refresh()}><RefreshIcon />刷新</button>
             </div>
           </div>

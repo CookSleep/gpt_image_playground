@@ -1418,66 +1418,13 @@ body {
 }
 
 .studio-v3 {
-  grid-template-columns: 84px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   min-height: 820px;
   border-color: rgba(116, 164, 214, .25);
   border-radius: 24px;
   background: rgba(255, 255, 255, .58);
   box-shadow: 0 24px 70px rgba(53, 116, 180, .12);
   backdrop-filter: blur(24px) saturate(140%);
-}
-
-.studio-rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 24px 14px;
-  border-right: 1px solid rgba(118, 161, 207, .24);
-  background: linear-gradient(180deg, rgba(239, 247, 255, .92), rgba(248, 252, 255, .64));
-}
-
-.studio-rail button {
-  width: 52px;
-  height: 52px;
-  display: grid;
-  place-items: center;
-  position: relative;
-  margin: 0;
-  padding: 0;
-  border-color: transparent;
-  border-radius: 16px;
-  color: #7891ad;
-  background: transparent;
-  box-shadow: none;
-}
-
-.studio-rail button svg {
-  width: 20px;
-  height: 20px;
-}
-
-.studio-rail button:hover {
-  color: #277fe8;
-  background: rgba(255, 255, 255, .78);
-}
-
-.studio-rail button.active {
-  border-color: transparent;
-  color: #fff;
-  background: linear-gradient(145deg, #6bcfff, #4a91ff 65%, #7f8df7);
-  box-shadow: 0 12px 28px rgba(67, 145, 240, .30);
-}
-
-.studio-rail button.active::after {
-  content: "";
-  position: absolute;
-  left: -15px;
-  width: 3px;
-  height: 24px;
-  border-radius: 999px;
-  background: #53a7ff;
-  box-shadow: 0 0 13px #53a7ff;
 }
 
 .studio-content {
