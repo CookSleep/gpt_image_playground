@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { getGenerationProgress } from './lib/generationProgress'
 import { apiRequest, imageUrl, type ApiGeneration, type ApiKeyOption, type ApiUser } from './lib/minimalApi'
 
 const clientLoggedOutKey = 'minimal-image-site-client-logged-out'
@@ -240,6 +241,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   const [busy, setBusy] = useState(false)
   const [keysLoading, setKeysLoading] = useState(false)
   const [error, setError] = useState('')
+  const [now, setNow] = useState(() => Date.now())
 
   const selectedKey = useMemo(
     () => apiKeys.find((item) => item.id === selectedApiKeyId) ?? null,
@@ -280,6 +282,12 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
     return () => window.clearInterval(timer)
   }, [generations])
 
+  useEffect(() => {
+    if (!generations.some((item) => item.status === 'running')) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [generations])
+
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!prompt.trim()) return
@@ -317,6 +325,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   }
 
   const visible = useMemo(() => generations.filter((item) => filter === 'all' || item.status === filter), [generations, filter])
+  const selectedGeneration = selected ? generations.find((item) => item.id === selected.id) ?? selected : null
   const doneCount = generations.filter((item) => item.status === 'done').length
   const runningCount = generations.filter((item) => item.status === 'running').length
   const errorCount = generations.filter((item) => item.status === 'error').length
@@ -389,18 +398,22 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
             <div><span>{filter === 'all' ? '全部状态' : statusText(filter)}</span></div>
           </div>
           <div className="task-grid">
-            {visible.map((item) => (
-              <article key={item.id} className="task-card" onClick={() => setSelected(item)}>
-                <div className={`thumb ${item.status}`}>
-                  {item.images[0] ? <img src={imageUrl(item.images[0].id)} alt={item.prompt} /> : <div className="thumb-placeholder" />}
-                  <span>{statusText(item.status)}</span>
-                </div>
-                <div className="task-body">
-                  <b>{item.prompt}</b>
-                  <div><span>{item.apiKeyName || item.model}</span><span>{item.elapsedMs ? `${Math.round(item.elapsedMs / 1000)}s` : formatTime(item.createdAt)}</span></div>
-                </div>
-              </article>
-            ))}
+            {visible.map((item) => {
+              const progress = getGenerationProgress(item, now)
+              return (
+                <article key={item.id} className="task-card" onClick={() => setSelected(item)}>
+                  <div className={`thumb ${item.status}`}>
+                    {item.images[0] ? <img src={imageUrl(item.images[0].id)} alt={item.prompt} /> : <div className="thumb-placeholder" />}
+                    <span>{statusText(item.status)}</span>
+                  </div>
+                  <div className="task-body">
+                    <b>{item.prompt}</b>
+                    <div className="task-meta"><span>{item.apiKeyName || item.model}</span><span>{progress.timingText || formatTime(item.createdAt)}</span></div>
+                    {progress.hint ? <p className="task-progress-hint">{progress.hint}</p> : null}
+                  </div>
+                </article>
+              )
+            })}
           </div>
           {!visible.length ? (
             <div className="empty-state compact">
@@ -410,14 +423,15 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
           ) : null}
         </section>
       </section>
-      {selected ? <GenerationDetail generation={selected} onClose={() => setSelected(null)} /> : null}
+      {selectedGeneration ? <GenerationDetail generation={selectedGeneration} now={now} onClose={() => setSelected(null)} /> : null}
     </main>
   )
 }
 
-function GenerationDetail(props: { generation: ApiGeneration; onClose: () => void }) {
+function GenerationDetail(props: { generation: ApiGeneration; now: number; onClose: () => void }) {
   const firstImage = props.generation.images[0]
   const imageCount = props.generation.images.length || props.generation.params.n || 1
+  const progress = getGenerationProgress(props.generation, props.now)
 
   function download() {
     if (!firstImage) return
@@ -438,6 +452,8 @@ function GenerationDetail(props: { generation: ApiGeneration; onClose: () => voi
           <div className="detail-preview">
             <div className="detail-image">{firstImage ? <img src={imageUrl(firstImage.id)} alt={props.generation.prompt} /> : <div className="thumb-placeholder" />}</div>
             <span>{statusText(props.generation.status)}</span>
+            <strong>{progress.detailText}</strong>
+            {progress.hint ? <small>{progress.hint}</small> : null}
           </div>
           <div className="detail-info">
             <section className="detail-section">
@@ -453,7 +469,7 @@ function GenerationDetail(props: { generation: ApiGeneration; onClose: () => voi
                 <div><dt>质量</dt><dd>{props.generation.params.quality}</dd></div>
                 <div><dt>格式</dt><dd>{props.generation.params.output_format}</dd></div>
                 <div><dt>图片数</dt><dd>{imageCount} 张</dd></div>
-                <div><dt>耗时</dt><dd>{props.generation.elapsedMs ? `${Math.round(props.generation.elapsedMs / 1000)} 秒` : '-'}</dd></div>
+                <div><dt>进度</dt><dd>{progress.detailText}</dd></div>
                 <div><dt>计费</dt><dd>由 sub2api 处理</dd></div>
               </dl>
             </section>

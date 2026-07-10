@@ -566,9 +566,25 @@ img {
 }
 
 .thumb.running {
+  overflow: hidden;
   background:
     linear-gradient(90deg, #d6ecff 0 30%, #f9fcff 30% 58%, #9fd0ff 58%),
     #eaf6ff;
+}
+
+.thumb.running::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 0 28%, rgba(255, 255, 255, .64) 44%, transparent 62% 100%);
+  transform: translateX(-100%);
+  animation: runningSweep 1.8s ease-in-out infinite;
+}
+
+@keyframes runningSweep {
+  to {
+    transform: translateX(100%);
+  }
 }
 
 .thumb.error {
@@ -620,12 +636,32 @@ img {
   line-height: 1.45;
 }
 
-.task-body div {
+.task-meta {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   margin-top: 10px;
   font-size: 12px;
+}
+
+.task-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-meta span:last-child {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.task-progress-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .empty-state {
@@ -759,6 +795,18 @@ img {
   padding: 0 12px;
   font-size: 13px;
   font-weight: 700;
+}
+
+.detail-preview > strong {
+  color: var(--ink-strong);
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.detail-preview > small {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .detail-image {
