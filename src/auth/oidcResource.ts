@@ -294,7 +294,14 @@ export function extractBalance(usage: UsageResponse | null | undefined): string 
     (usage as Record<string, unknown>)['available'],
   ]
   for (const v of candidates) {
-    if (v !== undefined && v !== null && v !== '') return String(v)
+    if (v !== undefined && v !== null && v !== '') {
+      const n = Number(v)
+      if (Number.isFinite(n)) {
+        // 最多保留 4 位小数，去掉多余的尾随零
+        return String(Number(n.toFixed(4)))
+      }
+      return String(v)
+    }
   }
   return ''
 }

@@ -2195,7 +2195,7 @@ export default function InputBar() {
           )}
 
           {/* 输入框 */}
-          <div className="relative grid">
+          <div className="relative grid grid-cols-[minmax(0,1fr)]">
             {showAtImageMenu && (
               <div style={{ left: `${menuLeft}px` }} className="absolute bottom-full z-50 mb-2 w-64 overflow-hidden rounded-2xl border border-gray-200/70 bg-white/95 p-1.5 shadow-xl ring-1 ring-black/5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10">
                 <div className="px-2 pb-1 pt-0.5 text-[11px] text-gray-400 dark:text-gray-500">选择图片引用</div>
@@ -2225,13 +2225,13 @@ export default function InputBar() {
             )}
             
             {/* API Key / 余额 / 模型 显示区域 */}
-            <div className="mt-2 flex flex-col gap-1 text-xs">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium text-gray-500 dark:text-gray-400">API Key:</span>
+            <div className="mt-2 flex flex-col gap-1 text-xs sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 font-medium text-gray-500 dark:text-gray-400">API Key:</span>
                 {apiKeysLoading ? (
                   <span className="text-gray-400 dark:text-gray-500">加载中...</span>
                 ) : apiKeys.length > 0 ? (
-                  <div className="w-fit max-w-[420px]">
+                  <div className="min-w-0 w-fit max-w-full sm:max-w-[420px]">
                     <Select
                       value={apiKey}
                       onChange={(val) => {
@@ -2256,17 +2256,22 @@ export default function InputBar() {
                     {apiKeysError ? `加载失败: ${apiKeysError}` : '(未获取到)'}
                   </span>
                 )}
+              </div>
 
-                <span className="ml-2 font-medium text-gray-500 dark:text-gray-400">余额:</span>
-                <span className="rounded-xl border border-gray-200/60 bg-white/50 px-3 py-1.5 font-mono text-xs text-gray-700 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200">
-                  {balanceLoading ? '加载中...' : balance || '(未获取到)'}
-                </span>
+              <div className="flex min-w-0 items-center justify-between gap-2 sm:contents">
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="font-medium text-gray-500 dark:text-gray-400">余额:</span>
+                  <span className="rounded-xl border border-gray-200/60 bg-white/50 px-3 py-1.5 font-mono text-xs text-gray-700 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200">
+                    {balanceLoading ? '加载中...' : balance || '(未获取到)'}
+                  </span>
+                </div>
 
-                <span className="ml-2 font-medium text-gray-500 dark:text-gray-400">模型:</span>
-                {modelsLoading ? (
-                  <span className="text-gray-400 dark:text-gray-500">加载中...</span>
-                ) : (
-                  <div className="w-fit max-w-[260px]">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="ml-2 shrink-0 font-medium text-gray-500 dark:text-gray-400 sm:ml-0">模型:</span>
+                  {modelsLoading ? (
+                    <span className="text-gray-400 dark:text-gray-500">加载中...</span>
+                  ) : (
+                  <div className="min-w-0 w-fit max-w-full sm:max-w-[260px]">
                     <Select
                       value={selectedModel}
                       onChange={(val) => setSelectedModel(String(val))}
@@ -2283,10 +2288,11 @@ export default function InputBar() {
                       className={`${selectClass} font-mono`}
                     />
                   </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
-            
+
             <div
               ref={textareaRef}
               contentEditable
