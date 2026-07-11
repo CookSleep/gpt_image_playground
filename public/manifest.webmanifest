@@ -1,15 +1,15 @@
 {
-  "name": "极简生图",
-  "short_name": "极简生图",
+  "name": "Aurora Studio · AI 生图工作台",
+  "short_name": "Aurora Studio",
   "description": "专注图片生成的轻量创作工作台",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f4f9ff",
-  "theme_color": "#f4f9ff",
+  "background_color": "#f7f7fc",
+  "theme_color": "#6b54f6",
   "icons": [
     {
-      "src": "./pwa-icon.svg",
+      "src": "./pwa-icon.svg?v=20260711",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

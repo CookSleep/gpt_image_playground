@@ -60,6 +60,7 @@ async function readJson(response: Response) {
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
+    cache: 'no-store',
     credentials: 'include',
     headers: {
       ...(init?.body ? { 'content-type': 'application/json' } : {}),

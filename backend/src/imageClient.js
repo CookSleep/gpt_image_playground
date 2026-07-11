@@ -113,10 +113,16 @@ export function createOpenAIImageClient(config) {
       const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null
 
       try {
-        const response = input.inputImages?.length
-          ? await callEdit(config, headers, input, controller.signal)
-          : await callGeneration(config, headers, input, controller.signal)
+        const request = (streaming) => input.inputImages?.length
+          ? callEdit(config, headers, input, controller.signal, streaming)
+          : callGeneration(config, headers, input, controller.signal, streaming)
+        let response = await request(true)
 
+        if (!response.ok) {
+          const message = await parseError(response)
+          if (!message.toLowerCase().includes('stream is not supported')) throw new Error(message)
+          response = await request(false)
+        }
         if (!response.ok) throw new Error(await parseError(response))
 
         const images = isEventStreamResponse(response)
@@ -173,7 +179,7 @@ async function parseImageStream(response, fallbackContentType) {
   return images
 }
 
-async function callGeneration(config, headers, input, signal) {
+async function callGeneration(config, headers, input, signal, streaming = true) {
   const body = {
     model: input.model,
     prompt: input.prompt,
@@ -182,8 +188,10 @@ async function callGeneration(config, headers, input, signal) {
     output_format: input.params.output_format,
     n: input.params.n,
   }
-  body.stream = true
-  body.partial_images = config.partialImages ?? 2
+  if (streaming) {
+    body.stream = true
+    body.partial_images = config.partialImages ?? 2
+  }
 
   return fetch(joinUrl(config.baseUrl, '/images/generations'), {
     method: 'POST',
@@ -193,7 +201,7 @@ async function callGeneration(config, headers, input, signal) {
   })
 }
 
-async function callEdit(config, headers, input, signal) {
+async function callEdit(config, headers, input, signal, streaming = true) {
   const form = new FormData()
   form.set('model', input.model)
   form.set('prompt', input.prompt)
@@ -201,8 +209,10 @@ async function callEdit(config, headers, input, signal) {
   form.set('quality', input.params.quality)
   form.set('output_format', input.params.output_format)
   form.set('n', String(input.params.n))
-  form.set('stream', 'true')
-  form.set('partial_images', String(config.partialImages ?? 2))
+  if (streaming) {
+    form.set('stream', 'true')
+    form.set('partial_images', String(config.partialImages ?? 2))
+  }
   input.inputImages.forEach((dataUrl, idx) => {
     const file = dataUrlToBytes(dataUrl)
     form.append('image', new Blob([file.body], { type: file.contentType }), `reference-${idx}.png`)

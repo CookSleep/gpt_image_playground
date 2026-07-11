@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircleIcon, CheckCircleIcon, ChevronRightIcon, ImageIcon, LogOutIcon, RefreshIcon, SparklesIcon } from './components/icons'
 import { getGenerationProgress } from './lib/generationProgress'
+import { buildGenerationNotice, carouselPosition, cycleIndex, parseStudioDraft, parseStudioLocation, resolveTheme, sanitizeThemePreference, serializeStudioDraft, serializeStudioLocation, wheelCarouselDirection, withSingleRetry, type GenerationFilter, type StudioView, type ThemePreference } from './lib/studioView'
 import { apiRequest, imageUrl, type ApiGeneration, type ApiKeyOption, type ApiUser } from './lib/minimalApi'
 
 const clientLoggedOutKey = 'minimal-image-site-client-logged-out'
+const themePreferenceKey = 'aurora-studio-theme'
+const studioDraftKey = 'aurora-studio-draft'
 const sizeOptions = ['1024x1024', '1024x1536', '1536x1024']
 const qualityOptions = ['auto', 'low', 'medium', 'high']
 const formatOptions = ['png', 'jpeg', 'webp']
@@ -107,7 +110,7 @@ export default function App() {
   }, [])
 
   if (loading) {
-    return <div className="app-loading">正在进入极简生图...</div>
+    return <div className="app-loading">正在进入 Aurora Studio...</div>
   }
 
   if (!user) {
@@ -118,28 +121,7 @@ export default function App() {
     return <AccountDisabledPage user={user} onLogout={logout} onRefresh={loadMe} />
   }
 
-  return (
-    <div className="minimal-app">
-      <header className="app-topbar studio-topbar">
-        <div className="brand">
-          <div className="brand-mark"><ImageIcon /></div>
-          <div>
-            <strong>极简生图</strong>
-            <span>让创作只保留必要步骤</span>
-          </div>
-        </div>
-        <div className="studio-top-actions">
-          <div className="service-status"><i />服务运行正常</div>
-          <div className="studio-account-chip">
-            <span>{accountName(user).slice(0, 1).toUpperCase()}</span>
-            <div><b>{accountName(user)}</b><small>sub2api 账号</small></div>
-          </div>
-          <button className="topbar-icon-button" onClick={logout} title="退出" aria-label="退出"><LogOutIcon /></button>
-        </div>
-      </header>
-      <GalleryPage user={user} onUserChange={setUser} />
-    </div>
-  )
+  return <GalleryPage user={user} onUserChange={setUser} onLogout={logout} />
 }
 
 function AuthPage(props: {
@@ -150,6 +132,19 @@ function AuthPage(props: {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
+  const [showcaseIndex, setShowcaseIndex] = useState(1)
+  const [showcasePaused, setShowcasePaused] = useState(false)
+  const showcase = [
+    { src: '/showcase/interior.webp', alt: 'AI 生成的室内作品', fit: 'cover' },
+    { src: '/showcase/portrait.webp', alt: 'AI 生成的人像作品', fit: 'contain' },
+    { src: '/showcase/architecture.webp', alt: 'AI 生成的建筑作品', fit: 'cover' },
+  ]
+
+  useEffect(() => {
+    if (showcasePaused) return
+    const timer = window.setInterval(() => setShowcaseIndex((current) => cycleIndex(current, 1, showcase.length)), 4200)
+    return () => window.clearInterval(timer)
+  }, [showcasePaused])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -169,54 +164,39 @@ function AuthPage(props: {
   }
 
   return (
-    <main className="auth-page auth-v3">
-      <section className="auth-preview">
-        <div className="brand auth-preview-brand">
-          <div className="brand-mark"><ImageIcon /></div>
-          <div><strong>极简生图</strong><span>Image creation studio</span></div>
+    <main className="immersive-auth">
+      <div className="auth-ambient" />
+      <section className="auth-showcase">
+        <div className="brand auth-studio-brand">
+          <img className="brand-logo" src="/pwa-icon.svg?v=20260711" alt="Aurora Studio" />
+          <div><strong>Aurora Studio</strong><span>PERSONAL AI IMAGE SPACE</span></div>
         </div>
-        <div className="auth-preview-copy">
-          <span>FOCUSED IMAGE WORKSPACE</span>
-          <h1>专注图片生成，<br />从描述到成图只需一个页面。</h1>
-          <p>选择已授权的 API Key，输入画面描述，即可创建图片任务并查看完整生成记录。</p>
+        <div className="auth-art-stack" onMouseEnter={() => setShowcasePaused(true)} onMouseLeave={() => setShowcasePaused(false)}>
+          {showcase.map((item, index) => {
+            const offset = (index - showcaseIndex + showcase.length) % showcase.length
+            const position = offset === 0 ? 'current' : offset === 1 ? 'next' : 'previous'
+            return <button key={item.src} type="button" className={`auth-art-card ${position} fit-${item.fit}`} onClick={() => setShowcaseIndex(index)} aria-label={`查看${item.alt}`}><img src={item.src} alt={item.alt} /></button>
+          })}
+          <div className="auth-art-controls"><button type="button" onClick={() => setShowcaseIndex((current) => cycleIndex(current, -1, showcase.length))}>‹</button><span>{showcase.map((item, index) => <button key={item.src} type="button" className={index === showcaseIndex ? 'active' : ''} onClick={() => setShowcaseIndex(index)} aria-label={`切换到第 ${index + 1} 张`} />)}</span><button type="button" onClick={() => setShowcaseIndex((current) => cycleIndex(current, 1, showcase.length))}>›</button></div>
         </div>
-        <div className="auth-preview-grid">
-          <article>
-            <div className="auth-preview-image completed"><span><i />已完成 · 38 秒</span></div>
-            <div><b>透明香水产品图</b><small>1024×1024 · High</small></div>
-          </article>
-          <article>
-            <div className="auth-preview-image running">
-              <span><i />生成中 · 00:27</span>
-              <div><b>正在精炼材质与光线</b><i><span /></i></div>
-            </div>
-            <div><b>未来感随身相机</b><small>预计 30–90 秒</small></div>
-          </article>
-        </div>
-        <div className="auth-feature-list">
-          <span><CheckCircleIcon />直接使用 sub2api 已有账号和 API Key</span>
-          <span><CheckCircleIcon />API Key 明文仅由服务端读取</span>
-          <span><CheckCircleIcon />生成历史仅与当前登录账号关联</span>
+        <div className="auth-showcase-copy">
+          <span>CREATE · VIEW · MANAGE</span>
+          <h1>让每一次生成，都成为你的作品。</h1>
+          <p>从提示词到成图，从版本对比到图片资产，在一个沉浸空间里完成。</p>
         </div>
       </section>
-
-      <section className="auth-panel">
-        <div className="auth-panel-inner">
-          <div className="auth-panel-heading">
-            <span>ACCOUNT ACCESS</span>
-            <h1>登录极简生图</h1>
-            <p>使用你的 sub2api 账号进入图片工作台。</p>
-          </div>
+      <section className="auth-access">
+        <div className="auth-access-inner">
+          <span className="panel-eyebrow">ACCOUNT ACCESS</span>
+          <h1>欢迎回来</h1>
+          <p>使用你的 sub2api 账号进入私人图片空间。</p>
           <form onSubmit={submit}>
             <label><span>邮箱</span><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="请输入 sub2api 账号邮箱" type="email" autoComplete="email" required /></label>
             <label><span>密码</span><input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="请输入账号密码" type="password" autoComplete="current-password" required /></label>
-            <button className="primary full auth-submit" disabled={busy}>{busy ? '正在验证账号…' : '登录并进入工作台'}<ChevronRightIcon /></button>
+            <button className="auth-studio-submit" disabled={busy}>{busy ? '正在验证账号…' : '进入 Aurora Studio'}<ChevronRightIcon /></button>
           </form>
           {props.message ? <div className="inline-message error auth-error"><AlertCircleIcon />{props.message}</div> : null}
-          <div className="auth-security-note">
-            <span><i />安全说明</span>
-            <p>账号认证、API Key 和计费由 sub2api 统一管理。本站不会在浏览器中保存 API Key 明文。</p>
-          </div>
+          <div className="auth-studio-security"><CheckCircleIcon /><span><b>安全登录</b>API Key 明文只由服务端读取，浏览器不会保存。</span></div>
         </div>
       </section>
     </main>
@@ -245,7 +225,7 @@ function AccountDisabledPage(props: { user: ApiUser; onLogout: () => void; onRef
   )
 }
 
-function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => void }) {
+function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => void; onLogout: () => void }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [generations, setGenerations] = useState<ApiGeneration[]>([])
   const [apiKeys, setApiKeys] = useState<ApiKeyOption[]>([])
@@ -257,22 +237,74 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   const [format, setFormat] = useState('png')
   const [imageCount, setImageCount] = useState(1)
   const [inputImages, setInputImages] = useState<string[]>([])
-  const [filter, setFilter] = useState<'all' | ApiGeneration['status']>('all')
+  const initialLocation = useMemo(() => parseStudioLocation(window.location.search), [])
+  const [filter, setFilter] = useState<GenerationFilter>(initialLocation.filter)
   const [busy, setBusy] = useState(false)
   const [keysLoading, setKeysLoading] = useState(false)
+  const [generationsLoading, setGenerationsLoading] = useState(true)
+  const [generationsError, setGenerationsError] = useState('')
   const [error, setError] = useState('')
   const [now, setNow] = useState(() => Date.now())
+  const [view, setView] = useState<StudioView>(initialLocation.view)
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [currentGenerationId, setCurrentGenerationId] = useState(initialLocation.generationId)
+  const [generationNotice, setGenerationNotice] = useState('')
+  const [trackedGenerationId, setTrackedGenerationId] = useState('')
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
+    try {
+      return sanitizeThemePreference(window.localStorage.getItem(themePreferenceKey))
+    } catch {
+      return 'system'
+    }
+  })
+  const [prefersDark, setPrefersDark] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true)
 
   const selectedKey = useMemo(
     () => apiKeys.find((item) => item.id === selectedApiKeyId) ?? null,
     [apiKeys, selectedApiKeyId],
   )
+  const resolvedTheme = resolveTheme(themePreference, prefersDark)
+
+  useEffect(() => {
+    try {
+      const draft = parseStudioDraft(window.localStorage.getItem(studioDraftKey))
+      if (!draft) return
+      setPrompt(draft.prompt)
+      setSize(draft.size)
+      setQuality(draft.quality)
+      setFormat(draft.format)
+      setImageCount(draft.imageCount)
+      setSelectedApiKeyId(draft.selectedApiKeyId)
+    } catch {
+      // 无法读取草稿时继续使用默认值。
+    }
+  }, [])
+
+  async function refreshGenerations(retry = false) {
+    setGenerationsLoading(true)
+    try {
+      const request = () => apiRequest<{ generations: ApiGeneration[] }>('/api/generations')
+      const payload = retry ? await withSingleRetry(request) : await request()
+      setGenerations(payload.generations)
+      setGenerationsError('')
+    } catch (err) {
+      setGenerationsError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setGenerationsLoading(false)
+    }
+  }
+
+  async function refreshUser() {
+    try {
+      const me = await apiRequest<{ user: ApiUser }>('/api/me')
+      props.onUserChange(me.user)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   async function refresh() {
-    const payload = await apiRequest<{ generations: ApiGeneration[] }>('/api/generations')
-    setGenerations(payload.generations)
-    const me = await apiRequest<{ user: ApiUser }>('/api/me')
-    props.onUserChange(me.user)
+    await Promise.all([refreshGenerations(), refreshUser()])
   }
 
   async function refreshKeys() {
@@ -292,13 +324,14 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   }
 
   useEffect(() => {
-    void refresh().catch((err) => setError(err instanceof Error ? err.message : String(err)))
+    void refreshGenerations(true)
+    void refreshUser()
     void refreshKeys()
   }, [])
 
   useEffect(() => {
     if (!generations.some((item) => item.status === 'running')) return
-    const timer = window.setInterval(() => void refresh().catch(() => undefined), 2500)
+    const timer = window.setInterval(() => void refreshGenerations(), 2500)
     return () => window.clearInterval(timer)
   }, [generations])
 
@@ -307,6 +340,30 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [generations])
+
+  useEffect(() => {
+    const query = window.matchMedia?.('(prefers-color-scheme: dark)')
+    if (!query) return
+    const update = () => setPrefersDark(query.matches)
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(themePreferenceKey, themePreference)
+    } catch {
+      // 主题仍可在当前会话中切换。
+    }
+  }, [themePreference])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(studioDraftKey, serializeStudioDraft({ prompt, size, quality, format, imageCount, selectedApiKeyId }))
+    } catch {
+      // 草稿持久化失败不影响生成。
+    }
+  }, [format, imageCount, prompt, quality, selectedApiKeyId, size])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -328,9 +385,11 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
         }),
       })
       setGenerations((current) => [payload.generation, ...current.filter((item) => item.id !== payload.generation.id)])
-      setPrompt('')
-      setInputImages([])
-      await refresh()
+      setTrackedGenerationId(payload.generation.id)
+      setGenerationNotice(buildGenerationNotice(payload.generation.status, payload.generation.prompt))
+      setCurrentIndex(0)
+      setCurrentGenerationId(payload.generation.id)
+      await refreshGenerations()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -345,97 +404,178 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   }
 
   const visible = useMemo(() => generations.filter((item) => filter === 'all' || item.status === filter), [generations, filter])
+  const completed = useMemo(() => generations.filter((item) => item.status === 'done' && item.images[0]), [generations])
+  const currentGeneration = generations.find((item) => item.id === currentGenerationId) ?? completed[currentIndex] ?? visible[0] ?? generations[0] ?? null
+  const previousGeneration = completed[cycleIndex(currentIndex, -1, completed.length)] ?? null
+  const nextGeneration = completed[cycleIndex(currentIndex, 1, completed.length)] ?? null
   const selectedGeneration = selected ? generations.find((item) => item.id === selected.id) ?? selected : null
+  const currentProgress = currentGeneration ? getGenerationProgress(currentGeneration, now) : null
   const doneCount = generations.filter((item) => item.status === 'done').length
   const runningCount = generations.filter((item) => item.status === 'running').length
   const errorCount = generations.filter((item) => item.status === 'error').length
+  const availableQuota = apiKeys.reduce((total, item) => total + Math.max(0, item.quota - item.quotaUsed), 0)
+  const backgroundImage = currentGeneration?.images[0] ? imageUrl(currentGeneration.images[0].id) : ''
+
+  useEffect(() => {
+    const search = serializeStudioLocation({ view, filter, generationId: currentGeneration?.id ?? currentGenerationId })
+    window.history.replaceState(null, '', `${window.location.pathname}${search}${window.location.hash}`)
+  }, [currentGeneration?.id, currentGenerationId, filter, view])
+
+  useEffect(() => {
+    if (!trackedGenerationId) return
+    const tracked = generations.find((item) => item.id === trackedGenerationId)
+    if (!tracked) return
+    setGenerationNotice(buildGenerationNotice(tracked.status, tracked.prompt))
+    if (tracked.status !== 'running') setTrackedGenerationId('')
+  }, [generations, trackedGenerationId])
+
+  useEffect(() => {
+    if (currentIndex < completed.length) return
+    setCurrentIndex(0)
+  }, [completed.length, currentIndex])
+
+  useEffect(() => {
+    if (view !== 'gallery' || completed.length < 2) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      setCurrentIndex((current) => { const next = cycleIndex(current, event.key === 'ArrowLeft' ? -1 : 1, completed.length); setCurrentGenerationId(completed[next]?.id ?? ''); return next })
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [completed.length, view])
+
+  function setTheme(preference: ThemePreference) {
+    setThemePreference(preference)
+  }
+
+  function reuseCurrentImage() {
+    if (!currentGeneration?.images[0]) return
+    setInputImages([imageUrl(currentGeneration.images[0].id)])
+    setView('workspace')
+  }
 
   return (
-    <main className="workspace studio-workspace studio-v3">
-      <section className="studio-main studio-content">
-        <div className="studio-heading">
-          <div>
-            <span>IMAGE CREATION STUDIO</span>
-            <h1>今天想创造什么画面？</h1>
-            <p>选择已授权的 Key，描述画面，其余流程交给系统。</p>
-          </div>
-          <div className="studio-heading-meta"><i />GPT-IMAGE-2</div>
+    <main className={`immersive-studio theme-${resolvedTheme} ${view}-mode`} style={backgroundImage ? { '--studio-background': `url(${backgroundImage})` } as React.CSSProperties : undefined}>
+      <div className="studio-background" />
+      <div className="studio-noise" />
+      <header className="immersive-topbar">
+        <div className="brand">
+          <img className="brand-logo" src="/pwa-icon.svg?v=20260711" alt="Aurora Studio" />
+          <div><strong>Aurora Studio</strong><span>PERSONAL AI IMAGE SPACE</span></div>
         </div>
-        <section className="generator-panel">
-          <form className="prompt-form" onSubmit={submit}>
-            <section className="prompt-stage">
-              <div className="prompt-stage-head">
-                <div><h2>画面描述</h2><p>描述主体、环境、光线和构图，可获得更稳定的结果。</p></div>
-                <span><i />GPT-IMAGE-2</span>
-              </div>
-              <div className="prompt-editor">
-                <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} maxLength={2000} placeholder="例如：浅蓝背景上的极简产品图，柔和自然光，干净构图..." aria-label="提示词" />
-                <div><span>提示词仅用于本次图片生成</span><b>{prompt.length} / 2000</b></div>
-              </div>
-              <div className="reference-strip">
-                <span>参考图</span>
-                {inputImages.map((item, index) => <img key={item} src={item} alt={`参考图 ${index + 1}`} />)}
-                <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
-                <button type="button" className="reference-add" onClick={() => fileInputRef.current?.click()}>+</button>
-                {inputImages.length ? <button type="button" className="reference-clear" onClick={() => setInputImages([])}>清空</button> : null}
-                <small>最多 4 张</small>
-              </div>
-            </section>
-
-            <aside className="generation-controls">
-              <div className="controls-head"><h2>生成设置</h2><span>前端不显示 Key 明文</span></div>
-              <label><span>API Key</span><select className="api-key-select" value={selectedApiKeyId} onChange={(e) => setSelectedApiKeyId(e.target.value)} aria-label="sub2api API Key"><option value="">{keysLoading ? '正在读取 Key...' : '选择 API Key'}</option>{apiKeys.map((item) => <option key={item.id} value={item.id}>{keyLabel(item)}</option>)}</select></label>
-              <div className="control-group"><span>画面尺寸</span><div className="segment-options">{sizeOptions.map((item) => <button key={item} type="button" className={size === item ? 'active' : ''} onClick={() => setSize(item)}>{item.replace('x', '×')}</button>)}</div></div>
-              <div className="control-group"><span>生成质量</span><div className="segment-options four">{qualityOptions.map((item) => <button key={item} type="button" className={quality === item ? 'active' : ''} onClick={() => setQuality(item)}>{item}</button>)}</div></div>
-              <div className="control-row">
-                <label><span>输出格式</span><select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
-                <label><span>图片数量</span><select value={imageCount} onChange={(e) => setImageCount(Number(e.target.value))} aria-label="图片数量">{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item} 张</option>)}</select></label>
-              </div>
-              <div className="billing-note"><span>计费方式</span><b>按次（图片）</b></div>
-              <button type="submit" className="primary generate-button" disabled={busy || keysLoading || !selectedApiKeyId || !prompt.trim()}><SparklesIcon />{busy ? '提交中...' : '生成图片'}</button>
-              {error ? <div className="inline-message error">{error}</div> : null}
-            </aside>
-          </form>
-        </section>
-
-        <section className="gallery-panel">
-          <div className="section-head">
-            <div><h1>最近创作</h1><p>任务状态、生成时长和结果集中展示，点击图片查看详情和下载。</p></div>
-            <div className="gallery-actions">
-              <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button>
-              <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>已完成</button>
-              <button className={filter === 'running' ? 'active' : ''} onClick={() => setFilter('running')}>生成中</button>
-              <button className={filter === 'error' ? 'active' : ''} onClick={() => setFilter('error')}>失败</button>
-              <button onClick={() => void refresh()}><RefreshIcon />刷新</button>
-            </div>
+        <nav className="immersive-nav" aria-label="主要导航">
+          <button className={view === 'gallery' ? 'active' : ''} onClick={() => setView('gallery')}>我的作品</button>
+          <button className={view === 'workspace' ? 'active' : ''} onClick={() => setView('workspace')}>创作工作台</button>
+          <button className={view === 'assets' ? 'active' : ''} onClick={() => setView('assets')}>图片资产</button>
+        </nav>
+        <div className="immersive-account">
+          <span>{availableQuota} CREDITS</span>
+          <div className="theme-switcher" aria-label="主题设置">
+            <button className={themePreference === 'light' ? 'active' : ''} onClick={() => setTheme('light')} title="浅色模式">☀</button>
+            <button className={themePreference === 'system' ? 'active' : ''} onClick={() => setTheme('system')} title="跟随系统">◐</button>
+            <button className={themePreference === 'dark' ? 'active' : ''} onClick={() => setTheme('dark')} title="深色模式">☾</button>
           </div>
-          <div className="task-grid">
-            {visible.map((item) => {
+          <button className="immersive-logout" onClick={props.onLogout} title="退出登录" aria-label="退出登录"><LogOutIcon /></button>
+        </div>
+      </header>
+
+      {view === 'gallery' ? (
+        <section className="immersive-gallery">
+          {generationsLoading && !generations.length ? <div className="gallery-loading"><span className="gallery-loading-orb" /><b>正在同步你的作品</b><p>从后端恢复任务与图片资产…</p></div> : generationsError && !generations.length ? <div className="gallery-loading error"><AlertCircleIcon /><b>作品加载失败</b><p>{generationsError}</p><button onClick={() => void refreshGenerations(true)}>重新加载</button></div> : <>
+          <div className="immersive-heading">
+            <span>YOUR LATEST CREATIONS</span>
+            <h1>{completed.length ? '继续欣赏你的创作' : '从第一张作品开始'}</h1>
+            <p>{completed.length ? '点击两侧作品或使用方向键切换' : '展开创作工作台，输入提示词生成图片。'}</p>
+          </div>
+          <div className="carousel-stage" onWheel={(event) => {
+            const direction = wheelCarouselDirection(event.deltaX, event.deltaY)
+            if (completed.length < 2 || !direction) return
+            event.preventDefault()
+            setCurrentIndex((current) => { const next = cycleIndex(current, direction, completed.length); setCurrentGenerationId(completed[next]?.id ?? ''); return next })
+          }}>
+            {completed.map((item, index) => {
+              const position = carouselPosition(index, currentIndex, completed.length)
               const progress = getGenerationProgress(item, now)
-              return (
-                <article key={item.id} className="task-card" onClick={() => setSelected(item)}>
-                  <div className={`thumb ${item.status}`}>
-                    {item.images[0] ? <img src={imageUrl(item.images[0].id)} alt={item.prompt} /> : <div className="thumb-placeholder" />}
-                    <span className="task-status"><i />{statusText(item.status)}</span>
-                    {item.status === 'running' ? <div className="task-running-overlay"><div><span>{progress.hint || '正在生成图片'}</span><b>{progress.timingText}</b></div><i><span /></i></div> : null}
-                  </div>
-                  <div className="task-body">
-                    <b>{item.prompt}</b>
-                    <div className="task-meta"><span>{item.apiKeyName || item.model}</span><span>{progress.timingText || formatTime(item.createdAt)}</span></div>
-                    {progress.hint ? <p className="task-progress-hint">{progress.hint}</p> : null}
-                  </div>
-                </article>
-              )
+              return <article key={item.id} className={`carousel-card ${position}`} aria-hidden={position === 'hidden'}>
+                <img src={imageUrl(item.images[0].id)} alt={position === 'hidden' ? '' : item.prompt} />
+                {position === 'previous' || position === 'next' ? <button className="carousel-card-hit" type="button" aria-label={`切换到${position === 'previous' ? '上一张' : '下一张'}作品`} onClick={() => { setCurrentIndex(index); setCurrentGenerationId(item.id) }}><span>{position === 'previous' ? '‹' : '›'}</span></button> : null}
+                {position === 'current' ? <><span className={`current-status ${item.status}`}>{statusText(item.status)} · {progress.timingText || formatTime(item.createdAt)}</span><div className="current-caption"><h2>{item.prompt}</h2><p>{item.params.size.replace('x', ' × ')} · {item.params.quality} · {item.model}</p></div></> : null}
+              </article>
             })}
+            {!completed.length ? <article className="carousel-card current"><div className="immersive-empty"><ImageIcon /><b>还没有完成的作品</b><span>创作完成后，图片会出现在这里。</span></div></article> : null}
+            {completed.length ? <div className="carousel-film">{completed.slice(0, 8).map((item, index) => <button key={item.id} className={index === currentIndex ? 'active' : ''} onClick={() => { setCurrentIndex(index); setCurrentGenerationId(item.id) }}><img src={imageUrl(item.images[0].id)} alt="" /></button>)}</div> : null}
           </div>
-          {!visible.length ? (
-            <div className="empty-state compact">
-              <b>还没有图片</b>
-              <span>选择 API Key 并输入提示词，生成后的任务会显示在这里。</span>
+          <div className="gallery-dock">
+            <div className="gallery-meta">
+              <span><small>生成时间</small><b>{currentGeneration ? formatTime(currentGeneration.createdAt) : '-'}</b></span>
+              <span><small>图片尺寸</small><b>{currentGeneration?.params.size.replace('x', ' × ') || '-'}</b></span>
+              <span><small>当前模型</small><b>{currentGeneration?.model || 'gpt-image-2'}</b></span>
             </div>
-          ) : null}
+            <div className="gallery-dock-actions">
+              <button disabled={!currentGeneration?.images[0]} onClick={reuseCurrentImage}>设为参考图</button>
+              <button disabled={!currentGeneration} onClick={() => currentGeneration && setSelected(currentGeneration)}>查看详情</button>
+              <button className="create-entry" onClick={() => setView('workspace')}><SparklesIcon />创作新图片</button>
+            </div>
+          </div>
+          </>}
         </section>
-      </section>
+      ) : view === 'assets' ? (
+        <section className="asset-library">
+          <div className="asset-library-head"><div><span className="panel-eyebrow">PERSISTED IMAGE LIBRARY</span><h1>图片资产</h1><p>这里展示后端已保存的生成结果，刷新或重新登录后仍然存在。</p></div><div><button onClick={() => void refresh()}><RefreshIcon />刷新资产</button><button className="asset-create" onClick={() => setView('workspace')}><SparklesIcon />创作新图片</button></div></div>
+          <div className="asset-summary"><span><b>{doneCount}</b>已保存作品</span><span><b>{generations.reduce((total, item) => total + item.images.length, 0)}</b>图片文件</span><span><b>{runningCount}</b>生成中任务</span><span><b>{errorCount}</b>失败任务</span></div>
+          <div className="asset-grid">{completed.map((item) => <article key={item.id} onClick={() => setSelected(item)}><div><img src={imageUrl(item.images[0].id)} alt={item.prompt} /><span>{item.params.size.replace('x', ' × ')}</span></div><h2>{item.prompt}</h2><p><span>{item.apiKeyName || item.model}</span><time>{formatTime(item.createdAt)}</time></p></article>)}</div>
+          {!completed.length ? <div className="asset-empty"><ImageIcon /><b>还没有已保存的图片</b><span>生成完成后的图片会由后端保存并出现在这里。</span><button onClick={() => setView('workspace')}>开始第一次创作</button></div> : null}
+        </section>
+      ) : (
+        <section className="creation-workspace">
+          <form className="creation-panel studio-glass" onSubmit={submit}>
+            <span className="panel-eyebrow">CREATE</span>
+            <h1>把脑海里的画面<br />变成作品</h1>
+            <div className="workspace-prompt"><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} maxLength={2000} placeholder="描述你想生成的画面……" aria-label="提示词" /><small>{prompt.length} / 2000</small></div>
+            <div className="workspace-references">
+              <div>{inputImages.map((item, index) => <img key={`${item}-${index}`} src={item} alt={`参考图 ${index + 1}`} />)}<button type="button" onClick={() => fileInputRef.current?.click()}>＋</button></div>
+              <span>{inputImages.length ? `已添加 ${inputImages.length} 张参考图` : '添加参考图'}<small>最多 4 张 · JPG / PNG / WEBP</small></span>
+              {inputImages.length ? <button type="button" onClick={() => setInputImages([])}>清空</button> : null}
+              <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
+            </div>
+            <label className="workspace-select"><span>API Key</span><select value={selectedApiKeyId} onChange={(e) => setSelectedApiKeyId(e.target.value)} aria-label="sub2api API Key"><option value="">{keysLoading ? '正在读取 Key...' : '选择 API Key'}</option>{apiKeys.map((item) => <option key={item.id} value={item.id}>{keyLabel(item)}</option>)}</select></label>
+            <div className="workspace-setting"><span>画面尺寸</span><div>{sizeOptions.map((item) => <button key={item} type="button" className={size === item ? 'active' : ''} onClick={() => setSize(item)}>{item.replace('x', '×')}</button>)}</div></div>
+            <div className="workspace-setting"><span>生成质量</span><div>{qualityOptions.map((item) => <button key={item} type="button" className={quality === item ? 'active' : ''} onClick={() => setQuality(item)}>{item}</button>)}</div></div>
+            <div className="workspace-inline-selects"><label><span>格式</span><select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label><span>数量</span><select value={imageCount} onChange={(e) => setImageCount(Number(e.target.value))} aria-label="图片数量">{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item} 张</option>)}</select></label></div>
+            {error ? <div className="inline-message error">{error}</div> : null}
+            {generationNotice ? <div className={`generation-notice ${trackedGenerationId ? 'running' : ''}`}><span>{trackedGenerationId ? <i /> : <CheckCircleIcon />}</span><div><b>{generationNotice}</b><small>{trackedGenerationId ? '任务已写入后端，完成后会自动更新并加入图片资产。' : '生成记录和图片已由后端保存。'}</small></div></div> : null}
+            <button type="submit" className="workspace-generate" disabled={busy || keysLoading || !selectedApiKeyId || !prompt.trim()}><span className="generate-icon"><SparklesIcon /></span><b>{busy ? '正在提交...' : !prompt.trim() ? '输入提示词后生成' : '开始生成'}</b><span className="generate-shortcut">⌘ ↵</span></button>
+            <button type="button" className="back-to-gallery" onClick={() => setView('gallery')}>‹ 返回沉浸浏览</button>
+          </form>
+
+          <section className={`workspace-canvas ${visible.length ? 'has-film' : 'without-film'}`}>
+            <div className="canvas-toolbar"><span><b>当前画布</b> · {currentGeneration ? '已同步作品' : '未命名创作'}</span><div><button onClick={() => void refresh()}><RefreshIcon />刷新</button><button onClick={() => setSelected(currentGeneration)} disabled={!currentGeneration}>查看详情</button></div></div>
+            <div className="canvas-image">
+              {currentGeneration?.images[0] ? <img src={imageUrl(currentGeneration.images[0].id)} alt={currentGeneration.prompt} /> : <div className="immersive-empty"><ImageIcon /><b>{runningCount ? '图片正在生成' : '画布等待创作'}</b><span>{runningCount ? '生成完成后会自动显示。' : '从左侧输入提示词开始。'}</span></div>}
+              {currentGeneration ? <div className="canvas-actions"><button type="button" onClick={reuseCurrentImage}>设为参考图</button><button type="button" onClick={() => setSelected(currentGeneration)}>详情与下载</button></div> : null}
+            </div>
+            {visible.length ? <div className="workspace-film"><div><b>本次创作</b><small>{generations.length} 个任务</small></div>{visible.slice(0, 8).map((item) => <button key={item.id} className={item.id === currentGeneration?.id ? 'active' : ''} onClick={() => {
+              const nextIndex = completed.findIndex((entry) => entry.id === item.id)
+              if (nextIndex >= 0) { setCurrentIndex(nextIndex); setCurrentGenerationId(item.id) }
+              else setSelected(item)
+            }}>{item.images[0] ? <img src={imageUrl(item.images[0].id)} alt="" /> : <span className={item.status}>{statusText(item.status)}</span>}</button>)}</div> : null}
+          </section>
+
+          <aside className="versions-panel studio-glass">
+            <span className="panel-eyebrow">GENERATIONS</span>
+            <div className="versions-heading"><h2>生成结果</h2><span>{doneCount} 完成</span></div>
+            <div className="versions-filter">{(['all', 'done', 'running', 'error'] as const).map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'all' ? '全部' : statusText(item)} {item === 'all' ? generations.length : item === 'done' ? doneCount : item === 'running' ? runningCount : errorCount}</button>)}</div>
+            <div className="version-list">{visible.slice(0, 6).map((item) => {
+              const progress = getGenerationProgress(item, now)
+              return <button key={item.id} className={item.id === currentGeneration?.id ? 'active' : ''} onClick={() => item.status === 'done' ? (() => { setCurrentIndex(Math.max(0, completed.findIndex((entry) => entry.id === item.id))); setCurrentGenerationId(item.id) })() : setSelected(item)}>{item.images[0] ? <img src={imageUrl(item.images[0].id)} alt="" /> : <span className={`version-placeholder ${item.status}`}><ImageIcon /></span>}<span><b>{item.prompt}</b><small>{item.error || `${statusText(item.status)} · ${progress.timingText || formatTime(item.createdAt)}`}</small></span></button>
+            })}</div>
+            {generationsLoading && !generations.length ? <div className="generation-state">正在恢复任务记录…</div> : null}
+            {generationsError ? <div className="generation-state error"><span>{generationsError}</span><button onClick={() => void refreshGenerations()}>重试</button></div> : null}
+            {currentGeneration ? <dl className="current-metadata"><div><dt>API Key</dt><dd>{currentGeneration.apiKeyName || '-'}</dd></div><div><dt>尺寸</dt><dd>{currentGeneration.params.size.replace('x', ' × ')}</dd></div><div><dt>质量</dt><dd>{currentGeneration.params.quality}</dd></div><div><dt>格式</dt><dd>{currentGeneration.params.output_format}</dd></div></dl> : null}
+            <div className="versions-actions"><button disabled={!currentGeneration} onClick={() => currentGeneration && setSelected(currentGeneration)}>详情与下载</button><button onClick={() => void refresh()}><RefreshIcon />刷新任务</button></div>
+          </aside>
+        </section>
+      )}
       {selectedGeneration ? <GenerationDetail generation={selectedGeneration} now={now} onClose={() => setSelected(null)} /> : null}
     </main>
   )
