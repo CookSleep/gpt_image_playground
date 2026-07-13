@@ -67,6 +67,8 @@ services:
       OPENAI_BASE_URL: http://mock-api:4010/v1
       OPENAI_API_KEY:
       DEFAULT_IMAGE_MODEL: gpt-image-2
+      DEFAULT_TEXT_MODEL: gpt-5.5
+      OPENAI_TEXT_TIMEOUT_MS: 120000
       OPENAI_IMAGE_PARTIAL_IMAGES: 2
       OPENAI_IMAGE_TIMEOUT_MS: 600000
       S3_ENDPOINT: http://minio:9000

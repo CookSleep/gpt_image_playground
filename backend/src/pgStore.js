@@ -52,9 +52,31 @@ function rowImage(row) {
     userId: String(row.user_id),
     objectKey: row.object_key,
     contentType: row.content_type,
+    name: row.name,
+    folderId: row.folder_id == null ? null : String(row.folder_id),
     revisedPrompt: row.revised_prompt,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
   }
+}
+
+function rowFolder(row) {
+  if (!row) return null
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    name: row.name,
+    createdAt: row.created_at?.toISOString?.() ?? row.created_at,
+    updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
+  }
+}
+
+function defaultImageName(value, index, count) {
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(value))
+  const part = (type) => parts.find((item) => item.type === type)?.value ?? ''
+  const base = `Aurora 图片 ${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}`
+  return count > 1 ? `${base} - ${index + 1}` : base
 }
 
 async function migrate(pool) {
@@ -129,6 +151,53 @@ export async function createPgStore(databaseUrl) {
       await pool.query('delete from sessions where token_hash = $1', [tokenHash])
     },
 
+    async getSettings(userId) {
+      const result = await pool.query('select image_api_key_id, prompt_api_key_id from user_settings where user_id = $1', [userId])
+      return {
+        imageApiKeyId: result.rows[0]?.image_api_key_id ?? null,
+        promptApiKeyId: result.rows[0]?.prompt_api_key_id ?? null,
+      }
+    },
+
+    async saveSettings(userId, input) {
+      const result = await pool.query(
+        `insert into user_settings (user_id, image_api_key_id, prompt_api_key_id)
+         values ($1, $2, $3)
+         on conflict (user_id) do update
+         set image_api_key_id = excluded.image_api_key_id,
+             prompt_api_key_id = excluded.prompt_api_key_id,
+             updated_at = now()
+         returning image_api_key_id, prompt_api_key_id`,
+        [userId, input.imageApiKeyId || null, input.promptApiKeyId || null],
+      )
+      return { imageApiKeyId: result.rows[0].image_api_key_id, promptApiKeyId: result.rows[0].prompt_api_key_id }
+    },
+
+    async listFolders(userId) {
+      const result = await pool.query('select * from asset_folders where user_id = $1 order by name asc, id asc', [userId])
+      return result.rows.map(rowFolder)
+    },
+
+    async getFolder(folderId, userId) {
+      const result = await pool.query('select * from asset_folders where id = $1 and user_id = $2', [folderId, userId])
+      return rowFolder(result.rows[0])
+    },
+
+    async createFolder(userId, name) {
+      const result = await pool.query('insert into asset_folders (user_id, name) values ($1, $2) returning *', [userId, name])
+      return rowFolder(result.rows[0])
+    },
+
+    async updateFolder(folderId, userId, name) {
+      const result = await pool.query('update asset_folders set name = $3, updated_at = now() where id = $1 and user_id = $2 returning *', [folderId, userId, name])
+      return rowFolder(result.rows[0])
+    },
+
+    async deleteFolder(folderId, userId) {
+      const result = await pool.query('delete from asset_folders where id = $1 and user_id = $2', [folderId, userId])
+      return result.rowCount > 0
+    },
+
     async createGeneration(input) {
       const result = await pool.query(
         `insert into generations (user_id, api_key_id, api_key_name, prompt, params, status, model)
@@ -161,11 +230,12 @@ export async function createPgStore(databaseUrl) {
            where id = $1 returning *`,
           [generationId, upstream ?? null, elapsedMs],
         )
-        for (const image of outputImages) {
+        for (let index = 0; index < outputImages.length; index += 1) {
+          const image = outputImages[index]
           await client.query(
-            `insert into generation_images (generation_id, user_id, object_key, content_type, revised_prompt)
-             values ($1, $2, $3, $4, $5)`,
-            [generationId, generation.user_id, image.objectKey, image.contentType, image.revisedPrompt ?? null],
+            `insert into generation_images (generation_id, user_id, object_key, content_type, name, revised_prompt)
+             values ($1, $2, $3, $4, $5, $6)`,
+            [generationId, generation.user_id, image.objectKey, image.contentType, image.name || defaultImageName(new Date(), index, outputImages.length), image.revisedPrompt ?? null],
           )
         }
         await client.query('commit')
@@ -205,6 +275,81 @@ export async function createPgStore(databaseUrl) {
     async getImage(imageId) {
       const result = await pool.query('select * from generation_images where id = $1', [imageId])
       return rowImage(result.rows[0])
+    },
+
+    async getImagesByGeneration(generationId, userId) {
+      const result = await pool.query('select * from generation_images where generation_id = $1 and user_id = $2 order by id asc', [generationId, userId])
+      return result.rows.map(rowImage)
+    },
+
+    async listImagesByFolder(folderId, userId) {
+      const result = await pool.query('select * from generation_images where folder_id = $1 and user_id = $2 order by id asc', [folderId, userId])
+      return result.rows.map(rowImage)
+    },
+
+    async deleteImages(userId, imageIds) {
+      if (!imageIds.length) return 0
+      const result = await pool.query('delete from generation_images where user_id = $1 and id = any($2::bigint[])', [userId, imageIds])
+      return result.rowCount
+    },
+
+    async deleteGeneration(generationId, userId) {
+      const result = await pool.query('delete from generations where id = $1 and user_id = $2', [generationId, userId])
+      return result.rowCount > 0
+    },
+
+    async updateImage(imageId, userId, patch) {
+      const result = await pool.query(
+        `update generation_images
+         set name = case when $3::text is null then name else $3 end,
+             folder_id = case when $4::boolean then $5::bigint else folder_id end
+         where id = $1 and user_id = $2 returning *`,
+        [imageId, userId, patch.name ?? null, patch.folderId !== undefined, patch.folderId ?? null],
+      )
+      return rowImage(result.rows[0])
+    },
+
+    async moveImages(userId, imageIds, folderId) {
+      if (!imageIds.length) return []
+      const result = await pool.query(
+        'update generation_images set folder_id = $3 where user_id = $1 and id = any($2::bigint[]) returning *',
+        [userId, imageIds, folderId ?? null],
+      )
+      return result.rows.map(rowImage)
+    },
+
+    async listAssets(userId, options = {}) {
+      const values = [userId]
+      const where = ['generation_images.user_id = $1']
+      if (Object.prototype.hasOwnProperty.call(options, 'folderId')) {
+        if (options.folderId == null) where.push('generation_images.folder_id is null')
+        else {
+          values.push(options.folderId)
+          where.push(`generation_images.folder_id = $${values.length}`)
+        }
+      }
+      if (options.q) {
+        values.push(`%${String(options.q).trim()}%`)
+        where.push(`(generation_images.name ilike $${values.length} or generations.prompt ilike $${values.length})`)
+      }
+      if (options.cursor) {
+        values.push(options.cursor)
+        where.push(`generation_images.id < $${values.length}`)
+      }
+      const limit = Math.min(Math.max(Number(options.limit) || 60, 1), 100)
+      values.push(limit + 1)
+      const result = await pool.query(
+        `select generation_images.*, generations.prompt
+         from generation_images join generations on generations.id = generation_images.generation_id
+         where ${where.join(' and ')}
+         order by generation_images.id desc limit $${values.length}`,
+        values,
+      )
+      const rows = result.rows.slice(0, limit)
+      return {
+        assets: rows.map((row) => ({ ...rowImage(row), prompt: row.prompt })),
+        nextCursor: result.rows.length > limit ? String(rows.at(-1).id) : null,
+      }
     },
   }
 }

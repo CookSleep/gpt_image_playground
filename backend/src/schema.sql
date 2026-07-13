@@ -11,6 +11,22 @@ create table if not exists users (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists user_settings (
+  user_id bigint primary key references users(id) on delete cascade,
+  image_api_key_id text,
+  prompt_api_key_id text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists asset_folders (
+  id bigserial primary key,
+  user_id bigint not null references users(id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists sessions (
   token_hash text primary key,
   user_id bigint not null references users(id) on delete cascade,
@@ -43,12 +59,15 @@ create table if not exists generation_images (
   user_id bigint not null references users(id) on delete cascade,
   object_key text not null,
   content_type text not null,
+  name text not null,
+  folder_id bigint references asset_folders(id) on delete set null,
   revised_prompt text,
   created_at timestamptz not null default now()
 );
 
 create index if not exists generations_user_created_idx on generations(user_id, created_at desc);
 create index if not exists generation_images_user_idx on generation_images(user_id);
+create unique index if not exists asset_folders_user_name_idx on asset_folders(user_id, lower(name));
 create index if not exists sessions_expires_idx on sessions(expires_at);
 
 drop table if exists quota_ledger;
@@ -64,6 +83,12 @@ alter table sessions add column if not exists sub2api_refresh_token text;
 alter table sessions add column if not exists sub2api_token_expires_at timestamptz;
 alter table generations add column if not exists api_key_id text;
 alter table generations add column if not exists api_key_name text;
+alter table generation_images add column if not exists name text;
+alter table generation_images add column if not exists folder_id bigint references asset_folders(id) on delete set null;
+create index if not exists generation_images_folder_idx on generation_images(user_id, folder_id, created_at desc);
+
+update generation_images set name = 'Aurora 图片 ' || to_char(created_at at time zone 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI') where name is null;
+alter table generation_images alter column name set not null;
 
 delete from users where external_user_id = '';
 drop index if exists users_external_identity_idx;

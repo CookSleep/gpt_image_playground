@@ -19,8 +19,9 @@ describe('studio view state', () => {
   })
 
   it('round trips the locally persisted creation draft', () => {
-    const draft = { prompt: '蓝色玻璃建筑', size: '1024x1536', quality: 'high', format: 'png', imageCount: 2, selectedApiKeyId: '101' }
+    const draft = { prompt: '蓝色玻璃建筑', size: '1024x1536', quality: 'high', format: 'png', imageCount: 2 }
     expect(parseStudioDraft(serializeStudioDraft(draft))).toEqual(draft)
+    expect(parseStudioDraft(JSON.stringify({ ...draft, selectedApiKeyId: 'legacy-key' }))).toEqual(draft)
     expect(parseStudioDraft('{bad json')).toBeNull()
   })
 

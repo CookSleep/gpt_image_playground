@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircleIcon, CheckCircleIcon, ChevronRightIcon, ImageIcon, LogOutIcon, RefreshIcon, SparklesIcon } from './components/icons'
+import { AssetLibrary } from './components/AssetLibrary'
+import { AuroraConfirmDialog, type AuroraConfirmAction } from './components/AuroraConfirmDialog'
+import { AuroraSettingsModal } from './components/AuroraSettingsModal'
+import { PromptOptimizerDialog } from './components/PromptOptimizerDialog'
+import { AlertCircleIcon, CheckCircleIcon, ChevronRightIcon, ImageIcon, LogOutIcon, RefreshIcon, SettingsIcon, SparklesIcon, TrashIcon } from './components/icons'
+import { applyOptimizedPrompt, hasCompleteSettings } from './lib/auroraSettings'
 import { getGenerationProgress } from './lib/generationProgress'
+import { MAX_REFERENCE_IMAGES, planReferenceFileSelection } from './lib/referenceImages'
 import { buildGenerationNotice, carouselPosition, cycleIndex, parseStudioDraft, parseStudioLocation, resolveTheme, sanitizeThemePreference, serializeStudioDraft, serializeStudioLocation, wheelCarouselDirection, withSingleRetry, type GenerationFilter, type StudioView, type ThemePreference } from './lib/studioView'
-import { apiRequest, imageUrl, type ApiGeneration, type ApiKeyOption, type ApiUser } from './lib/minimalApi'
+import { apiRequest, imageUrl, type ApiGeneration, type ApiKeyOption, type ApiSettings, type ApiUser } from './lib/minimalApi'
 
 const clientLoggedOutKey = 'minimal-image-site-client-logged-out'
 const themePreferenceKey = 'aurora-studio-theme'
@@ -29,11 +35,6 @@ function statusText(status: ApiGeneration['status']) {
 
 function accountName(user: ApiUser) {
   return user.nickname || user.email || user.username
-}
-
-function keyLabel(key: ApiKeyOption | null) {
-  if (!key) return '未选择'
-  return key.groupName ? `${key.name} · ${key.groupName}` : key.name
 }
 
 function fileToDataUrl(file: File) {
@@ -189,12 +190,13 @@ function AuthPage(props: {
         <div className="auth-access-inner">
           <span className="panel-eyebrow">ACCOUNT ACCESS</span>
           <h1>欢迎回来</h1>
-          <p>使用你的 sub2api 账号进入私人图片空间。</p>
+          <p>使用你的 Aurora 账号进入私人图片空间。</p>
           <form onSubmit={submit}>
-            <label><span>邮箱</span><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="请输入 sub2api 账号邮箱" type="email" autoComplete="email" required /></label>
+            <label><span>邮箱</span><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="请输入 Aurora 账号邮箱" type="email" autoComplete="email" required /></label>
             <label><span>密码</span><input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="请输入账号密码" type="password" autoComplete="current-password" required /></label>
             <button className="auth-studio-submit" disabled={busy}>{busy ? '正在验证账号…' : '进入 Aurora Studio'}<ChevronRightIcon /></button>
           </form>
+          <a className="aurora-console-link auth-console-link" href="https://x.wfjpg.cc/" target="_blank" rel="noreferrer">没有账号或需要管理 API Key？前往 Aurora 控制台</a>
           {props.message ? <div className="inline-message error auth-error"><AlertCircleIcon />{props.message}</div> : null}
           <div className="auth-studio-security"><CheckCircleIcon /><span><b>安全登录</b>API Key 明文只由服务端读取，浏览器不会保存。</span></div>
         </div>
@@ -210,11 +212,11 @@ function AccountDisabledPage(props: { user: ApiUser; onLogout: () => void; onRef
         <div className="disabled-icon"><AlertCircleIcon /></div>
         <span className="disabled-eyebrow">ACCOUNT STATUS</span>
         <h1>当前账号不可用</h1>
-        <p>该账号目前无法使用图片生成服务。请前往 sub2api 检查账号状态，恢复后重新进入工作台。</p>
+        <p>该账号目前无法使用图片生成服务。请前往 Aurora 控制台检查账号状态，恢复后重新进入工作台。</p>
         <dl className="disabled-details">
           <div><dt>当前账号</dt><dd>{accountName(props.user)}</dd></div>
           <div><dt>账号状态</dt><dd><span>已停用</span></dd></div>
-          <div><dt>处理位置</dt><dd>sub2api 控制台</dd></div>
+          <div><dt>处理位置</dt><dd><a href="https://x.wfjpg.cc/" target="_blank" rel="noreferrer">Aurora 控制台</a></dd></div>
         </dl>
         <div className="button-row">
           <button className="primary" onClick={props.onRefresh}><RefreshIcon />重新检查账号状态</button>
@@ -229,7 +231,9 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [generations, setGenerations] = useState<ApiGeneration[]>([])
   const [apiKeys, setApiKeys] = useState<ApiKeyOption[]>([])
-  const [selectedApiKeyId, setSelectedApiKeyId] = useState('')
+  const [settings, setSettings] = useState<ApiSettings | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsLoading, setSettingsLoading] = useState(true)
   const [selected, setSelected] = useState<ApiGeneration | null>(null)
   const [prompt, setPrompt] = useState('')
   const [size, setSize] = useState('1024x1024')
@@ -250,6 +254,11 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   const [currentGenerationId, setCurrentGenerationId] = useState(initialLocation.generationId)
   const [generationNotice, setGenerationNotice] = useState('')
   const [trackedGenerationId, setTrackedGenerationId] = useState('')
+  const [optimizing, setOptimizing] = useState(false)
+  const [optimizedPrompt, setOptimizedPrompt] = useState('')
+  const [optimizerOriginal, setOptimizerOriginal] = useState('')
+  const [confirm, setConfirm] = useState<{ title: string; message: string; actions: AuroraConfirmAction[] } | null>(null)
+  const [confirmBusy, setConfirmBusy] = useState(false)
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
     try {
       return sanitizeThemePreference(window.localStorage.getItem(themePreferenceKey))
@@ -259,11 +268,8 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
   })
   const [prefersDark, setPrefersDark] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true)
 
-  const selectedKey = useMemo(
-    () => apiKeys.find((item) => item.id === selectedApiKeyId) ?? null,
-    [apiKeys, selectedApiKeyId],
-  )
   const resolvedTheme = resolveTheme(themePreference, prefersDark)
+  const settingsComplete = hasCompleteSettings(settings)
 
   useEffect(() => {
     try {
@@ -274,7 +280,6 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
       setQuality(draft.quality)
       setFormat(draft.format)
       setImageCount(draft.imageCount)
-      setSelectedApiKeyId(draft.selectedApiKeyId)
     } catch {
       // 无法读取草稿时继续使用默认值。
     }
@@ -303,8 +308,20 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
     }
   }
 
+  async function refreshSettings() {
+    setSettingsLoading(true)
+    try {
+      const result = await apiRequest<{ settings: ApiSettings }>('/api/settings')
+      setSettings(result.settings)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSettingsLoading(false)
+    }
+  }
+
   async function refresh() {
-    await Promise.all([refreshGenerations(), refreshUser()])
+    await Promise.all([refreshGenerations(), refreshUser(), refreshSettings()])
   }
 
   async function refreshKeys() {
@@ -312,10 +329,6 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
     try {
       const payload = await apiRequest<{ keys: ApiKeyOption[] }>('/api/sub2api/keys')
       setApiKeys(payload.keys)
-      setSelectedApiKeyId((current) => {
-        if (current && payload.keys.some((item) => item.id === current)) return current
-        return payload.keys[0]?.id ?? ''
-      })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -327,6 +340,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
     void refreshGenerations(true)
     void refreshUser()
     void refreshKeys()
+    void refreshSettings()
   }, [])
 
   useEffect(() => {
@@ -359,17 +373,18 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(studioDraftKey, serializeStudioDraft({ prompt, size, quality, format, imageCount, selectedApiKeyId }))
+      window.localStorage.setItem(studioDraftKey, serializeStudioDraft({ prompt, size, quality, format, imageCount }))
     } catch {
       // 草稿持久化失败不影响生成。
     }
-  }, [format, imageCount, prompt, quality, selectedApiKeyId, size])
+  }, [format, imageCount, prompt, quality, size])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!prompt.trim()) return
-    if (!selectedApiKeyId) {
-      setError('请先选择 sub2api API Key')
+    if (!settingsComplete) {
+      setError('请先在设置中心完成两个 API Key 配置')
+      setSettingsOpen(true)
       return
     }
     setBusy(true)
@@ -378,7 +393,6 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
       const payload = await apiRequest<{ generation: ApiGeneration }>('/api/generations', {
         method: 'POST',
         body: JSON.stringify({
-          apiKeyId: selectedApiKeyId,
           prompt,
           inputImages,
           params: { size, quality, output_format: format, n: imageCount },
@@ -399,8 +413,79 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
 
   async function selectFiles(files: FileList | null) {
     if (!files?.length) return
-    const values = await Promise.all(Array.from(files).slice(0, 4).map(fileToDataUrl))
-    setInputImages(values)
+    const selection = planReferenceFileSelection(inputImages.length, Array.from(files))
+    try {
+      const values = await Promise.all(selection.accepted.map(fileToDataUrl))
+      setInputImages((current) => [...current, ...values].slice(0, MAX_REFERENCE_IMAGES))
+      const skipped = []
+      if (selection.oversized.length) skipped.push(`${selection.oversized.length} 张超过单张 4MB 限制`)
+      if (selection.overflow.length) skipped.push(`${selection.overflow.length} 张超过 16 张上限`)
+      setError(skipped.length ? `已跳过：${skipped.join('，')}` : '')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function optimizePrompt() {
+    if (!prompt.trim()) return
+    if (!settingsComplete) {
+      setSettingsOpen(true)
+      return
+    }
+    setOptimizing(true)
+    setError('')
+    try {
+      const result = await apiRequest<{ optimizedPrompt: string }>('/api/prompts/optimize', {
+        method: 'POST',
+        body: JSON.stringify({ prompt }),
+      })
+      setOptimizerOriginal(prompt)
+      setOptimizedPrompt(result.optimizedPrompt)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setOptimizing(false)
+    }
+  }
+
+  async function openGeneration(id: string) {
+    const existing = generations.find((generation) => generation.id === id)
+    if (existing) {
+      setSelected(existing)
+      return
+    }
+    try {
+      const result = await apiRequest<{ generation: ApiGeneration }>(`/api/generations/${encodeURIComponent(id)}`)
+      setSelected(result.generation)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  function requestDeleteGeneration(generation: ApiGeneration) {
+    if (generation.status === 'running') return
+    setConfirm({
+      title: '删除生成任务',
+      message: `任务及其 ${generation.images.length} 张图片会被永久删除，对象存储文件也会同步清理。`,
+      actions: [{
+        label: '永久删除任务',
+        tone: 'danger',
+        action: async () => {
+          setConfirmBusy(true)
+          try {
+            await apiRequest(`/api/generations/${encodeURIComponent(generation.id)}`, { method: 'DELETE' })
+            setGenerations((current) => current.filter((item) => item.id !== generation.id))
+            setSelected(null)
+            if (currentGenerationId === generation.id) setCurrentGenerationId('')
+            setConfirm(null)
+          } catch (err) {
+            setError(err instanceof Error ? err.message : String(err))
+          } finally {
+            setConfirmBusy(false)
+          }
+        },
+      }],
+    })
   }
 
   const visible = useMemo(() => generations.filter((item) => filter === 'all' || item.status === filter), [generations, filter])
@@ -475,6 +560,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
             <button className={themePreference === 'system' ? 'active' : ''} onClick={() => setTheme('system')} title="跟随系统">◐</button>
             <button className={themePreference === 'dark' ? 'active' : ''} onClick={() => setTheme('dark')} title="深色模式">☾</button>
           </div>
+          <button className={`immersive-settings ${settingsComplete ? '' : 'needs-attention'}`} type="button" onClick={() => setSettingsOpen(true)} title="创作设置" aria-label="创作设置"><SettingsIcon /></button>
           <button className="immersive-logout" onClick={props.onLogout} title="退出登录" aria-label="退出登录"><LogOutIcon /></button>
         </div>
       </header>
@@ -499,7 +585,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
               return <article key={item.id} className={`carousel-card ${position}`} aria-hidden={position === 'hidden'}>
                 <img src={imageUrl(item.images[0].id)} alt={position === 'hidden' ? '' : item.prompt} />
                 {position === 'previous' || position === 'next' ? <button className="carousel-card-hit" type="button" aria-label={`切换到${position === 'previous' ? '上一张' : '下一张'}作品`} onClick={() => { setCurrentIndex(index); setCurrentGenerationId(item.id) }}><span>{position === 'previous' ? '‹' : '›'}</span></button> : null}
-                {position === 'current' ? <><span className={`current-status ${item.status}`}>{statusText(item.status)} · {progress.timingText || formatTime(item.createdAt)}</span><div className="current-caption"><h2>{item.prompt}</h2><p>{item.params.size.replace('x', ' × ')} · {item.params.quality} · {item.model}</p></div></> : null}
+                {position === 'current' ? <><span className={`current-status ${item.status}`}>{statusText(item.status)} · {progress.timingText || formatTime(item.createdAt)}</span><div className="current-caption"><h2>{item.images[0]?.name || item.prompt}</h2><p>{item.params.size.replace('x', ' × ')} · {item.params.quality} · {item.model}</p></div></> : null}
               </article>
             })}
             {!completed.length ? <article className="carousel-card current"><div className="immersive-empty"><ImageIcon /><b>还没有完成的作品</b><span>创作完成后，图片会出现在这里。</span></div></article> : null}
@@ -520,31 +606,26 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
           </>}
         </section>
       ) : view === 'assets' ? (
-        <section className="asset-library">
-          <div className="asset-library-head"><div><span className="panel-eyebrow">PERSISTED IMAGE LIBRARY</span><h1>图片资产</h1><p>这里展示后端已保存的生成结果，刷新或重新登录后仍然存在。</p></div><div><button onClick={() => void refresh()}><RefreshIcon />刷新资产</button><button className="asset-create" onClick={() => setView('workspace')}><SparklesIcon />创作新图片</button></div></div>
-          <div className="asset-summary"><span><b>{doneCount}</b>已保存作品</span><span><b>{generations.reduce((total, item) => total + item.images.length, 0)}</b>图片文件</span><span><b>{runningCount}</b>生成中任务</span><span><b>{errorCount}</b>失败任务</span></div>
-          <div className="asset-grid">{completed.map((item) => <article key={item.id} onClick={() => setSelected(item)}><div><img src={imageUrl(item.images[0].id)} alt={item.prompt} /><span>{item.params.size.replace('x', ' × ')}</span></div><h2>{item.prompt}</h2><p><span>{item.apiKeyName || item.model}</span><time>{formatTime(item.createdAt)}</time></p></article>)}</div>
-          {!completed.length ? <div className="asset-empty"><ImageIcon /><b>还没有已保存的图片</b><span>生成完成后的图片会由后端保存并出现在这里。</span><button onClick={() => setView('workspace')}>开始第一次创作</button></div> : null}
-        </section>
+        <AssetLibrary onCreate={() => setView('workspace')} onOpenGeneration={(id) => void openGeneration(id)} onChanged={() => void refreshGenerations()} />
       ) : (
         <section className="creation-workspace">
           <form className="creation-panel studio-glass" onSubmit={submit}>
             <span className="panel-eyebrow">CREATE</span>
             <h1>把脑海里的画面<br />变成作品</h1>
-            <div className="workspace-prompt"><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} maxLength={2000} placeholder="描述你想生成的画面……" aria-label="提示词" /><small>{prompt.length} / 2000</small></div>
+            {!settingsComplete ? <button className="workspace-config-required" type="button" onClick={() => setSettingsOpen(true)}><SettingsIcon /><span><b>完成创作设置</b><small>选择图片生成与提示词优化 API Key 后开始使用</small></span><ChevronRightIcon /></button> : null}
+            <div className="workspace-prompt"><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} maxLength={2000} placeholder="描述你想生成的画面……" aria-label="提示词" /><div><small>{prompt.length} / 2000</small><button type="button" disabled={optimizing || !prompt.trim() || !settingsComplete} onClick={() => void optimizePrompt()}><SparklesIcon />{optimizing ? '正在优化…' : '优化提示词'}</button></div></div>
             <div className="workspace-references">
-              <div>{inputImages.map((item, index) => <img key={`${item}-${index}`} src={item} alt={`参考图 ${index + 1}`} />)}<button type="button" onClick={() => fileInputRef.current?.click()}>＋</button></div>
-              <span>{inputImages.length ? `已添加 ${inputImages.length} 张参考图` : '添加参考图'}<small>最多 4 张 · JPG / PNG / WEBP</small></span>
+              <div>{inputImages.map((item, index) => <img key={`${item}-${index}`} src={item} alt={`参考图 ${index + 1}`} />)}<button type="button" disabled={inputImages.length >= MAX_REFERENCE_IMAGES} onClick={() => fileInputRef.current?.click()} aria-label="添加参考图">＋</button></div>
+              <span>{inputImages.length ? `已添加 ${inputImages.length} 张参考图` : '添加参考图'}<small>最多 {MAX_REFERENCE_IMAGES} 张 · 单张不超过 4MB</small></span>
               {inputImages.length ? <button type="button" onClick={() => setInputImages([])}>清空</button> : null}
-              <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void selectFiles(e.target.files)} />
+              <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => { const files = e.currentTarget.files; void selectFiles(files); e.currentTarget.value = '' }} />
             </div>
-            <label className="workspace-select"><span>API Key</span><select value={selectedApiKeyId} onChange={(e) => setSelectedApiKeyId(e.target.value)} aria-label="sub2api API Key"><option value="">{keysLoading ? '正在读取 Key...' : '选择 API Key'}</option>{apiKeys.map((item) => <option key={item.id} value={item.id}>{keyLabel(item)}</option>)}</select></label>
             <div className="workspace-setting"><span>画面尺寸</span><div>{sizeOptions.map((item) => <button key={item} type="button" className={size === item ? 'active' : ''} onClick={() => setSize(item)}>{item.replace('x', '×')}</button>)}</div></div>
             <div className="workspace-setting"><span>生成质量</span><div>{qualityOptions.map((item) => <button key={item} type="button" className={quality === item ? 'active' : ''} onClick={() => setQuality(item)}>{item}</button>)}</div></div>
             <div className="workspace-inline-selects"><label><span>格式</span><select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="图片格式">{formatOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label><span>数量</span><select value={imageCount} onChange={(e) => setImageCount(Number(e.target.value))} aria-label="图片数量">{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item} 张</option>)}</select></label></div>
             {error ? <div className="inline-message error">{error}</div> : null}
             {generationNotice ? <div className={`generation-notice ${trackedGenerationId ? 'running' : ''}`}><span>{trackedGenerationId ? <i /> : <CheckCircleIcon />}</span><div><b>{generationNotice}</b><small>{trackedGenerationId ? '任务已写入后端，完成后会自动更新并加入图片资产。' : '生成记录和图片已由后端保存。'}</small></div></div> : null}
-            <button type="submit" className="workspace-generate" disabled={busy || keysLoading || !selectedApiKeyId || !prompt.trim()}><span className="generate-icon"><SparklesIcon /></span><b>{busy ? '正在提交...' : !prompt.trim() ? '输入提示词后生成' : '开始生成'}</b><span className="generate-shortcut">⌘ ↵</span></button>
+            <button type="submit" className="workspace-generate" disabled={busy || settingsLoading || !settingsComplete || !prompt.trim()}><span className="generate-icon"><SparklesIcon /></span><b>{busy ? '正在提交...' : !settingsComplete ? '请先完成创作设置' : !prompt.trim() ? '输入提示词后生成' : '开始生成'}</b><span className="generate-shortcut">⌘ ↵</span></button>
             <button type="button" className="back-to-gallery" onClick={() => setView('gallery')}>‹ 返回沉浸浏览</button>
           </form>
 
@@ -552,7 +633,7 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
             <div className="canvas-toolbar"><span><b>当前画布</b> · {currentGeneration ? '已同步作品' : '未命名创作'}</span><div><button onClick={() => void refresh()}><RefreshIcon />刷新</button><button onClick={() => setSelected(currentGeneration)} disabled={!currentGeneration}>查看详情</button></div></div>
             <div className="canvas-image">
               {currentGeneration?.images[0] ? <img src={imageUrl(currentGeneration.images[0].id)} alt={currentGeneration.prompt} /> : <div className="immersive-empty"><ImageIcon /><b>{runningCount ? '图片正在生成' : '画布等待创作'}</b><span>{runningCount ? '生成完成后会自动显示。' : '从左侧输入提示词开始。'}</span></div>}
-              {currentGeneration ? <div className="canvas-actions"><button type="button" onClick={reuseCurrentImage}>设为参考图</button><button type="button" onClick={() => setSelected(currentGeneration)}>详情与下载</button></div> : null}
+              {currentGeneration?.images[0] ? <div className="canvas-actions"><button type="button" onClick={reuseCurrentImage}>设为参考图</button><button type="button" onClick={() => setSelected(currentGeneration)}>详情与下载</button></div> : null}
             </div>
             {visible.length ? <div className="workspace-film"><div><b>本次创作</b><small>{generations.length} 个任务</small></div>{visible.slice(0, 8).map((item) => <button key={item.id} className={item.id === currentGeneration?.id ? 'active' : ''} onClick={() => {
               const nextIndex = completed.findIndex((entry) => entry.id === item.id)
@@ -576,12 +657,15 @@ function GalleryPage(props: { user: ApiUser; onUserChange: (user: ApiUser) => vo
           </aside>
         </section>
       )}
-      {selectedGeneration ? <GenerationDetail generation={selectedGeneration} now={now} onClose={() => setSelected(null)} /> : null}
+      {selectedGeneration ? <GenerationDetail generation={selectedGeneration} now={now} onClose={() => setSelected(null)} onDelete={() => requestDeleteGeneration(selectedGeneration)} /> : null}
+      {settingsOpen ? <AuroraSettingsModal apiKeys={apiKeys} settings={settings} loading={keysLoading || settingsLoading} onSaved={setSettings} onClose={() => setSettingsOpen(false)} /> : null}
+      {optimizedPrompt ? <PromptOptimizerDialog original={optimizerOriginal} optimized={optimizedPrompt} onClose={() => setOptimizedPrompt('')} onApply={() => { setPrompt(applyOptimizedPrompt(prompt, optimizedPrompt, true)); setOptimizedPrompt('') }} /> : null}
+      {confirm ? <AuroraConfirmDialog {...confirm} busy={confirmBusy} onClose={() => !confirmBusy && setConfirm(null)} /> : null}
     </main>
   )
 }
 
-function GenerationDetail(props: { generation: ApiGeneration; now: number; onClose: () => void }) {
+function GenerationDetail(props: { generation: ApiGeneration; now: number; onClose: () => void; onDelete: () => void }) {
   const firstImage = props.generation.images[0]
   const imageCount = props.generation.images.length || props.generation.params.n || 1
   const progress = getGenerationProgress(props.generation, props.now)
@@ -590,7 +674,8 @@ function GenerationDetail(props: { generation: ApiGeneration; now: number; onClo
     if (!firstImage) return
     const link = document.createElement('a')
     link.href = imageUrl(firstImage.id)
-    link.download = `generation-${props.generation.id}.${props.generation.params.output_format}`
+    const name = firstImage.name.replace(/[\\/:*?"<>|]/g, '-').trim() || `generation-${props.generation.id}`
+    link.download = `${name}.${props.generation.params.output_format}`
     link.click()
   }
 
@@ -603,12 +688,16 @@ function GenerationDetail(props: { generation: ApiGeneration; now: number; onClo
         </header>
         <div className="detail-body">
           <div className="detail-preview">
-            <div className="detail-image">{firstImage ? <img src={imageUrl(firstImage.id)} alt={props.generation.prompt} /> : <div className="thumb-placeholder" />}</div>
+            <div className="detail-image">{firstImage ? <img src={imageUrl(firstImage.id)} alt={firstImage.name} /> : <div className="detail-image-missing"><ImageIcon /><span>图片已删除</span></div>}</div>
             <span>{statusText(props.generation.status)}</span>
             <strong>{progress.detailText}</strong>
             {progress.hint ? <small>{progress.hint}</small> : null}
           </div>
           <div className="detail-info">
+            <section className="detail-section">
+              <h3>图片名称</h3>
+              <p>{firstImage?.name || '图片已删除'}</p>
+            </section>
             <section className="detail-section">
               <h3>提示词</h3>
               <p>{props.generation.prompt}</p>
@@ -623,12 +712,13 @@ function GenerationDetail(props: { generation: ApiGeneration; now: number; onClo
                 <div><dt>格式</dt><dd>{props.generation.params.output_format}</dd></div>
                 <div><dt>图片数</dt><dd>{imageCount} 张</dd></div>
                 <div><dt>进度</dt><dd>{progress.detailText}</dd></div>
-                <div><dt>计费</dt><dd>由 sub2api 处理</dd></div>
+                <div><dt>计费</dt><dd>由 Aurora 处理</dd></div>
               </dl>
             </section>
             {props.generation.error ? <div className="inline-message error">{props.generation.error}</div> : null}
             <div className="button-row">
               <button className="primary" disabled={!firstImage} onClick={download}>下载图片</button>
+              {props.generation.status !== 'running' ? <button className="danger" onClick={props.onDelete}><TrashIcon />删除任务</button> : null}
             </div>
           </div>
         </div>

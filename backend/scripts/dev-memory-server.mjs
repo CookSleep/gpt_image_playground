@@ -16,11 +16,32 @@ const previewSvg = Buffer.from(`
 </svg>
 `.trim())
 const store = createMemoryStore()
+const devKeys = [
+  {
+    id: 101,
+    name: '本地图片生成-gpt-image-2',
+    status: 'active',
+    key: 'dev-hidden-image-key',
+    quota: 100,
+    quota_used: 0,
+    group: { id: 1, name: '按次(图片)' },
+  },
+  {
+    id: 202,
+    name: '本地提示词优化-gpt-5.5',
+    status: 'active',
+    key: 'dev-hidden-text-key',
+    quota: 100,
+    quota_used: 0,
+    group: { id: 2, name: '文本模型' },
+  },
+]
 
 const app = buildApp({
   store,
   sessionSecret: 'dev-memory-secret',
   defaultModel: 'gpt-image-2',
+  defaultTextModel: 'gpt-5.5',
   runJobsInline: true,
   storage: {
     async putObject(key, body, contentType) {
@@ -28,6 +49,9 @@ const app = buildApp({
     },
     async getObject(key) {
       return store.objects.get(key) ?? null
+    },
+    async deleteObject(key) {
+      store.objects.delete(key)
     },
   },
   sub2apiClient: {
@@ -52,26 +76,14 @@ const app = buildApp({
       }
     },
     async listKeys() {
-      return {
-        items: [{
-          id: 101,
-          name: 'codex仅生图-gpt-image-2',
-          status: 'active',
-          key: 'dev-hidden-key',
-          quota: 100,
-          quota_used: 0,
-          group: { id: 1, name: '按次(图片)' },
-        }],
-      }
+      return { items: devKeys }
     },
-    async getKey() {
-      return {
-        id: 101,
-        name: 'codex仅生图-gpt-image-2',
-        status: 'active',
-        key: 'dev-hidden-key',
-        group: { id: 1, name: '按次(图片)' },
-      }
+    async getKey(_accessToken, id) {
+      const key = devKeys.find((item) => String(item.id) === String(id))
+      if (key) return key
+      const error = new Error('API Key 不存在')
+      error.statusCode = 404
+      throw error
     },
   },
   imageClient: {
@@ -82,6 +94,11 @@ const app = buildApp({
         images: [{ bytes: previewSvg, contentType: 'image/svg+xml', revisedPrompt: 'mock revised prompt' }],
         upstream: { id: 'dev-memory' },
       }
+    },
+  },
+  textClient: {
+    async optimize(input) {
+      return `电影感构图，细腻光影与材质表现，${input.prompt}`
     },
   },
 })

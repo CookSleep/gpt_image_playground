@@ -9,7 +9,6 @@ export type StudioDraft = {
   quality: string
   format: string
   imageCount: number
-  selectedApiKeyId: string
 }
 
 export function sanitizeThemePreference(value: string | null): ThemePreference {
@@ -35,8 +34,8 @@ export function parseStudioDraft(value: string | null): StudioDraft | null {
   if (!value) return null
   try {
     const draft = JSON.parse(value) as Partial<StudioDraft>
-    if (typeof draft.prompt !== 'string' || typeof draft.size !== 'string' || typeof draft.quality !== 'string' || typeof draft.format !== 'string' || typeof draft.imageCount !== 'number' || typeof draft.selectedApiKeyId !== 'string') return null
-    return draft as StudioDraft
+    if (typeof draft.prompt !== 'string' || typeof draft.size !== 'string' || typeof draft.quality !== 'string' || typeof draft.format !== 'string' || typeof draft.imageCount !== 'number') return null
+    return { prompt: draft.prompt, size: draft.size, quality: draft.quality, format: draft.format, imageCount: draft.imageCount }
   } catch {
     return null
   }

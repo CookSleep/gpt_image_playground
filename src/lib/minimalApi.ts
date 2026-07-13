@@ -23,8 +23,33 @@ export interface ApiKeyOption {
 
 export interface ApiGenerationImage {
   id: string
+  name: string
+  folderId: string | null
   contentType: string
   revisedPrompt?: string | null
+}
+
+export interface ApiSettings {
+  imageApiKeyId: string | null
+  promptApiKeyId: string | null
+}
+
+export interface ApiAssetFolder {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ApiAsset {
+  id: string
+  generationId: string
+  name: string
+  folderId: string | null
+  contentType: string
+  revisedPrompt: string | null
+  prompt: string
+  createdAt: string
 }
 
 export interface ApiGeneration {

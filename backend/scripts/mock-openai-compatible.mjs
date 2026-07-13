@@ -33,6 +33,16 @@ const demoKey = {
   group: { id: 1, name: '按次(图片)' },
 }
 
+const demoTextKey = {
+  id: 202,
+  name: '本地提示词优化-gpt-5.5',
+  status: 'active',
+  key: 'local-mock-text-key',
+  quota: 100,
+  quota_used: 0,
+  group: { id: 2, name: '文本模型' },
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || `localhost:${port}`}`)
   const body = req.method === 'GET' ? { text: '', json: {} } : await readBody(req)
@@ -80,12 +90,22 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/keys') {
-    sendJson(res, 200, { code: 0, message: 'ok', data: { items: [demoKey], total: 1, page: 1, page_size: 100 } })
+    sendJson(res, 200, { code: 0, message: 'ok', data: { items: [demoKey, demoTextKey], total: 2, page: 1, page_size: 100 } })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/keys/101') {
     sendJson(res, 200, { code: 0, message: 'ok', data: demoKey })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/keys/202') {
+    sendJson(res, 200, { code: 0, message: 'ok', data: demoTextKey })
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/responses') {
+    sendJson(res, 200, { output_text: `优化后的图片提示词：${body.json.input || ''}` })
     return
   }
 

@@ -1,4 +1,4 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 
 async function streamToBuffer(stream) {
   const chunks = []
@@ -38,6 +38,10 @@ export function createS3Storage(config) {
         if (err?.$metadata?.httpStatusCode === 404 || err?.name === 'NoSuchKey') return null
         throw err
       }
+    },
+
+    async deleteObject(key) {
+      await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }))
     },
   }
 }

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import Fastify from 'fastify'
+import { validateReferenceImages } from './referenceImages.js'
 
 const COOKIE_NAME = 'sid'
 const SESSION_DAYS = 14
@@ -83,8 +84,28 @@ function publicApiKey(key) {
   }
 }
 
+function publicAsset(image) {
+  return {
+    id: image.id,
+    generationId: image.generationId,
+    name: image.name,
+    folderId: image.folderId ?? null,
+    contentType: image.contentType,
+    revisedPrompt: image.revisedPrompt ?? null,
+    prompt: image.prompt ?? '',
+    createdAt: image.createdAt,
+  }
+}
+
+function cleanName(value, label) {
+  const name = String(value ?? '').trim()
+  if (!name) throw new Error(`${label}不能为空`)
+  if (name.length > 80) throw new Error(`${label}不能超过 80 个字符`)
+  return name
+}
+
 export function buildApp(options) {
-  const app = Fastify({ logger: false, bodyLimit: 80 * 1024 * 1024 })
+  const app = Fastify({ logger: false, bodyLimit: 92 * 1024 * 1024 })
   const ready = (async () => {
     await options.store.failInterruptedRunningGenerations?.('服务重启，生成任务已中断，请重新生成')
   })()
@@ -161,6 +182,10 @@ export function buildApp(options) {
     }
   }
 
+  async function deleteStoredImages(images) {
+    for (const image of images) await options.storage.deleteObject(image.objectKey)
+  }
+
   app.get('/api/health', async () => ({ ok: true }))
 
   app.post('/api/auth/login', async (request, reply) => {
@@ -216,6 +241,55 @@ export function buildApp(options) {
     }
   })
 
+  app.get('/api/settings', async (request, reply) => {
+    const user = await requireUser(request, reply)
+    if (!user) return
+    return { settings: await options.store.getSettings(user.id) }
+  })
+
+  app.put('/api/settings', async (request, reply) => {
+    let user = await requireUser(request, reply)
+    if (!user) return
+    const imageApiKeyId = String(request.body?.imageApiKeyId ?? '').trim()
+    const promptApiKeyId = String(request.body?.promptApiKeyId ?? '').trim()
+    if (!imageApiKeyId || !promptApiKeyId) return sendError(reply, 400, '请选择图片生成和提示词优化两个 API Key')
+    try {
+      user = await ensureSub2apiAccess(user)
+      const [imageKey, promptKey] = await Promise.all([
+        options.sub2apiClient.getKey(user.sub2apiAccessToken, imageApiKeyId),
+        options.sub2apiClient.getKey(user.sub2apiAccessToken, promptApiKeyId),
+      ])
+      if (!imageKey?.key || imageKey.status !== 'active') return sendError(reply, 400, '图片生成 API Key 不存在或不可用')
+      if (!promptKey?.key || promptKey.status !== 'active') return sendError(reply, 400, '提示词优化 API Key 不存在或不可用')
+      const settings = await options.store.saveSettings(user.id, { imageApiKeyId, promptApiKeyId })
+      return { settings }
+    } catch (err) {
+      return sendError(reply, err.statusCode === 401 ? 401 : 400, err.message || '保存 API Key 设置失败')
+    }
+  })
+
+  app.post('/api/prompts/optimize', async (request, reply) => {
+    let user = await requireUser(request, reply)
+    if (!user) return
+    const prompt = String(request.body?.prompt ?? '').trim()
+    if (!prompt) return sendError(reply, 400, '请输入需要优化的提示词')
+    const settings = await options.store.getSettings(user.id)
+    if (!settings.imageApiKeyId || !settings.promptApiKeyId) return sendError(reply, 409, '请先在设置中心配置图片生成和提示词优化 API Key')
+    try {
+      user = await ensureSub2apiAccess(user)
+      const selectedKey = await options.sub2apiClient.getKey(user.sub2apiAccessToken, settings.promptApiKeyId)
+      if (!selectedKey?.key || selectedKey.status !== 'active') return sendError(reply, 400, '提示词优化 API Key 不可用，请更新设置')
+      const optimizedPrompt = await options.textClient.optimize({
+        prompt,
+        apiKey: selectedKey.key,
+        model: options.defaultTextModel,
+      })
+      return { optimizedPrompt }
+    } catch (err) {
+      return sendError(reply, err.statusCode === 401 ? 401 : 502, err.message || '提示词优化失败')
+    }
+  })
+
   app.post('/api/generations', async (request, reply) => {
     let user = await requireUser(request, reply)
     if (!user) return
@@ -223,14 +297,24 @@ export function buildApp(options) {
 
     const prompt = String(request.body?.prompt ?? '').trim()
     if (!prompt) return sendError(reply, 400, '请输入提示词')
+    try {
+      validateReferenceImages(request.body?.inputImages)
+    } catch (err) {
+      return sendError(reply, 400, err.message || '参考图不合法')
+    }
     const params = normalizeParams(request.body?.params)
-    const apiKeyId = String(request.body?.apiKeyId ?? '').trim()
-    if (!apiKeyId) return sendError(reply, 400, '请选择 sub2api API Key')
+    const settings = await options.store.getSettings(user.id)
+    if (!settings.imageApiKeyId || !settings.promptApiKeyId) return sendError(reply, 409, '请先在设置中心配置图片生成和提示词优化 API Key')
+    const apiKeyId = settings.imageApiKeyId
     let apiKeyName = ''
     try {
       user = await ensureSub2apiAccess(user)
-      const selectedKey = await options.sub2apiClient.getKey(user.sub2apiAccessToken, apiKeyId)
+      const [selectedKey, promptKey] = await Promise.all([
+        options.sub2apiClient.getKey(user.sub2apiAccessToken, apiKeyId),
+        options.sub2apiClient.getKey(user.sub2apiAccessToken, settings.promptApiKeyId),
+      ])
       if (!selectedKey?.key || selectedKey.status !== 'active') return sendError(reply, 400, '选择的 sub2api API Key 不可用')
+      if (!promptKey?.key || promptKey.status !== 'active') return sendError(reply, 400, '提示词优化 API Key 不可用，请更新设置')
       apiKeyName = selectedKey.name || `API Key ${apiKeyId}`
     } catch (err) {
       return sendError(reply, err.statusCode ?? 400, err.message || '选择的 sub2api API Key 不可用')
@@ -281,6 +365,132 @@ export function buildApp(options) {
     })
     reply.raw.write(`data: ${JSON.stringify({ generation: publicGeneration(generation) })}\n\n`)
     reply.raw.end()
+  })
+
+  app.get('/api/folders', async (request, reply) => {
+    const user = await requireUser(request, reply)
+    if (!user) return
+    return { folders: await options.store.listFolders(user.id) }
+  })
+
+  app.post('/api/folders', async (request, reply) => {
+    const user = await requireUser(request, reply)
+    if (!user) return
+    try {
+      const name = cleanName(request.body?.name, '文件夹名称')
+      const folders = await options.store.listFolders(user.id)
+      if (folders.some((folder) => folder.name.toLowerCase() === name.toLowerCase())) return sendError(reply, 409, '已存在同名文件夹')
+      const folder = await options.store.createFolder(user.id, name)
+      return reply.code(201).send({ folder })
+    } catch (err) {
+      return sendError(reply, err.code === '23505' ? 409 : 400, err.code === '23505' ? '已存在同名文件夹' : err.message)
+    }
+  })
+
+  app.patch('/api/folders/:id', async (request, reply) => {
+    const user = await requireUser(request, reply)
+    if (!user) return
+    try {
+      const name = cleanName(request.body?.name, '文件夹名称')
+      const folder = await options.store.getFolder(request.params.id, user.id)
+      if (!folder) return sendError(reply, 404, '文件夹不存在')
+      const folders = await options.store.listFolders(user.id)
+      if (folders.some((item) => item.id !== folder.id && item.name.toLowerCase() === name.toLowerCase())) return sendError(reply, 409, '已存在同名文件夹')
+      return { folder: await options.store.updateFolder(folder.id, user.id, name) }
+    } catch (err) {
+      return sendError(reply, err.code === '23505' ? 409 : 400, err.code === '23505' ? '已存在同名文件夹' : err.message)
+    }
+  })
+
+  app.delete('/api/folders/:id', async (request, reply) => {
+    const user = await requireUser(request, reply)
+    if (!user) return
+    const folder = await options.store.getFolder(request.params.id, user.id)
+    if (!folder) return sendError(reply, 404, '文件夹不存在')
+    const images = await options.store.listImagesByFolder(folder.id, user.id)
+    const deleteImages = String(request.query?.deleteImages ?? 'false') === 'true'
+    try {
+      if (deleteImages) {
+        await deleteStoredImages(images)
+        await options.store.deleteImages(user.id, images.map((image) => image.id))
+      } else {
+        await options.store.moveImages(user.id, images.map((image) => image.id), null)
+      }
+      await options.store.deleteFolder(folder.id, user.id)
+      return { ok: true, deletedImages: deleteImages ? images.length : 0 }
+    } catch (err) {
+      return sendError(reply, 502, `删除对象存储文件失败：${err.message}`)
+    }
+  })
+
+  app.get('/api/assets', async (request, reply) => {
+    const user = await requireUser(request, reply)
+    if (!user) return
+    const queryOptions = {
+      q: String(request.query?.q ?? '').trim(),
+      cursor: String(request.query?.cursor ?? '').trim() || null,
+      limit: Number(request.query?.limit) || 60,
+    }
+    if (request.query?.folderId === 'uncategorized') queryOptions.folderId = null
+    else if (request.query?.folderId) queryOptions.folderId = String(request.query.folderId)
+    const result = await options.store.listAssets(user.id, queryOptions)
+    return { assets: result.assets.map(publicAsset), nextCursor: result.nextCursor }
+  })
+
+  app.patch('/api/images/:id', async (request, reply) => {
+    const user = await requireUser(request, reply)
+    if (!user) return
+    const image = await options.store.getImage(request.params.id)
+    if (!image || image.userId !== user.id) return sendError(reply, 404, '图片不存在')
+    try {
+      const name = cleanName(request.body?.name, '图片名称')
+      return { image: publicAsset(await options.store.updateImage(image.id, user.id, { name })) }
+    } catch (err) {
+      return sendError(reply, 400, err.message)
+    }
+  })
+
+  app.post('/api/images/move', async (request, reply) => {
+    const user = await requireUser(request, reply)
+    if (!user) return
+    const imageIds = Array.isArray(request.body?.imageIds) ? [...new Set(request.body.imageIds.map(String))].slice(0, 100) : []
+    if (!imageIds.length) return sendError(reply, 400, '请选择需要移动的图片')
+    const folderId = request.body?.folderId == null || request.body.folderId === '' ? null : String(request.body.folderId)
+    if (folderId && !await options.store.getFolder(folderId, user.id)) return sendError(reply, 404, '目标文件夹不存在')
+    const owned = await Promise.all(imageIds.map((id) => options.store.getImage(id)))
+    if (owned.some((image) => !image || image.userId !== user.id)) return sendError(reply, 404, '部分图片不存在')
+    const images = await options.store.moveImages(user.id, imageIds, folderId)
+    return { images: images.map(publicAsset) }
+  })
+
+  app.delete('/api/images/:id', async (request, reply) => {
+    const user = await requireUser(request, reply)
+    if (!user) return
+    const image = await options.store.getImage(request.params.id)
+    if (!image || image.userId !== user.id) return sendError(reply, 404, '图片不存在')
+    try {
+      await options.storage.deleteObject(image.objectKey)
+      await options.store.deleteImages(user.id, [image.id])
+      return { ok: true }
+    } catch (err) {
+      return sendError(reply, 502, `删除对象存储文件失败：${err.message}`)
+    }
+  })
+
+  app.delete('/api/generations/:id', async (request, reply) => {
+    const user = await requireUser(request, reply)
+    if (!user) return
+    const generation = await options.store.getGeneration(request.params.id, user.id)
+    if (!generation) return sendError(reply, 404, '任务不存在')
+    if (generation.status === 'running') return sendError(reply, 409, '生成中的任务暂不可删除')
+    const images = await options.store.getImagesByGeneration(generation.id, user.id)
+    try {
+      await deleteStoredImages(images)
+      await options.store.deleteGeneration(generation.id, user.id)
+      return { ok: true }
+    } catch (err) {
+      return sendError(reply, 502, `删除对象存储文件失败：${err.message}`)
+    }
   })
 
   app.get('/api/images/:id', async (request, reply) => {
