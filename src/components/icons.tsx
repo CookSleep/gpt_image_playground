@@ -32,6 +32,22 @@ export function CloseIcon(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+export function ExpandIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 3H3v5m13-5h5v5M8 21H3v-5m18 0v5h-5" />
+    </svg>
+  )
+}
+
+export function CollapseIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8h5V3m8 0v5h5M3 16h5v5m8 0v-5h5" />
+    </svg>
+  )
+}
+
 export function ChevronDownIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>

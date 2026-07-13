@@ -12,7 +12,7 @@ import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { useHintTooltip } from '../hooks/useHintTooltip'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getTaskOutputImageZipEntries } from '../lib/downloadImages'
 import SizePickerModal from './SizePickerModal'
-import { CloseIcon } from './icons'
+import { CloseIcon, CollapseIcon, ExpandIcon } from './icons'
 import ButtonTooltip from './input/buttonTooltip'
 import DragUploadOverlay from './input/dragUploadOverlay'
 import InputBatchBars from './input/inputBatchBars'
@@ -622,6 +622,11 @@ export default function InputBar() {
 
   const [isDragging, setIsDragging] = useState(false)
   const [isSingleLine, setIsSingleLine] = useState(true)
+  const [promptExpanded, setPromptExpanded] = useState(false)
+  const [promptExpandedTop, setPromptExpandedTop] = useState(0)
+  const [promptCanExpand, setPromptCanExpand] = useState(false)
+  const [clearPromptHover, setClearPromptHover] = useState(false)
+  const [expandPromptHover, setExpandPromptHover] = useState(false)
   const [submitHover, setSubmitHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
   const [imageHintId, setImageHintId] = useState<string | null>(null)
@@ -649,6 +654,7 @@ export default function InputBar() {
   const [cursorPos, setCursorPos] = useState(0)
   const [menuLeft, setMenuLeft] = useState(0)
   const maskConflictNoticeShownRef = useRef(false)
+  const showPromptExpand = promptExpanded || promptCanExpand
 
   const updateInputBarClearance = useCallback(() => {
     const bar = cardRef.current?.closest<HTMLElement>('[data-input-bar]')
@@ -681,6 +687,26 @@ export default function InputBar() {
       document.documentElement.style.removeProperty('--input-bar-clearance')
     }
   }, [updateInputBarClearance])
+
+  useLayoutEffect(() => {
+    if (!promptExpanded) return
+
+    const header = document.querySelector<HTMLElement>('header')
+    if (!header) return
+
+    const updateTop = () => setPromptExpandedTop(Math.max(0, header.getBoundingClientRect().bottom) + 8)
+    const observer = new ResizeObserver(updateTop)
+    observer.observe(header)
+    updateTop()
+    window.addEventListener('resize', updateTop)
+    header.addEventListener('transitionend', updateTop)
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', updateTop)
+      header.removeEventListener('transitionend', updateTop)
+    }
+  }, [promptExpanded])
   const imageHintTimerRef = useRef<number | null>(null)
   const [outputCompressionInput, setOutputCompressionInput] = useState(
     params.output_compression == null ? '' : String(params.output_compression),
@@ -1379,8 +1405,11 @@ export default function InputBar() {
     const imagesHeight = imagesRef.current?.offsetHeight ?? 0
     const fixedOverhead = imagesHeight + 140
 
-    // 最大高度限制在页面 40% 减固定开销，不小于 80px
-    const maxH = Math.max(window.innerHeight * 0.4 - fixedOverhead, 80)
+    // 展开时填满卡片的剩余空间，普通状态最多占页面的 40%。
+    const normalMaxH = Math.max(window.innerHeight * 0.4 - fixedOverhead, 80)
+    const maxH = promptExpanded
+      ? Math.max(el.parentElement?.clientHeight ?? 0, 80)
+      : normalMaxH
 
     // 1. 清零高度以获取真实文本高度
     el.style.transition = 'none'
@@ -1397,6 +1426,7 @@ export default function InputBar() {
 
     // 判断是否为单行
     setIsSingleLine(desired <= minH)
+    setPromptCanExpand(desired > normalMaxH)
 
     // 2. 回设旧高度并重绘以准备触发动画
     el.style.height = prevHeightRef.current + 'px'
@@ -1408,7 +1438,7 @@ export default function InputBar() {
     el.style.overflowY = desired > maxH ? 'auto' : 'hidden'
 
     prevHeightRef.current = targetH
-  }, [])
+  }, [promptExpanded])
 
   // 同步 prompt 至 contentEditable
   useEffect(() => {
@@ -1450,7 +1480,7 @@ export default function InputBar() {
 
   useEffect(() => {
     adjustTextareaHeight()
-  }, [prompt, inputImages, adjustTextareaHeight, isMobile, mobileCollapsed])
+  }, [prompt, inputImages, adjustTextareaHeight, isMobile, mobileCollapsed, promptExpanded])
 
   // 监听 selectionchange 更新光标位置（onSelect 在 contentEditable 下不可靠）
   useEffect(() => {
@@ -1943,7 +1973,11 @@ export default function InputBar() {
         />
       )}
 
-      <div data-input-bar className="fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-30 w-full max-w-4xl px-3 sm:px-4 transition-all duration-300">
+      <div
+        data-input-bar
+        className={`fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-30 w-full max-w-4xl px-3 sm:px-4 transition-all duration-300${promptExpanded ? ' flex flex-col' : ''}`}
+        style={promptExpanded ? { top: `${promptExpandedTop}px`, transitionProperty: 'none' } : undefined}
+      >
         <InputBatchBars
           showFavoriteCollectionBatchBar={showFavoriteCollectionBatchBar}
           showTaskBatchBar={showTaskBatchBar}
@@ -1961,11 +1995,11 @@ export default function InputBar() {
           onDownloadSelected={handleDownloadSelected}
           onDeleteSelected={handleDeleteSelected}
         />
-        <div ref={cardRef} className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl border border-white/50 dark:border-white/[0.08] shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] rounded-2xl sm:rounded-3xl p-3 sm:p-4 ring-1 ring-black/5 dark:ring-white/10">
+        <div ref={cardRef} className={`bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl border border-white/50 dark:border-white/[0.08] shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] rounded-2xl sm:rounded-3xl p-3 sm:p-4 ring-1 ring-black/5 dark:ring-white/10${promptExpanded ? ' flex min-h-0 flex-1 flex-col' : ''}`}>
           {/* 移动端拖动条 */}
           <div
             ref={handleRef}
-            className="sm:hidden flex justify-center pt-0.5 pb-2 -mt-1 cursor-pointer touch-none"
+            className={promptExpanded ? 'hidden' : 'sm:hidden flex justify-center pt-0.5 pb-2 -mt-1 cursor-pointer touch-none'}
             onClick={() => {
               if (Date.now() < suppressHandleClickUntilRef.current) {
                 suppressHandleClickUntilRef.current = 0
@@ -1998,7 +2032,7 @@ export default function InputBar() {
           )}
 
           {/* 输入框 */}
-          <div className="relative grid">
+          <div className={`relative grid${promptExpanded ? ' min-h-0 flex-1' : ''}`}>
             {showAtImageMenu && (
               <div style={{ left: `${menuLeft}px` }} className="absolute bottom-full z-50 mb-2 w-64 overflow-hidden rounded-2xl border border-gray-200/70 bg-white/95 p-1.5 shadow-xl ring-1 ring-black/5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10">
                 <div className="px-2 pb-1 pt-0.5 text-[11px] text-gray-400 dark:text-gray-500">选择图片引用</div>
@@ -2071,7 +2105,7 @@ export default function InputBar() {
                 syncMentionTagSelection(el)
               }}
               aria-label={promptPlaceholder}
-              className="col-start-1 row-start-1 min-h-[42px] w-full overflow-hidden ios-rounded-scroll-fix whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 pl-4 pr-10 py-3 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30"
+              className={`col-start-1 row-start-1 min-h-[42px] w-full overflow-hidden ios-rounded-scroll-fix whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 pl-4 pr-10 py-3 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30${promptExpanded ? ' !h-full !overflow-y-auto' : ''}`}
             />
             {prompt.length === 0 && (
               <div className={`prompt-placeholder col-start-1 row-start-1 pointer-events-none pl-4 pr-10 py-3 text-sm leading-relaxed text-gray-400 dark:text-gray-500${
@@ -2081,16 +2115,48 @@ export default function InputBar() {
               </div>
             )}
             {prompt.length > 0 && (
-              <button
-                type="button"
-                onClick={handleClearPrompt}
-                className={`absolute right-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.08] rounded-full p-1 transition-all duration-200 focus:outline-none z-10 flex items-center justify-center ${
-                  isSingleLine ? 'top-1/2 -translate-y-1/2' : 'top-3'
+              <div
+                className={`absolute z-10 ${
+                  isSingleLine ? 'right-3 top-1/2 -translate-y-1/2' : 'right-3 top-3'
                 }`}
-                title="清空文本"
+                onMouseEnter={() => setClearPromptHover(true)}
+                onMouseLeave={() => setClearPromptHover(false)}
               >
-                <CloseIcon className="w-3.5 h-3.5" />
-              </button>
+                <ButtonTooltip visible={clearPromptHover} text="清空文本" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClearPromptHover(false)
+                    handleClearPrompt()
+                  }}
+                  className="flex items-center justify-center rounded-full p-1 text-gray-400 transition-all duration-200 hover:bg-gray-100 hover:text-gray-600 focus:outline-none dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                  aria-label="清空文本"
+                >
+                  <CloseIcon className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+            {showPromptExpand && (
+              <div
+                className="absolute bottom-2.5 right-2.5 z-10"
+                onMouseEnter={() => setExpandPromptHover(true)}
+                onMouseLeave={() => setExpandPromptHover(false)}
+              >
+                <ButtonTooltip visible={expandPromptHover} text={promptExpanded ? '恢复输入框' : '展开输入框'} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpandPromptHover(false)
+                    setPromptExpanded((expanded) => !expanded)
+                    setMobileCollapsed(false)
+                  }}
+                  className="flex items-center justify-center rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus:outline-none dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                  aria-label={promptExpanded ? '恢复输入框' : '展开输入框'}
+                  aria-pressed={promptExpanded}
+                >
+                  {promptExpanded ? <CollapseIcon className="h-4 w-4" /> : <ExpandIcon className="h-4 w-4" />}
+                </button>
+              </div>
             )}
           </div>
 

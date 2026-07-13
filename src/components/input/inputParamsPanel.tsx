@@ -134,6 +134,7 @@ export default function InputParamsPanel({
           }}
           options={qualityOptions}
           disabled={activeProfile.codexCli}
+          showValueTooltips={false}
           className={activeProfile.codexCli
             ? 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-gray-100/50 dark:bg-white/[0.05] opacity-50 cursor-not-allowed text-xs transition-all duration-200 shadow-sm'
             : selectClass}
@@ -158,6 +159,7 @@ export default function InputParamsPanel({
             { label: 'JPEG', value: 'jpeg' },
             { label: 'WebP', value: 'webp' },
           ]}
+          showValueTooltips={false}
           className={selectClass}
         />
       </label>
@@ -182,6 +184,7 @@ export default function InputParamsPanel({
               { label: 'false', value: 'off' },
               { label: 'true', value: 'on' },
             ]}
+            showValueTooltips={false}
             className={selectClass}
             onOpenChange={onTransparentOutputMenuOpenChange}
           />
@@ -242,6 +245,7 @@ export default function InputParamsPanel({
             { label: 'low', value: 'low' },
           ]}
           disabled={moderationDisabled}
+          showValueTooltips={false}
           className={moderationDisabled
             ? 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-gray-100/50 dark:bg-white/[0.05] opacity-50 cursor-not-allowed text-xs transition-all duration-200 shadow-sm'
             : selectClass}
