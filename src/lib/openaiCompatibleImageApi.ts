@@ -10,6 +10,7 @@ import {
   type CallApiResult,
   fetchImageUrlAsDataUrl,
   getApiErrorMessage,
+  getApiResponseRequestIds,
   getDataUrlDecodedByteSize,
   getDataUrlEncodedByteSize,
   isDataUrl,
@@ -18,6 +19,7 @@ import {
   MIME_MAP,
   normalizeBase64Image,
   pickActualParams,
+  redactApiErrorText,
 } from './imageApiShared'
 
 const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
@@ -564,6 +566,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
 
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
+  const requestStartedAt = Date.now()
 
   try {
     let response: Response
@@ -669,15 +672,58 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
     }
 
     if (!response.ok) {
+      const rawResponsePayload = redactApiErrorText(await response.clone().text().catch(() => '')).slice(0, 20_000)
       const errorMessage = await getApiErrorMessage(response)
-      throw new Error(maybeAppendStreamingHint(errorMessage, response.status, profile.streamImages))
+      const error = new Error(maybeAppendStreamingHint(errorMessage, response.status, profile.streamImages))
+      if (rawResponsePayload) (error as Error & { rawResponsePayload?: string }).rawResponsePayload = rawResponsePayload
+      throw error
     }
 
     if (profile.streamImages && isEventStreamResponse(response)) {
       return parseImagesApiStreamResponse(response, mime, opts.onPartialImage)
     }
 
-    return parseImagesApiResponse(await response.json() as ImageApiResponse, mime, controller.signal)
+    const rawResponsePayload = await response.text()
+    let payload: ImageApiResponse
+    try {
+      payload = JSON.parse(rawResponsePayload) as ImageApiResponse
+    } catch (err) {
+      const requestIds = getApiResponseRequestIds(response)
+      const contentType = response.headers.get('content-type') || '未知'
+      const parseMessage = err instanceof Error ? err.message : String(err)
+      const error = new Error([
+        `API 响应解析失败：HTTP ${response.status} 返回的内容不是有效 JSON`,
+        `Content-Type：${contentType}`,
+        requestIds.length ? `请求标识：${requestIds.join('，')}` : '',
+        `解析错误：${parseMessage}`,
+        `响应摘要：${redactApiErrorText(rawResponsePayload).slice(0, 2000)}`,
+      ].filter(Boolean).join('\n'))
+      ;(error as Error & { rawResponsePayload?: string }).rawResponsePayload = redactApiErrorText(rawResponsePayload).slice(0, 20_000)
+      throw error
+    }
+    return parseImagesApiResponse(payload, mime, controller.signal)
+  } catch (err) {
+    const elapsedSeconds = ((Date.now() - requestStartedAt) / 1000).toFixed(1)
+    const diagnostics = `请求诊断：Image API，模型=${profile.model}，尺寸=${params.size}，质量=${params.quality}，格式=${params.output_format}，编辑=${isEdit ? '是' : '否'}，API代理=${useApiProxy ? '开启' : '关闭'}，耗时=${elapsedSeconds}秒`
+    if (err instanceof Error && !err.message.includes('请求诊断：')) {
+      try {
+        err.message = `${err.message}\n${diagnostics}`
+      } catch {
+        /* DOMException 等只读错误保留原始消息，诊断仍写入控制台。 */
+      }
+    }
+    console.error('[Image API 请求失败]', {
+      model: profile.model,
+      size: params.size,
+      quality: params.quality,
+      outputFormat: params.output_format,
+      isEdit,
+      apiProxy: useApiProxy,
+      elapsedSeconds,
+      errorName: err instanceof Error ? err.name : typeof err,
+      errorMessage: redactApiErrorText(err instanceof Error ? err.message : String(err)).slice(0, 4000),
+    })
+    throw err
   } finally {
     clearTimeout(timeoutId)
   }

@@ -154,24 +154,94 @@ export async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, 
   return blobToDataUrl(blob, fallbackMime)
 }
 
+const API_ERROR_PREVIEW_MAX_CHARS = 4000
+
+export function redactApiErrorText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+/gi, 'Bearer [REDACTED]')
+    .replace(/\bsk-[A-Za-z0-9_-]{10,}\b/g, 'sk-[REDACTED]')
+}
+
+function normalizeErrorDetail(value: unknown): string {
+  if (typeof value === 'string') return value.trim()
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => typeof item === 'string' ? item : JSON.stringify(item))
+      .join('\n')
+      .trim()
+  }
+  return ''
+}
+
+function getJsonErrorDetail(payload: unknown): string {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return ''
+  const record = payload as Record<string, unknown>
+  const error = record.error
+  if (error && typeof error === 'object' && !Array.isArray(error)) {
+    const message = normalizeErrorDetail((error as Record<string, unknown>).message)
+    if (message) return message
+  }
+  return normalizeErrorDetail(record.detail)
+    || normalizeErrorDetail(error)
+    || normalizeErrorDetail(record.message)
+}
+
+function decodeBasicHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+}
+
+function getTextErrorPreview(rawText: string, contentType: string): string {
+  const sanitized = redactApiErrorText(rawText).trim()
+  if (!sanitized) return ''
+  if (contentType.includes('text/html') || /<!doctype\s+html|<html\b/i.test(sanitized)) {
+    const matches = Array.from(sanitized.matchAll(/<(title|h1|h2|p)\b[^>]*>([\s\S]*?)<\/\1>/gi))
+      .map((match) => decodeBasicHtmlEntities(match[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()))
+      .filter(Boolean)
+    return Array.from(new Set(matches)).slice(0, 4).join('\n').slice(0, API_ERROR_PREVIEW_MAX_CHARS)
+  }
+  return sanitized.slice(0, API_ERROR_PREVIEW_MAX_CHARS)
+}
+
+export function getApiResponseRequestIds(response: Response): string[] {
+  return ['x-request-id', 'x-client-request-id', 'cf-ray']
+    .map((name) => {
+      const value = response.headers.get(name)?.trim()
+      return value ? `${name}=${value}` : ''
+    })
+    .filter(Boolean)
+}
+
 export async function getApiErrorMessage(response: Response): Promise<string> {
-  let errorMsg = `HTTP ${response.status}`
-  const textResponse = response.clone()
+  const statusLine = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+  let rawText = ''
   try {
-    const errJson = await response.json()
-    if (errJson.error?.message) errorMsg = errJson.error.message
-    else if (typeof errJson.detail === 'string') errorMsg = errJson.detail
-    else if (Array.isArray(errJson.detail)) errorMsg = errJson.detail.map((item: unknown) => typeof item === 'string' ? item : JSON.stringify(item)).join('\n')
-    else if (typeof errJson.error === 'string') errorMsg = errJson.error
-    else if (errJson.message) errorMsg = errJson.message
+    rawText = await response.text()
   } catch {
+    /* ignore */
+  }
+
+  let detail = ''
+  if (rawText) {
     try {
-      errorMsg = await textResponse.text()
+      detail = getJsonErrorDetail(JSON.parse(rawText))
     } catch {
-      /* ignore */
+      detail = getTextErrorPreview(rawText, contentType)
     }
   }
-  return errorMsg
+
+  const requestIds = getApiResponseRequestIds(response)
+  return [
+    statusLine,
+    detail && detail !== statusLine ? redactApiErrorText(detail) : '',
+    requestIds.length ? `请求标识：${requestIds.join('，')}` : '',
+  ].filter(Boolean).join('\n')
 }
 
 export function pickActualParams(source: unknown): Partial<TaskParams> {

@@ -431,7 +431,10 @@ describe('callImageApi', () => {
       'data:image/png;base64,aW1hZ2Ut1',
       'data:image/png;base64,aW1hZ2Ut3',
     ])
-    expect(result.failedRequests).toEqual([{ requestIndex: 1, error: 'Failed to fetch' }])
+    expect(result.failedRequests).toHaveLength(1)
+    expect(result.failedRequests?.[0]).toMatchObject({ requestIndex: 1 })
+    expect(result.failedRequests?.[0]?.error).toContain('Failed to fetch')
+    expect(result.failedRequests?.[0]?.error).toContain('请求诊断：Image API')
     expect(result.actualParams).toMatchObject({ n: 2 })
   })
 
