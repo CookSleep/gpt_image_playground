@@ -608,6 +608,30 @@ describe('callImageApi', () => {
     })
   })
 
+  it('parses Markdown base64 images from Responses API gallery messages', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      output: [{
+        type: 'message',
+        content: [{
+          type: 'output_text',
+          text: '结果如下：\n![任意替代文本](data:image/jpeg;base64,aW1hZ2U=)',
+        }],
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    const result = await callImageApi({
+      settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key', apiMode: 'responses' },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    })
+
+    expect(result.images).toEqual(['data:image/jpeg;base64,aW1hZ2U='])
+  })
+
   it('keeps Responses API stream output item images when completed response omits result', async () => {
     const streamBody = [
       'data: {"type":"response.output_item.done","item":{"id":"img-call-1","type":"image_generation_call","status":"generating","action":"generate","result":"ZmluYWw=","size":"1024x1024"},"output_index":0}',

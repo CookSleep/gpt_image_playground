@@ -3,6 +3,7 @@ import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devP
 import { appendStreamingFormatHint, getApiErrorMessage, getResponsesImageResultBase64, maybeAppendStreamingHint, MIME_MAP, normalizeBase64Image, pickActualParams, PROMPT_REWRITE_GUARD_PREFIX } from './imageApiShared'
 import { normalizeResponsesOutputItems } from './responsesOutputState'
 import { isEventStreamResponse, readJsonServerSentEvents, throwIfAborted } from './serverSentEvents'
+import { removeMarkdownImages, resolveMarkdownImages } from './markdownImages'
 
 export interface AgentApiResultImage {
   toolCallId?: string
@@ -10,6 +11,7 @@ export interface AgentApiResultImage {
   dataUrl: string
   actualParams?: Partial<TaskParams>
   revisedPrompt?: string
+  rawImageUrl?: string
 }
 
 export interface AgentApiImageToolFailure {
@@ -23,6 +25,7 @@ export interface AgentApiResult {
   images: AgentApiResultImage[]
   outputItems: ResponsesApiResponse['output']
   rawResponsePayload?: string
+  unresolvedImageUrls?: string[]
 }
 
 const AGENT_IMAGE_INSTRUCTIONS = [
@@ -343,14 +346,14 @@ function extractText(payload: ResponsesApiResponse) {
     if (item.type !== 'message') continue
     for (const part of item.content ?? []) {
       if ((part.type === 'output_text' || part.type === 'text') && typeof part.text === 'string') {
-        chunks.push(applyUrlCitations(part.text, part.annotations))
+        chunks.push(removeMarkdownImages(applyUrlCitations(part.text, part.annotations)))
       } else if (part.type === 'refusal' && typeof part.refusal === 'string') {
         chunks.push(part.refusal)
       }
     }
   }
 
-  return chunks.join('\n').trim()
+  return chunks.filter(Boolean).join('\n').trim()
 }
 
 function decodeXmlText(text: string) {
@@ -376,24 +379,42 @@ function parseAgentConversationTitleXml(text: string) {
   return `${chars.slice(0, AGENT_TITLE_MAX_LENGTH - 3).join('')}...`
 }
 
-function extractImages(payload: ResponsesApiResponse, fallbackMime: string): AgentApiResultImage[] {
+async function extractImages(payload: ResponsesApiResponse, fallbackMime: string, signal?: AbortSignal): Promise<{
+  images: AgentApiResultImage[]
+  unresolvedImageUrls: string[]
+}> {
   const images: AgentApiResultImage[] = []
+  const unresolvedImageUrls: string[] = []
 
   for (const item of payload.output ?? []) {
-    if (item.type !== 'image_generation_call') continue
+    if (item.type === 'image_generation_call') {
+      const b64 = getResponsesImageResultBase64(item.result)
+      if (b64) {
+        images.push({
+          toolCallId: typeof item.id === 'string' ? item.id : undefined,
+          action: typeof item.action === 'string' ? item.action : undefined,
+          dataUrl: normalizeBase64Image(b64, fallbackMime),
+          actualParams: pickActualParams(item),
+          revisedPrompt: typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined,
+        })
+      }
+      continue
+    }
 
-    const b64 = getResponsesImageResultBase64(item.result)
-    if (!b64) continue
-    images.push({
-      toolCallId: typeof item.id === 'string' ? item.id : undefined,
-      action: typeof item.action === 'string' ? item.action : undefined,
-      dataUrl: normalizeBase64Image(b64, fallbackMime),
-      actualParams: pickActualParams(item),
-      revisedPrompt: typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined,
-    })
+    if (item.type !== 'message') continue
+    for (const part of item.content ?? []) {
+      if ((part.type !== 'output_text' && part.type !== 'text') || typeof part.text !== 'string') continue
+      const markdownImages = await resolveMarkdownImages(part.text, fallbackMime, signal)
+      images.push(...markdownImages.images.map((image) => ({
+        dataUrl: image.dataUrl,
+        actualParams: pickActualParams(item),
+        rawImageUrl: image.rawImageUrl,
+      })))
+      unresolvedImageUrls.push(...markdownImages.unresolvedImageUrls)
+    }
   }
 
-  return images
+  return { images, unresolvedImageUrls: [...new Set(unresolvedImageUrls)] }
 }
 
 function extractImageFromOutputItem(item: ResponsesOutputItem, fallbackMime: string): AgentApiResultImage | null {
@@ -577,13 +598,15 @@ async function parseAgentStreamResponse(
   const payload: ResponsesApiResponse | null = completedPayload ?? (outputItems.length ? { output: outputItems } : null)
   if (!payload) throw new Error('Agent 流式接口未返回最终响应数据')
 
-  const text = extractText(payload) || streamedText.trim()
+  const text = extractText(payload) || removeMarkdownImages(streamedText)
+  const extractedImages = await extractImages(payload, mime, signal)
   return {
     responseId: payload.id,
     text,
-    images: extractImages(payload, mime),
+    images: extractedImages.images,
     outputItems: payload.output ?? [],
     rawResponsePayload: JSON.stringify(payload, null, 2),
+    ...(extractedImages.unresolvedImageUrls.length ? { unresolvedImageUrls: extractedImages.unresolvedImageUrls } : {}),
   }
 }
 
@@ -645,12 +668,14 @@ export async function callAgentResponsesApi(opts: {
     const payload = normalizeResponsePayload(rawPayload)
     if (!payload) throw new Error('Agent 接口返回格式无效')
     throwIfAborted(controller.signal, signal)
+    const extractedImages = await extractImages(payload, mime, controller.signal)
     return {
       responseId: payload.id,
       text: extractText(payload),
-      images: extractImages(payload, mime),
+      images: extractedImages.images,
       outputItems: payload.output,
       rawResponsePayload: JSON.stringify(payload, null, 2),
+      ...(extractedImages.unresolvedImageUrls.length ? { unresolvedImageUrls: extractedImages.unresolvedImageUrls } : {}),
     }
   } finally {
     clearTimeout(timeoutId)
@@ -721,6 +746,7 @@ export interface BatchImageCallResult {
   image: AgentApiResultImage | null
   error: string | null
   rawResponsePayload?: string
+  unresolvedImageUrls?: string[]
 }
 
 /**
@@ -819,6 +845,7 @@ export async function callBatchImageSingle(opts: {
       await onImageToolStarted?.()
       let completedImage: AgentApiResultImage | null = null
       let rawPayload: string | undefined
+      let unresolvedImageUrls: string[] = []
 
       await readJsonServerSentEvents(response, async (event) => {
         const type = getStringValue(event, 'type')
@@ -851,10 +878,12 @@ export async function callBatchImageSingle(opts: {
           const payload = getStreamResponsePayload(event)
           if (payload) rawPayload = JSON.stringify(payload, null, 2)
           if (!completedImage && payload) {
-            const images = extractImages(payload, mime)
-            if (images.length > 0) {
-              completedImage = images[0]
-              await onImageToolCompleted?.(completedImage)
+            const extractedImages = await extractImages(payload, mime, controller.signal)
+            unresolvedImageUrls = extractedImages.unresolvedImageUrls
+            const image = extractedImages.images[0]
+            if (image) {
+              completedImage = image
+              await onImageToolCompleted?.(image)
             }
           }
         }
@@ -869,20 +898,22 @@ export async function callBatchImageSingle(opts: {
         image: completedImage,
         error: completedImage ? null : '流式响应未返回图片',
         rawResponsePayload: rawPayload,
+        ...(unresolvedImageUrls.length ? { unresolvedImageUrls } : {}),
       }
     }
 
     // Non-streaming
     const payload = normalizeResponsePayload(await response.json())
     if (!payload) throw new Error('图像接口返回格式无效')
-    const images = extractImages(payload, mime)
-    const image = images[0] ?? null
+    const extractedImages = await extractImages(payload, mime, controller.signal)
+    const image = extractedImages.images[0] ?? null
     if (image) await onImageToolCompleted?.(image)
     return {
       batchItemId,
       image,
       error: image ? null : '接口未返回图片数据',
       rawResponsePayload: JSON.stringify(payload, null, 2),
+      ...(extractedImages.unresolvedImageUrls.length ? { unresolvedImageUrls: extractedImages.unresolvedImageUrls } : {}),
     }
   } catch (err) {
     if (controller.signal.aborted || signal?.aborted) {
