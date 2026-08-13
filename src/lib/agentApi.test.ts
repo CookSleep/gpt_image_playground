@@ -218,7 +218,21 @@ describe('callAgentResponsesApi', () => {
         type: 'message',
         content: [{
           type: 'output_text',
-          text: '生成完成。\n![不是固定名称](data:image/jpeg;base64,aW1hZ2U=)',
+          text: [
+            '## 生成完成',
+            '',
+            '这是 **说明文字** 和 [帮助链接](https://docs.example.com)。',
+            '',
+            '![不是固定名称](data:image/jpeg;base64,aW1hZ2U=)',
+            '',
+            '- 列表内容与 `inline code` 应保留。',
+            '',
+            '```text',
+            '![代码示例](data:image/png;base64,example)',
+            '```',
+            '',
+            '结尾文字。',
+          ].join('\n'),
         }],
       }],
     }), {
@@ -237,7 +251,19 @@ describe('callAgentResponsesApi', () => {
       input: [{ role: 'user', content: [{ type: 'input_text', text: 'prompt' }] }],
     })
 
-    expect(result.text).toBe('生成完成。')
+    expect(result.text).toBe([
+      '## 生成完成',
+      '',
+      '这是 **说明文字** 和 [帮助链接](https://docs.example.com)。',
+      '',
+      '- 列表内容与 `inline code` 应保留。',
+      '',
+      '```text',
+      '![代码示例](data:image/png;base64,example)',
+      '```',
+      '',
+      '结尾文字。',
+    ].join('\n'))
     expect(result.images).toEqual([{
       dataUrl: 'data:image/jpeg;base64,aW1hZ2U=',
       actualParams: {},

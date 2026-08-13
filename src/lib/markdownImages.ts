@@ -10,12 +10,14 @@ export interface ResolvedMarkdownImages {
   unresolvedImageUrls: string[]
 }
 
-const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*\]\(\s*(?:<([^>\r\n]+)>|([^\s)\r\n]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g
+const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*\]\(\s*(?:<([^>\r\n]+)>|([^\s)\r\n]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/
+const MARKDOWN_IMAGE_OR_CODE_PATTERN = new RegExp(`\\x60{3}[\\s\\S]*?\\x60{3}|\\x60[^\\x60\\r\\n]*\\x60|${MARKDOWN_IMAGE_PATTERN.source}`, 'g')
 
 export function extractMarkdownImageSources(text: string): MarkdownImageSource[] {
   const images: MarkdownImageSource[] = []
 
-  for (const match of text.matchAll(MARKDOWN_IMAGE_PATTERN)) {
+  for (const match of text.matchAll(MARKDOWN_IMAGE_OR_CODE_PATTERN)) {
+    if (match[0].startsWith('\x60\x60\x60') || match[0].startsWith('\x60')) continue
     const url = (match[1] ?? match[2] ?? '').trim()
     if (!/^data:image\/[\w.+-]+;base64,/i.test(url) && !isHttpUrl(url)) continue
     images.push({ url, markdown: match[0] })
@@ -25,7 +27,8 @@ export function extractMarkdownImageSources(text: string): MarkdownImageSource[]
 }
 
 export function removeMarkdownImages(text: string): string {
-  return text.replace(MARKDOWN_IMAGE_PATTERN, (markdown) => {
+  return text.replace(MARKDOWN_IMAGE_OR_CODE_PATTERN, (markdown) => {
+    if (markdown.startsWith('\x60\x60\x60') || markdown.startsWith('\x60')) return markdown
     const [source] = extractMarkdownImageSources(markdown)
     return source ? '' : markdown
   }).replace(/\n{3,}/g, '\n\n').trim()

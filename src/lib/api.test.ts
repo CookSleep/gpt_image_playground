@@ -614,7 +614,17 @@ describe('callImageApi', () => {
         type: 'message',
         content: [{
           type: 'output_text',
-          text: '结果如下：\n![任意替代文本](data:image/jpeg;base64,aW1hZ2U=)',
+          text: [
+            '结果如下，详见 [生成说明](https://docs.example.com)。',
+            '',
+            '![任意替代文本](data:image/jpeg;base64,aW1hZ2U=)',
+            '',
+            '> 这是一段 **引用文本**，不是图片。',
+            '',
+            '![第二张图](data:image/png;base64,c2Vjb25k)',
+            '',
+            '`![行内示例](data:image/webp;base64,example)` 不应被视为图片。',
+          ].join('\n'),
         }],
       }],
     }), {
@@ -629,7 +639,10 @@ describe('callImageApi', () => {
       inputImageDataUrls: [],
     })
 
-    expect(result.images).toEqual(['data:image/jpeg;base64,aW1hZ2U='])
+    expect(result.images).toEqual([
+      'data:image/jpeg;base64,aW1hZ2U=',
+      'data:image/png;base64,c2Vjb25k',
+    ])
   })
 
   it('keeps Responses API stream output item images when completed response omits result', async () => {
