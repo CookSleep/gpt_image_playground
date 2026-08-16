@@ -39,6 +39,9 @@ func TestAuthMiddleware(t *testing.T) {
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("no token: want 401, got %d", w.Code)
 		}
+		if got := w.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("no token: Cache-Control want no-store, got %q", got)
+		}
 	}
 
 	// 2. 错误 token：401
@@ -76,6 +79,9 @@ func TestAuthMiddleware(t *testing.T) {
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
 			t.Errorf("access token: want 200, got %d body=%s", w.Code, w.Body.String())
+		}
+		if got := w.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("access token: Cache-Control want no-store, got %q", got)
 		}
 	}
 }

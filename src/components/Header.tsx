@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { useStore } from '../store'
+import { ALL_PROJECTS_ID, LOCAL_PROJECT_ID, useStore } from '../store'
 import { useVersionCheck } from '../hooks/useVersionCheck'
 import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
+import { updateProjectUrl } from '../lib/projectRoute'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
 import HistoryModal from './HistoryModal'
@@ -24,6 +25,10 @@ function isInstalledPwa() {
 export default function Header() {
   const appMode = useStore((s) => s.appMode)
   const setAppMode = useStore((s) => s.setAppMode)
+  const projects = useStore((s) => s.projects)
+  const activeProjectId = useStore((s) => s.activeProjectId)
+  const setActiveProjectId = useStore((s) => s.setActiveProjectId)
+  const renameProject = useStore((s) => s.renameProject)
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const agentMobileHeaderVisible = useStore((s) => s.agentMobileHeaderVisible)
@@ -32,6 +37,8 @@ export default function Header() {
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const activeConversation = agentConversations.find((item) => item.id === activeAgentConversationId)
+  const activeProject = projects.find((project) => project.id === activeProjectId)
+  const activeProjectTitle = activeProjectId === LOCAL_PROJECT_ID ? '本地数据' : activeProject?.title
   const favoriteCollectionTitle = useFavoriteCollectionTitle()
   const showFavoriteCollectionTitle = appMode === 'gallery' && Boolean(activeFavoriteCollectionId)
   const { hasUpdate, latestRelease, dismiss } = useVersionCheck()
@@ -44,8 +51,35 @@ export default function Header() {
   const [hintVisible, setHintVisible] = useState(false)
   const [scrollDirection, setScrollDirection] = useState<'up' | 'down'>('up')
   const [showHistoryModal, setShowHistoryModal] = useState(false)
+  const [editingProjectName, setEditingProjectName] = useState(false)
+  const [projectName, setProjectName] = useState('')
   const historyButtonRef = useRef<HTMLButtonElement>(null)
   const createConversation = useStore((s) => s.createAgentConversation)
+
+  useEffect(() => {
+    setEditingProjectName(false)
+    setProjectName(activeProject?.title ?? '')
+  }, [activeProject?.id, activeProject?.title])
+
+  const commitProjectName = () => {
+    const value = projectName.trim()
+    if (activeProject && value) renameProject(activeProject.id, value)
+    else setProjectName(activeProject?.title ?? '')
+    setEditingProjectName(false)
+  }
+
+  const openHome = () => {
+    setActiveProjectId(null)
+    updateProjectUrl(null)
+  }
+
+  const openMode = (mode: typeof appMode) => {
+    if (activeProjectId === null) {
+      setActiveProjectId(ALL_PROJECTS_ID)
+      updateProjectUrl(ALL_PROJECTS_ID)
+    }
+    setAppMode(mode)
+  }
 
   useEffect(() => {
     if (appMode === 'agent') {
@@ -158,20 +192,57 @@ export default function Header() {
               {showFavoriteCollectionTitle ? (
                 <>
                   <span className="min-w-0 truncate text-[17px] font-bold tracking-tight text-gray-800 dark:text-gray-100 sm:hidden" title={favoriteCollectionTitle}>{favoriteCollectionTitle}</span>
-                  <a
-                    href="/"
+                  <button
+                    type="button"
+                    onClick={openHome}
                     className="hidden text-lg font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:inline"
                   >
                     OpenToken Images
-                  </a>
+                  </button>
                 </>
               ) : (
-                <a
-                  href="/"
-                  className="text-[17px] sm:text-lg font-bold tracking-tight text-gray-800 dark:text-gray-100 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                >
-                  OpenToken Images
-                </a>
+                <>
+                  {appMode === 'gallery' && activeProject ? (
+                    <div className="flex min-w-0 items-center gap-1 sm:hidden">
+                      {editingProjectName ? (
+                        <input
+                          autoFocus
+                          value={projectName}
+                          maxLength={36}
+                          onChange={(event) => setProjectName(event.target.value)}
+                          onBlur={commitProjectName}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') commitProjectName()
+                            if (event.key === 'Escape') {
+                              setProjectName(activeProject.title)
+                              setEditingProjectName(false)
+                            }
+                          }}
+                          className="h-8 min-w-0 max-w-40 rounded border border-gray-300 bg-white px-2 text-sm font-semibold text-gray-900 outline-none dark:border-white/[0.16] dark:bg-gray-900 dark:text-gray-100"
+                          aria-label="项目名称"
+                        />
+                      ) : (
+                        <span className="max-w-36 truncate text-[17px] font-bold text-gray-800 dark:text-gray-100" title={activeProject.title}>{activeProject.title}</span>
+                      )}
+                      {!editingProjectName && <button
+                        type="button"
+                        onClick={() => setEditingProjectName(true)}
+                        className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+                        aria-label="重命名项目"
+                        title="重命名项目"
+                      >
+                        <EditIcon className="h-4 w-4" />
+                      </button>}
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={openHome}
+                    className={`${appMode === 'gallery' && activeProject ? 'hidden sm:inline' : ''} text-[17px] font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:text-lg`}
+                  >
+                    OpenToken Images
+                  </button>
+                </>
               )}
               {showUpdateBadge && (
                 <a
@@ -229,6 +300,43 @@ export default function Header() {
               </button>
             </div>
           )}
+          {appMode === 'gallery' && activeProjectTitle && !showFavoriteCollectionTitle && (
+            <div className="absolute left-1/2 top-1/2 hidden max-w-[30%] -translate-x-1/2 -translate-y-1/2 sm:flex">
+              {activeProject && editingProjectName ? (
+                <input
+                  autoFocus
+                  value={projectName}
+                  maxLength={36}
+                  onChange={(event) => setProjectName(event.target.value)}
+                  onBlur={commitProjectName}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') commitProjectName()
+                    if (event.key === 'Escape') {
+                      setProjectName(activeProject.title)
+                      setEditingProjectName(false)
+                    }
+                  }}
+                  className="h-8 min-w-48 rounded border border-gray-300 bg-white px-2 text-center text-sm font-semibold text-gray-900 outline-none dark:border-white/[0.16] dark:bg-gray-900 dark:text-gray-100"
+                  aria-label="项目名称"
+                />
+              ) : (
+                <div className="flex min-w-0 items-center gap-1">
+                  <div className="truncate rounded px-2 py-1 text-sm font-semibold text-gray-700 dark:text-gray-300" title={activeProjectTitle}>
+                    {activeProjectTitle}
+                  </div>
+                  {activeProject && <button
+                    type="button"
+                    onClick={() => setEditingProjectName(true)}
+                    className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+                    aria-label="重命名项目"
+                    title="重命名项目"
+                  >
+                    <EditIcon className="h-3.5 w-3.5" />
+                  </button>}
+                </div>
+              )}
+            </div>
+          )}
           {showFavoriteCollectionTitle && (
             <div className="absolute left-1/2 top-1/2 hidden max-w-[30%] -translate-x-1/2 -translate-y-1/2 sm:flex">
               <div className="truncate rounded px-2 py-1 text-sm font-semibold text-gray-700 dark:text-gray-300" title={favoriteCollectionTitle}>
@@ -239,15 +347,15 @@ export default function Header() {
           <div className="hidden sm:flex items-center gap-1 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-gray-100/70 dark:bg-white/[0.04] p-1 mr-4">
             <button
               type="button"
-              onClick={() => setAppMode('gallery')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${appMode === 'gallery' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+              onClick={() => openMode('gallery')}
+              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${activeProjectId !== null && appMode === 'gallery' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
             >
               画廊
             </button>
             <button
               type="button"
-              onClick={() => setAppMode('agent')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${appMode === 'agent' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+              onClick={() => openMode('agent')}
+              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${activeProjectId !== null && appMode === 'agent' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
             >
               Agent
             </button>
@@ -313,15 +421,15 @@ export default function Header() {
           <div className="grid grid-cols-2 gap-1 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-gray-100/70 dark:bg-white/[0.04] p-1 mx-2">
             <button
               type="button"
-              onClick={() => setAppMode('gallery')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${appMode === 'gallery' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+              onClick={() => openMode('gallery')}
+              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${activeProjectId !== null && appMode === 'gallery' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
             >
               画廊
             </button>
             <button
               type="button"
-              onClick={() => setAppMode('agent')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${appMode === 'agent' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+              onClick={() => openMode('agent')}
+              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${activeProjectId !== null && appMode === 'agent' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
             >
               Agent
             </button>

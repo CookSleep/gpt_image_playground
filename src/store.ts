@@ -11,6 +11,9 @@ import type {
   TaskParams,
   InputImage,
   MaskDraft,
+  Project,
+  StoredImage,
+  StoredImageThumbnail,
   TaskRecord,
   FavoriteCollection,
   ResponsesApiResponse,
@@ -23,6 +26,12 @@ import { remapImageMentionsForOrder, replaceImageMentionsForApi } from './lib/pr
 import {
   CURRENT_THUMBNAIL_VERSION,
   getAllTasks,
+  getAllProjects,
+  putProject as dbPutProject,
+  deleteProject as dbDeleteProject,
+  clearProjects as dbClearProjects,
+  putProjectWithRecords,
+  replaceProjectCache,
   putTask as dbPutTask,
   deleteTask as dbDeleteTask,
   clearTasks as dbClearTasks,
@@ -41,7 +50,10 @@ import {
   storeImage,
   storeImageWithSize,
 } from './lib/db'
+import { getAccessToken, isAuthEnabled } from './auth/api'
+import { buildLegacyProjectArchive, buildOnlineProjectArchive, clearLegacyProjectUploadId, createOnlineProject, deleteOnlineProject, deleteOnlineProjectImage, downloadOnlineProject, downloadOnlineProjectImage, getAgentConversationReferencedImageIds, getLegacyProjectUploadId, getTaskReferencedImageIds, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
 import { callImageApi } from './lib/api'
+import { callBackendImageApi } from './lib/backendImageApi'
 import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
 import { showBrowserNotification } from './lib/browserNotification'
@@ -58,6 +70,8 @@ import { formatExportFileTime } from './lib/exportFileName'
 import { buildExportZip, readExportZip, readExportZipFileAsDataUrl } from './lib/exportZip'
 
 export const ALL_FAVORITES_COLLECTION_ID = '__all_favorites__'
+export const ALL_PROJECTS_ID = '__all_projects__'
+export const LOCAL_PROJECT_ID = '__local_project__'
 export const DEFAULT_FAVORITE_COLLECTION_ID = '__default_favorites__'
 export const DEFAULT_FAVORITE_COLLECTION_NAME = '默认'
 
@@ -85,11 +99,17 @@ const imageStatusRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>
 const agentImageStatusRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const agentRoundControllers = new Map<string, AbortController>()
+const projectPersistenceQueues = new Map<string, Promise<IDBValidKey>>()
+const onlineProjectSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const onlineProjectSyncQueues = new Map<string, Promise<void>>()
+const onlineProjectSyncErrors = new Set<string>()
 let agentConversationPersistenceReady = false
 let agentConversationMigrationPending = false
+let onlineProjectCacheReady = false
 const OPENAI_INTERRUPTED_ERROR = '请求中断'
 const AGENT_STOPPED_MESSAGE = '已停止生成。'
 const AGENT_CONVERSATION_TITLE_MAX_LENGTH = 28
+const PROJECT_TITLE_MAX_LENGTH = 36
 const ERROR_TOAST_MAX_LENGTH = 80
 type ToastType = 'info' | 'success' | 'error'
 type AgentInputDraft = {
@@ -486,6 +506,7 @@ function normalizeAgentConversations(value: unknown): AgentConversation[] {
         : []
       return {
         id: conversation.id,
+        ...(typeof conversation.projectId === 'string' ? { projectId: conversation.projectId } : {}),
         title: typeof conversation.title === 'string' && conversation.title.trim() ? conversation.title : '新对话',
         activeRoundId: typeof conversation.activeRoundId === 'string' && roundIds.has(conversation.activeRoundId) ? conversation.activeRoundId : rounds[rounds.length - 1]?.id ?? null,
         createdAt: typeof conversation.createdAt === 'number' ? conversation.createdAt : Date.now(),
@@ -587,6 +608,44 @@ function normalizeFavoriteCollectionName(value: string) {
   return value.trim().replace(/\s+/g, ' ')
 }
 
+function normalizeProjects(value: unknown): Project[] {
+  if (!Array.isArray(value)) return []
+  const projects: Project[] = []
+  const ids = new Set<string>()
+  for (const item of value) {
+    if (!isRecord(item) || typeof item.id !== 'string' || !item.id || ids.has(item.id)) continue
+    const initialPrompt = typeof item.initialPrompt === 'string' ? item.initialPrompt.trim() : ''
+    const title = typeof item.title === 'string' ? item.title.trim() : ''
+    if (!title && !initialPrompt) continue
+    const createdAt = typeof item.createdAt === 'number' ? item.createdAt : Date.now()
+    ids.add(item.id)
+    projects.push({
+      id: item.id,
+      title: title || createProjectTitle(initialPrompt),
+      initialPrompt,
+      storage: item.storage === 'online' ? 'online' : 'local',
+      ...(typeof item.remoteId === 'string' && item.remoteId ? { remoteId: item.remoteId } : {}),
+      ...(typeof item.remoteArchiveSha256 === 'string' && item.remoteArchiveSha256 ? { remoteArchiveSha256: item.remoteArchiveSha256 } : {}),
+      ...(item.syncPending === true ? { syncPending: true } : {}),
+      createdAt,
+      updatedAt: typeof item.updatedAt === 'number' ? item.updatedAt : createdAt,
+    })
+  }
+  return projects
+}
+
+function createProjectTitle(prompt: string) {
+  const title = prompt.replace(/\s+/g, ' ').trim()
+  const chars = Array.from(title)
+  if (chars.length <= PROJECT_TITLE_MAX_LENGTH) return title || '未命名项目'
+  return `${chars.slice(0, PROJECT_TITLE_MAX_LENGTH - 3).join('')}...`
+}
+
+function removeTaskProject(task: TaskRecord): TaskRecord {
+  const { projectId: _projectId, ...rest } = task
+  return rest
+}
+
 function createDefaultFavoriteCollection(now = Date.now()): FavoriteCollection {
   return {
     id: DEFAULT_FAVORITE_COLLECTION_ID,
@@ -643,9 +702,10 @@ function resolveDefaultFavoriteCollectionId(collections: FavoriteCollection[], p
   return collections[0]?.id ?? null
 }
 
-function createAgentConversation(now = Date.now()): AgentConversation {
+function createAgentConversation(now = Date.now(), projectId?: string): AgentConversation {
   return {
     id: genId(),
+    ...(projectId ? { projectId } : {}),
     title: '新对话',
     activeRoundId: null,
     createdAt: now,
@@ -689,6 +749,7 @@ export function getPersistedState(state: AppState) {
       : {}),
     dismissedCodexCliPrompts: state.dismissedCodexCliPrompts,
     appMode: state.appMode,
+    activeProjectId: state.activeProjectId,
     galleryInputDraft: settings.persistInputOnRestart && galleryInputDraft
       ? { ...galleryInputDraft, inputImages: galleryInputDraft.inputImages.map((img) => ({ id: img.id, dataUrl: '' })) }
       : null,
@@ -733,6 +794,7 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
       ? persisted.activeAgentConversationId
       : agentConversations[0]?.id ?? null
   const appMode = persisted.appMode === 'agent' ? 'agent' : 'gallery'
+  const activeProjectId = typeof persisted.activeProjectId === 'string' ? persisted.activeProjectId : null
   const galleryInputDraft = settings.persistInputOnRestart
     ? normalizeAgentInputDraft(persisted.galleryInputDraft ?? {
         prompt: persisted.prompt,
@@ -768,6 +830,7 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
     ...persisted,
     settings,
     appMode,
+    activeProjectId,
     galleryInputDraft: galleryInputDraft && !isEmptyAgentInputDraft(galleryInputDraft) ? galleryInputDraft : null,
     agentConversations,
     activeAgentConversationId,
@@ -795,6 +858,17 @@ interface AppState {
   // 模式
   appMode: AppMode
   setAppMode: (mode: AppMode) => void
+
+  // 项目
+  projects: Project[]
+  projectsLoaded: boolean
+  activeProjectId: string | null
+  createProject: (prompt: string) => string
+  renameProject: (id: string, title: string) => void
+  setActiveProjectId: (id: string | null) => void
+  deleteProject: (id: string) => Promise<void>
+  legacyProjectSaving: boolean
+  saveLegacyProjectOnline: () => Promise<void>
 
   // 设置
   settings: AppSettings
@@ -1159,6 +1233,167 @@ function getPersistableAgentInputDrafts(state: AppState) {
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
+      // Projects
+      projects: [],
+      projectsLoaded: false,
+      activeProjectId: null,
+      legacyProjectSaving: false,
+      createProject: (prompt) => {
+        const now = Date.now()
+        const online = isAuthEnabled() && Boolean(getAccessToken())
+        const id = online ? crypto.randomUUID() : genId()
+        const project: Project = {
+          id,
+          title: createProjectTitle(prompt),
+          initialPrompt: prompt.trim(),
+          storage: online ? 'online' : 'local',
+          ...(online ? { remoteId: id, syncPending: true } : {}),
+          createdAt: now,
+          updatedAt: now,
+        }
+        get().setAppMode('gallery')
+        set((state) => ({
+          projects: [project, ...state.projects],
+          activeProjectId: project.id,
+          selectedTaskIds: [],
+          selectedFavoriteCollectionIds: [],
+        }))
+        queueProjectSave(project)
+        return project.id
+      },
+      renameProject: (id, title) => {
+        const project = get().projects.find((item) => item.id === id)
+        const normalizedTitle = title.replace(/\s+/g, ' ').trim()
+        if (!project || !normalizedTitle) return
+        const updated = {
+          ...project,
+          title: createProjectTitle(normalizedTitle),
+          updatedAt: Date.now(),
+        }
+        set((state) => ({
+          projects: [updated, ...state.projects.filter((item) => item.id !== id)],
+        }))
+        queueProjectSave(updated)
+        if (project.storage !== 'online' || !project.remoteId) return
+        if (project.syncPending) {
+          scheduleOnlineProjectSync(project.id)
+          return
+        }
+        void renameOnlineProject(project.remoteId, updated.title).catch((err) => {
+          const current = get().projects.find((item) => item.id === id)
+          if (current?.title === updated.title) {
+            const restored = { ...project, updatedAt: Date.now() }
+            set((state) => ({
+              projects: [restored, ...state.projects.filter((item) => item.id !== id)],
+            }))
+            queueProjectSave(restored)
+          }
+          get().showToast(err instanceof Error ? err.message : String(err), 'error')
+        })
+      },
+      setActiveProjectId: (activeProjectId) => {
+        const changed = get().activeProjectId !== activeProjectId
+        set({
+          activeProjectId,
+          selectedTaskIds: [],
+          selectedFavoriteCollectionIds: [],
+          searchQuery: '',
+          filterStatus: 'all',
+          filterFavorite: false,
+          activeFavoriteCollectionId: null,
+        })
+        if (!changed || !isAuthEnabled() || !getAccessToken()) return
+        const refresh = () => {
+          if (useStore.getState().activeProjectId === activeProjectId) void initStore()
+        }
+        if (onlineProjectCacheReady) refresh()
+        else if (initStoreInFlight) void initStoreInFlight.then(refresh)
+      },
+      deleteProject: async (id) => {
+        const project = get().projects.find((item) => item.id === id)
+        if (!project) return
+        const timer = onlineProjectSyncTimers.get(id)
+        if (timer) clearTimeout(timer)
+        onlineProjectSyncTimers.delete(id)
+        await onlineProjectSyncQueues.get(id)?.catch(() => undefined)
+        if (project.storage === 'online' && project.remoteId) {
+          try {
+            await deleteOnlineProject(project.remoteId)
+          } catch (err) {
+            get().showToast(err instanceof Error ? err.message : String(err), 'error')
+            return
+          }
+        }
+        const changedTasks = get().tasks
+          .filter((task) => task.projectId === id)
+          .map(removeTaskProject)
+        set((state) => ({
+          projects: state.projects.filter((project) => project.id !== id),
+          tasks: state.tasks.map((task) => task.projectId === id ? removeTaskProject(task) : task),
+          activeProjectId: state.activeProjectId === id ? null : state.activeProjectId,
+          selectedTaskIds: [],
+        }))
+        await projectPersistenceQueues.get(id)?.catch(() => undefined)
+        await Promise.all([
+          dbDeleteProject(id),
+          ...changedTasks.map((task) => putTask(task)),
+        ])
+      },
+      saveLegacyProjectOnline: async () => {
+        if (get().legacyProjectSaving) return
+        const snapshot = get()
+        const legacyTasks = snapshot.tasks.filter((task) => !task.projectId)
+        const legacyConversationIds = new Set(snapshot.agentConversations.filter((conversation) => !conversation.projectId).map((conversation) => conversation.id))
+        if (legacyTasks.length === 0) {
+          snapshot.showToast('没有需要保存的本地数据', 'info')
+          return
+        }
+        if (!isAuthEnabled()) {
+          snapshot.showToast('当前部署未启用在线项目', 'error')
+          return
+        }
+
+        set({ legacyProjectSaving: true })
+        try {
+          const id = getLegacyProjectUploadId()
+          const archive = await buildLegacyProjectArchive(snapshot)
+          const response = await uploadOnlineProject(id, '本地数据', archive)
+          const project = createOnlineProject(response)
+          const legacyTaskIds = new Set(legacyTasks.map((task) => task.id))
+          const latestTasks = get().tasks
+          const changedTasks = latestTasks
+            .filter((task) => legacyTaskIds.has(task.id) && !task.projectId)
+            .map((task) => ({ ...task, projectId: project.id }))
+          const changedConversationIds = new Set(
+            get().agentConversations
+              .filter((conversation) => legacyConversationIds.has(conversation.id) && !conversation.projectId)
+              .map((conversation) => conversation.id),
+          )
+          const changedConversations = get().agentConversations
+            .filter((conversation) => changedConversationIds.has(conversation.id))
+            .map((conversation) => ({ ...conversation, projectId: project.id }))
+          await putProjectWithRecords(project, changedTasks, changedConversations)
+          set((state) => ({
+            projects: [project, ...state.projects.filter((item) => item.id !== project.id)],
+            tasks: state.tasks.map((task) =>
+              legacyTaskIds.has(task.id) && !task.projectId ? { ...task, projectId: project.id } : task,
+            ),
+            agentConversations: state.agentConversations.map((conversation) =>
+              changedConversationIds.has(conversation.id) && !conversation.projectId ? { ...conversation, projectId: project.id } : conversation,
+            ),
+            activeProjectId: project.id,
+            selectedTaskIds: [],
+          }))
+          scheduleOnlineProjectSync(project.id, 0)
+          clearLegacyProjectUploadId()
+          get().showToast('本地数据已保存为在线项目', 'success')
+        } catch (err) {
+          get().showToast(err instanceof Error ? err.message : String(err), 'error')
+        } finally {
+          set({ legacyProjectSaving: false })
+        }
+      },
+
       // Mode
       appMode: 'gallery',
       setAppMode: (appMode) => {
@@ -1414,6 +1649,7 @@ export const useStore = create<AppState>()(
       agentGeneratingTitleIds: {},
       createAgentConversation: () => {
         const now = Date.now()
+        const projectId = getActiveTaskProjectId()
         const latestConversation = getLatestAgentConversation(get().agentConversations)
         if (latestConversation && isEmptyAgentConversation(latestConversation)) {
           set((state) => {
@@ -1421,7 +1657,7 @@ export const useStore = create<AppState>()(
             return {
               agentConversations: state.agentConversations.map((conversation) =>
                 conversation.id === latestConversation.id
-                  ? { ...conversation, createdAt: now, updatedAt: now }
+                  ? { ...conversation, ...(projectId ? { projectId } : {}), createdAt: now, updatedAt: now }
                   : conversation,
               ),
               activeAgentConversationId: latestConversation.id,
@@ -1434,7 +1670,7 @@ export const useStore = create<AppState>()(
           return latestConversation.id
         }
 
-        const conversation = createAgentConversation(now)
+        const conversation = createAgentConversation(now, projectId)
         set((state) => {
           const agentInputDrafts = saveActiveAgentInputDrafts(state)
           return {
@@ -1665,6 +1901,11 @@ async function flushAgentConversationsToIndexedDB() {
       const conversations = useStore.getState().agentConversations
       await replaceStoredAgentConversations(conversations)
       lastStoredAgentConversations = conversations
+      if (onlineProjectCacheReady) {
+        for (const projectId of new Set(conversations.map((conversation) => conversation.projectId).filter((id): id is string => Boolean(id)))) {
+          scheduleOnlineProjectSync(projectId)
+        }
+      }
     } while (agentConversationPersistQueued || useStore.getState().agentConversations !== lastStoredAgentConversations)
   } finally {
     agentConversationPersistRunning = false
@@ -1707,7 +1948,152 @@ function getPersistableTask(task: TaskRecord): TaskRecord {
 }
 
 function putTask(task: TaskRecord): Promise<IDBValidKey> {
-  return dbPutTask(getPersistableTask(task))
+  return dbPutTask(getPersistableTask(task)).then((key) => {
+    if (task.projectId) scheduleOnlineProjectSync(task.projectId)
+    return key
+  })
+}
+
+function getActiveTaskProjectId() {
+  const id = useStore.getState().activeProjectId
+  return id && id !== ALL_PROJECTS_ID && id !== LOCAL_PROJECT_ID ? id : undefined
+}
+
+function queueProjectSave(project: Project) {
+  const previous = projectPersistenceQueues.get(project.id)
+  const saving = (previous ? previous.catch(() => undefined) : Promise.resolve())
+    .then(() => dbPutProject(project))
+  projectPersistenceQueues.set(project.id, saving)
+  void saving
+    .catch((err) => console.error('项目保存失败：', err))
+    .finally(() => {
+      if (projectPersistenceQueues.get(project.id) === saving) projectPersistenceQueues.delete(project.id)
+    })
+}
+
+function scheduleOnlineProjectSync(projectId: string, delay = 1200) {
+  if (!onlineProjectCacheReady) return
+  const project = useStore.getState().projects.find((item) => item.id === projectId)
+  if (project?.storage !== 'online' || !project.remoteId) return
+  if (!project.syncPending) {
+    const pending = { ...project, syncPending: true }
+    useStore.setState((state) => ({
+      projects: state.projects.map((item) => item.id === projectId ? pending : item),
+    }))
+    queueProjectSave(pending)
+  }
+  const currentTimer = onlineProjectSyncTimers.get(projectId)
+  if (currentTimer) clearTimeout(currentTimer)
+  onlineProjectSyncTimers.set(projectId, setTimeout(() => {
+    onlineProjectSyncTimers.delete(projectId)
+    void syncOnlineProject(projectId)
+  }, delay))
+}
+
+function syncOnlineProject(projectId: string) {
+  const previous = onlineProjectSyncQueues.get(projectId)
+  const syncing = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(async () => {
+    const snapshot = useStore.getState()
+    const project = snapshot.projects.find((item) => item.id === projectId)
+    if (project?.storage !== 'online' || !project.remoteId) return
+    const version = project.updatedAt
+    const archive = await buildOnlineProjectArchive(snapshot, projectId)
+    const response = await uploadOnlineProject(project.remoteId, project.title, archive)
+    await syncOnlineProjectImages(projectId)
+    const current = useStore.getState().projects.find((item) => item.id === projectId)
+    if (!current) return
+    const changedWhileSyncing = current.updatedAt !== version
+    const updated: Project = {
+      ...current,
+      remoteArchiveSha256: response.archive_sha256,
+      syncPending: changedWhileSyncing,
+      updatedAt: changedWhileSyncing ? current.updatedAt : Date.parse(response.updated_at) || current.updatedAt,
+    }
+    useStore.setState((state) => ({
+      projects: [updated, ...state.projects.filter((item) => item.id !== projectId)],
+    }))
+    queueProjectSave(updated)
+    onlineProjectSyncErrors.delete(projectId)
+    if (changedWhileSyncing) scheduleOnlineProjectSync(projectId)
+  })
+  onlineProjectSyncQueues.set(projectId, syncing)
+  void syncing
+    .catch((err) => {
+      const project = useStore.getState().projects.find((item) => item.id === projectId)
+      if (project && !project.syncPending) {
+        const pending = { ...project, syncPending: true }
+        useStore.setState((state) => ({
+          projects: state.projects.map((item) => item.id === projectId ? pending : item),
+        }))
+        queueProjectSave(pending)
+      }
+      console.error('在线项目同步失败：', err)
+      if (onlineProjectSyncErrors.has(projectId)) return
+      onlineProjectSyncErrors.add(projectId)
+      useStore.getState().showToast('在线项目同步失败，数据已保存在本机', 'error')
+    })
+    .finally(() => {
+      if (onlineProjectSyncQueues.get(projectId) === syncing) onlineProjectSyncQueues.delete(projectId)
+    })
+  return syncing
+}
+
+async function syncOnlineProjectImages(projectId: string) {
+  const state = useStore.getState()
+  const project = state.projects.find((item) => item.id === projectId)
+  if (project?.storage !== 'online' || !project.remoteId) return
+  const remoteId = project.remoteId
+
+  const taskByImageId = new Map<string, string | undefined>()
+  for (const task of state.tasks.filter((item) => item.projectId === projectId)) {
+    for (const imageId of getTaskReferencedImageIds(task)) taskByImageId.set(imageId, task.id)
+  }
+  for (const conversation of state.agentConversations.filter((item) => item.projectId === projectId)) {
+    for (const imageId of getAgentConversationReferencedImageIds(conversation)) {
+      if (!taskByImageId.has(imageId)) taskByImageId.set(imageId, undefined)
+    }
+  }
+
+  const remoteImages = await listOnlineProjectImages(remoteId)
+  const remoteImageIds = new Set(remoteImages.map((image) => image.image_id))
+  for (const [imageId, taskId] of taskByImageId) {
+    if (remoteImageIds.has(imageId)) continue
+    const image = await getImage(imageId)
+    if (image) await uploadOnlineProjectImage(remoteId, taskId, image)
+  }
+  await Promise.all(remoteImages
+    .filter((image) => !taskByImageId.has(image.image_id))
+    .map((image) => deleteOnlineProjectImage(remoteId, image.image_id)))
+}
+
+async function uploadGeneratedProjectImages(task: TaskRecord, images: StoredImage[]) {
+  if (!task.projectId || images.length === 0) return
+  const project = useStore.getState().projects.find((item) => item.id === task.projectId)
+  if (project?.storage !== 'online' || !project.remoteId) return
+  const remoteId = project.remoteId
+
+  try {
+    await Promise.all(images.map((image) => uploadOnlineProjectImage(remoteId, task.id, image)))
+  } catch (err) {
+    console.warn('项目图片即时保存失败，将在项目同步时重试：', err)
+    scheduleOnlineProjectSync(project.id)
+  }
+}
+
+function touchProject(id?: string) {
+  if (!id) return
+  const project = useStore.getState().projects.find((item) => item.id === id)
+  if (!project) return
+  const updated = {
+    ...project,
+    ...(project.storage === 'online' ? { syncPending: true } : {}),
+    updatedAt: Date.now(),
+  }
+  useStore.setState((state) => ({
+    projects: [updated, ...state.projects.filter((item) => item.id !== id)],
+  }))
+  queueProjectSave(updated)
+  scheduleOnlineProjectSync(id)
 }
 
 export function getCodexCliPromptKey(settings: AppSettings): string {
@@ -2464,8 +2850,10 @@ async function ensureAgentRoundImageStatusTask(conversation: AgentConversation, 
     n: 1,
     transparent_output: false,
   }
+  const projectId = useStore.getState().tasks.find((task) => task.agentConversationId === conversation.id)?.projectId
   const task: TaskRecord = {
     id: genId(),
+    ...(projectId ? { projectId } : {}),
     prompt: round.prompt,
     params,
     apiProvider: profile.provider,
@@ -2711,7 +3099,13 @@ async function recoverImageStatusTask(taskId: string) {
 
   const timedOut = Date.now() - task.createdAt >= Math.max(0, profile.timeout * 1000)
   try {
-    const result = await queryImageStatuses(profile, requestIds)
+    const project = task.projectId
+      ? useStore.getState().projects.find((item) => item.id === task.projectId)
+      : undefined
+    const viaBackend = project?.storage === 'online' && Boolean(project.remoteId) && (task.apiProvider ?? 'openai') === 'openai' && Boolean(task.apiOverride?.apiKey)
+    const result = viaBackend
+      ? await queryImageStatuses(profile, requestIds, { viaBackend: true })
+      : await queryImageStatuses(profile, requestIds)
     const latestTask = useStore.getState().tasks.find((item) => item.id === taskId)
     if (!latestTask || !canRecoverTaskImageStatus(latestTask)) {
       clearImageStatusRecoveryTimer(taskId)
@@ -2788,11 +3182,174 @@ async function recoverImageStatusTask(taskId: string) {
   }
 }
 
+async function loadOnlineProjectCache(localProjects: Project[], localTasks: TaskRecord[], localConversations: AgentConversation[], localImageIds: string[], activeProjectId: string | null) {
+  const responses = await listOnlineProjects()
+  const remoteIds = new Set(responses.map((response) => response.id))
+  const retainedProjects = localProjects.filter((project) =>
+    project.storage !== 'online' || project.syncPending || remoteIds.has(project.remoteId ?? project.id),
+  )
+  const retainedProjectIds = new Set(retainedProjects.map((project) => project.id))
+  const projects = [...retainedProjects]
+  let tasks = localTasks.map((task) => task.projectId && !retainedProjectIds.has(task.projectId) ? removeTaskProject(task) : task)
+  let agentConversations: AgentConversation[] = localConversations.map((conversation) => {
+    if (!conversation.projectId || retainedProjectIds.has(conversation.projectId)) return conversation
+    const { projectId: _projectId, ...localConversation } = conversation
+    return localConversation
+  })
+  const images: StoredImage[] = []
+  const thumbnails: StoredImageThumbnail[] = []
+  const availableImageIds = new Set(localImageIds)
+  const favoriteCollections: FavoriteCollection[] = []
+  let defaultFavoriteCollectionId: string | null = null
+
+  for (const response of responses) {
+    const cached = localProjects.find((project) => project.id === response.id || project.remoteId === response.id)
+    const remote = createOnlineProject(response)
+    const shouldLoadContents = activeProjectId === null || activeProjectId === ALL_PROJECTS_ID || activeProjectId === response.id || cached?.id === activeProjectId
+    let project: Project = {
+      ...remote,
+      initialPrompt: cached?.initialPrompt ?? '',
+      ...(!shouldLoadContents ? { remoteArchiveSha256: cached?.remoteArchiveSha256 } : {}),
+    }
+    if (cached?.syncPending) {
+      project = {
+        ...cached,
+        storage: 'online',
+        remoteId: response.id,
+        syncPending: true,
+      }
+    } else if (shouldLoadContents && cached?.remoteArchiveSha256 !== response.archive_sha256) {
+      try {
+        const parsed = readOnlineProjectArchive(await downloadOnlineProject(response.id))
+        const archivedProject = normalizeProjects(parsed.project ? [parsed.project] : [])[0]
+        project = {
+          ...remote,
+          initialPrompt: archivedProject?.initialPrompt ?? cached?.initialPrompt ?? '',
+        }
+        tasks = [
+          ...tasks.filter((task) => task.projectId !== project.id),
+          ...parsed.tasks.map((task) => ({ ...task, projectId: project.id })),
+        ]
+        agentConversations = mergeAgentConversationsForStorage(
+          agentConversations.filter((conversation) => conversation.projectId !== project.id),
+          normalizeAgentConversations(parsed.agentConversations).map((conversation) => ({ ...conversation, projectId: project.id })),
+        )
+        images.push(...parsed.images)
+        for (const image of parsed.images) availableImageIds.add(image.id)
+        thumbnails.push(...parsed.thumbnails)
+        favoriteCollections.push(...parsed.favoriteCollections)
+        defaultFavoriteCollectionId = defaultFavoriteCollectionId ?? parsed.defaultFavoriteCollectionId
+      } catch (err) {
+        console.warn(`在线项目 ${response.id} 内容加载失败：`, err)
+        project = {
+          ...project,
+          remoteArchiveSha256: cached?.remoteArchiveSha256,
+        }
+      }
+    }
+    if (shouldLoadContents) {
+      try {
+        const remoteImages = await listOnlineProjectImages(response.id)
+        for (const remoteImage of remoteImages) {
+          if (availableImageIds.has(remoteImage.image_id)) continue
+          const image = await downloadOnlineProjectImage(response.id, remoteImage)
+          images.push(image)
+          availableImageIds.add(image.id)
+        }
+      } catch (err) {
+        console.warn(`在线项目 ${response.id} 图片加载失败：`, err)
+      }
+    }
+    const index = projects.findIndex((item) => item.id === project.id || item.remoteId === response.id)
+    if (index >= 0) projects.splice(index, 1)
+    projects.push(project)
+  }
+
+  projects.sort((a, b) => b.updatedAt - a.updatedAt)
+  tasks = [...new Map(tasks.map((task) => [task.id, task])).values()]
+  return { projects, tasks, agentConversations, images, thumbnails, favoriteCollections, defaultFavoriteCollectionId }
+}
+
+let initStoreInFlight: Promise<void> | null = null
+
 /** 初始化：从 IndexedDB 加载任务，按需恢复输入图片，并清理孤立图片 */
-export async function initStore() {
+export function initStore() {
+  if (initStoreInFlight) return initStoreInFlight
+
+  initStoreInFlight = initializeStore().finally(() => {
+    initStoreInFlight = null
+  })
+  return initStoreInFlight
+}
+
+async function initializeStore() {
+  onlineProjectCacheReady = false
+  const initialTaskState = useStore.getState().tasks
   const legacyAgentConversations = normalizeAgentConversations(useStore.getState().agentConversations)
-  const storedTasks = await getAllTasks()
-  const storedAgentConversations = normalizeAgentConversations(await getAllAgentConversations())
+  const [storedTaskRecords, storedAgentConversationRecords, storedProjectRecords, storedImageIds] = await Promise.all([
+    getAllTasks(),
+    getAllAgentConversations(),
+    getAllProjects(),
+    getAllImageIds(),
+  ])
+  let storedTasks = storedTaskRecords
+  let storedAgentConversations = normalizeAgentConversations(storedAgentConversationRecords)
+  let projects = normalizeProjects([
+    ...useStore.getState().projects,
+    ...storedProjectRecords,
+  ]).sort((a, b) => b.updatedAt - a.updatedAt)
+  let importedFavoriteCollections: FavoriteCollection[] = []
+  let importedDefaultFavoriteCollectionId: string | null = null
+  let importedImages: StoredImage[] = []
+  let importedThumbnails: StoredImageThumbnail[] = []
+  let onlineListLoaded = false
+  useStore.setState({ projects, projectsLoaded: true })
+  const publishedProjectState = useStore.getState().projects
+  if (isAuthEnabled() && getAccessToken()) {
+    try {
+      const online = await loadOnlineProjectCache(projects, storedTasks, storedAgentConversations, storedImageIds, useStore.getState().activeProjectId)
+      projects = online.projects
+      storedTasks = online.tasks
+      storedAgentConversations = online.agentConversations
+      importedFavoriteCollections = online.favoriteCollections
+      importedDefaultFavoriteCollectionId = online.defaultFavoriteCollectionId
+      importedImages = online.images
+      importedThumbnails = online.thumbnails
+      onlineListLoaded = true
+      for (const image of importedImages) cacheImage(image.id, image.dataUrl)
+      for (const thumbnail of importedThumbnails) {
+        cacheThumbnail(thumbnail.id, {
+          dataUrl: thumbnail.thumbnailDataUrl,
+          width: thumbnail.width,
+          height: thumbnail.height,
+          thumbnailVersion: thumbnail.thumbnailVersion,
+        })
+      }
+    } catch (err) {
+      console.warn('在线项目列表加载失败：', err)
+    }
+  }
+  if (useStore.getState().projects !== publishedProjectState) {
+    projects = normalizeProjects([...useStore.getState().projects, ...projects]).sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+  if (useStore.getState().tasks !== initialTaskState) {
+    storedTasks = [...new Map([...storedTasks, ...useStore.getState().tasks].map((task) => [task.id, task])).values()]
+  }
+  storedAgentConversations = mergeAgentConversationsForStorage(storedAgentConversations, normalizeAgentConversations(useStore.getState().agentConversations))
+  if (onlineListLoaded) {
+    await replaceProjectCache(projects, storedTasks, storedAgentConversations, importedImages, importedThumbnails)
+  }
+  const preferredProjectId = useStore.getState().activeProjectId
+  const hasLegacyTasks = storedTasks.some((task) => !task.projectId)
+  const activeProjectId = preferredProjectId === ALL_PROJECTS_ID || (preferredProjectId === LOCAL_PROJECT_ID && hasLegacyTasks) || projects.some((project) => project.id === preferredProjectId)
+    ? preferredProjectId
+    : null
+  const isActiveProjectRecord = (projectId?: string) => {
+    if (activeProjectId === null || activeProjectId === ALL_PROJECTS_ID) return true
+    if (activeProjectId === LOCAL_PROJECT_ID) return !projectId
+    return projectId === activeProjectId
+  }
+  useStore.setState({ projects, projectsLoaded: true, activeProjectId })
   let loadedAgentConversations = mergeAgentConversationsForStorage(storedAgentConversations, legacyAgentConversations)
   const currentAgentConversations = normalizeAgentConversations(useStore.getState().agentConversations)
   loadedAgentConversations = mergeAgentConversationsForStorage(loadedAgentConversations, currentAgentConversations)
@@ -2829,7 +3386,13 @@ export async function initStore() {
   const { tasks: markedTasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
   const interruptedTaskIds = new Set(interruptedTasks.map((task) => task.id))
   const favoriteState = useStore.getState()
-  const normalizedFavorites = normalizeLoadedFavoriteState(markedTasks.map(getPersistableTask), favoriteState.favoriteCollections, favoriteState.defaultFavoriteCollectionId)
+  const favoriteCollections = importedFavoriteCollections.length
+    ? ensureDefaultFavoriteCollection(normalizeFavoriteCollections([...favoriteState.favoriteCollections, ...importedFavoriteCollections]))
+    : favoriteState.favoriteCollections
+  const defaultFavoriteCollectionId = importedDefaultFavoriteCollectionId && favoriteCollections.some((collection) => collection.id === importedDefaultFavoriteCollectionId)
+    ? importedDefaultFavoriteCollectionId
+    : favoriteState.defaultFavoriteCollectionId
+  const normalizedFavorites = normalizeLoadedFavoriteState(markedTasks.map(getPersistableTask), favoriteCollections, defaultFavoriteCollectionId)
   const tasks = normalizedFavorites.tasks
   if (normalizedFavorites.collections !== favoriteState.favoriteCollections) {
     favoriteState.setFavoriteCollections(normalizedFavorites.collections)
@@ -2841,6 +3404,12 @@ export async function initStore() {
     .filter((task, index) => normalizedFavorites.changed || interruptedTaskIds.has(task.id) || task.rawResponsePayload !== markedTasks[index]?.rawResponsePayload)
     .map((task) => putTask(task)))
   useStore.getState().setTasks(tasks)
+  onlineProjectCacheReady = true
+  const projectsToSync = new Set([
+    ...projects.filter((project) => project.syncPending && isActiveProjectRecord(project.id)).map((project) => project.id),
+    ...interruptedTasks.filter((task) => isActiveProjectRecord(task.projectId)).map((task) => task.projectId).filter((id): id is string => Boolean(id)),
+  ])
+  for (const projectId of projectsToSync) scheduleOnlineProjectSync(projectId, 0)
   const recoveredAgentConversations = recoverAgentConversationsForImageStatus(useStore.getState().agentConversations, tasks)
   if (recoveredAgentConversations !== useStore.getState().agentConversations) {
     useStore.setState({ agentConversations: recoveredAgentConversations })
@@ -2853,6 +3422,7 @@ export async function initStore() {
     ),
   )
   for (const task of tasks) {
+    if (!isActiveProjectRecord(task.projectId)) continue
     if (
       task.apiProvider === 'fal' &&
       task.falRequestId &&
@@ -2874,6 +3444,7 @@ export async function initStore() {
     }
   }
   for (const conversation of useStore.getState().agentConversations) {
+    if (!isActiveProjectRecord(conversation.projectId)) continue
     for (const round of conversation.rounds) {
       if (shouldScheduleAgentRoundImageStatusRecovery(conversation.id, round, tasks)) {
         scheduleAgentImageStatusRecovery(conversation.id, round.id, 0)
@@ -3119,8 +3690,10 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   }
 
   const taskId = genId()
+  const projectId = getActiveTaskProjectId()
   const task: TaskRecord = {
     id: taskId,
+    ...(projectId ? { projectId } : {}),
     prompt: prompt.trim(),
     params: taskParams,
     apiProvider: activeProfile.provider,
@@ -3147,6 +3720,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   const latestTasks = useStore.getState().tasks
   useStore.getState().setTasks([task, ...latestTasks])
   await putTask(task)
+  touchProject(projectId)
   useStore.getState().showToast('任务已提交', 'success')
 
   if (settings.clearInputAfterSubmit) {
@@ -3550,12 +4124,13 @@ function addTaskReferencedImageIds(target: Set<string>, task: TaskRecord) {
   for (const id of task.streamPartialImageIds || []) target.add(id)
 }
 
-async function storeTaskOutputImages(task: TaskRecord, images: string[]) {
+async function storeTaskOutputImages(task: TaskRecord, images: string[], options: { alreadyStoredOnline?: boolean } = {}) {
   const outputIds: string[] = []
   const outputDataUrls: string[] = []
   const outputImageSizes: Array<{ width?: number; height?: number }> = []
   const transparentOriginalImageIds: string[] = []
   const storedImageIds: string[] = []
+  const storedProjectImages: StoredImage[] = []
 
   try {
     for (const dataUrl of images) {
@@ -3563,6 +4138,7 @@ async function storeTaskOutputImages(task: TaskRecord, images: string[]) {
       if (task.transparentOutput) {
         const original = await storeImageWithSize(dataUrl, 'generated')
         storedImageIds.push(original.id)
+        storedProjectImages.push({ ...original, dataUrl, source: 'generated' })
         cacheImage(original.id, dataUrl)
 
         try {
@@ -3580,12 +4156,14 @@ async function storeTaskOutputImages(task: TaskRecord, images: string[]) {
 
       const stored = await storeImageWithSize(outputDataUrl, 'generated')
       storedImageIds.push(stored.id)
+      storedProjectImages.push({ ...stored, dataUrl: outputDataUrl, source: 'generated' })
       cacheImage(stored.id, outputDataUrl)
       outputIds.push(stored.id)
       outputDataUrls.push(outputDataUrl)
       outputImageSizes.push(stored)
     }
 
+    if (!options.alreadyStoredOnline) await uploadGeneratedProjectImages(task, storedProjectImages)
     return {
       outputIds,
       outputDataUrls,
@@ -3631,6 +4209,7 @@ async function persistTaskStreamPartialImage(taskId: string, dataUrl: string) {
     const currentIds = latestTask.streamPartialImageIds || []
     if (currentIds.includes(imgId)) return
     updateTaskInStore(taskId, { streamPartialImageIds: [...currentIds, imgId] })
+    await uploadGeneratedProjectImages(latestTask, [{ id: imgId, dataUrl, source: 'generated' }])
   } catch (err) {
     console.error(err)
   }
@@ -3979,6 +4558,7 @@ async function buildAgentApiInput(conversation: AgentConversation, currentRound:
 export async function submitAgentMessage() {
   const state = useStore.getState()
   const { settings, prompt, inputImages, maskDraft, params, showToast } = state
+  const projectId = getActiveTaskProjectId()
   const normalizedSettings = normalizeSettings(settings)
 
   const agentValidationError = getAgentProfileValidationError(normalizedSettings)
@@ -3999,6 +4579,9 @@ export async function submitAgentMessage() {
   }
 
   const conversation = getActiveAgentConversation()
+  if (projectId && conversation.projectId !== projectId) {
+    updateAgentConversation(conversation.id, (current) => ({ ...current, projectId, updatedAt: Date.now() }))
+  }
   if (conversation.rounds.some((round) => round.status === 'running')) {
     showToast('请等待生成完成，或先停止生成', 'info')
     return
@@ -4123,7 +4706,7 @@ export async function submitAgentMessage() {
     void generateAgentConversationTitle(conversation.id, trimmedPrompt, inputImageIds, requestSettings, activeProfile, fallbackTitle)
   }
 
-  void executeAgentRound(conversation.id, roundId, normalizedParams, requestSettings, activeProfile, imageProfile)
+  void executeAgentRound(conversation.id, roundId, normalizedParams, requestSettings, activeProfile, imageProfile, projectId)
 }
 
 export async function regenerateAgentAssistantMessage(conversationId: string, roundId: string) {
@@ -4158,6 +4741,9 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
   }
 
   const inputImageIds = uniqueIds(sourceRound.inputImageIds)
+  const projectId = sourceRound.outputTaskIds
+    .map((taskId) => state.tasks.find((task) => task.id === taskId)?.projectId)
+    .find((id): id is string => Boolean(id)) ?? getActiveTaskProjectId()
   const requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
   const normalizedParams = {
     ...normalizeParamsForSettings(params, requestSettings, { hasInputImages: inputImageIds.length > 0 }),
@@ -4192,7 +4778,7 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
         : current.messages,
     }))
     state.setAgentEditingRoundId(null)
-    void executeAgentRound(conversationId, sourceRound.id, normalizedParams, requestSettings, activeProfile, imageProfile)
+    void executeAgentRound(conversationId, sourceRound.id, normalizedParams, requestSettings, activeProfile, imageProfile, projectId)
     return
   }
 
@@ -4232,7 +4818,7 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
     messages: [...current.messages, newUserMessage],
   }))
   state.setAgentEditingRoundId(null)
-  void executeAgentRound(conversationId, newRoundId, normalizedParams, requestSettings, activeProfile, imageProfile)
+  void executeAgentRound(conversationId, newRoundId, normalizedParams, requestSettings, activeProfile, imageProfile, projectId)
 }
 
 async function executeAgentRound(
@@ -4242,6 +4828,7 @@ async function executeAgentRound(
   requestSettings: AppSettings,
   activeProfile: ApiProfile,
   imageProfile: ApiProfile,
+  projectId?: string,
 ) {
   const startedAt = Date.now()
   const controller = new AbortController()
@@ -4305,6 +4892,7 @@ async function executeAgentRound(
 
       const task: TaskRecord = {
         id: genId(),
+        ...(projectId ? { projectId } : {}),
         prompt: taskPrompt,
         params: options.taskParams ?? { ...params, n: 1 },
         apiProvider: imageProfile.provider,
@@ -4333,6 +4921,7 @@ async function executeAgentRound(
       useStore.getState().setTasks([task, ...useStore.getState().tasks])
       attachTaskToAgentRound(task.id)
       await putTask(task)
+      touchProject(projectId)
       return task.id
     }
 
@@ -4362,6 +4951,10 @@ async function executeAgentRound(
         elapsed: Date.now() - (latestTask?.createdAt ?? startedAt),
         agentToolAction: image.action,
       })
+      const completedTask = useStore.getState().tasks.find((task) => task.id === taskId)
+      if (completedTask) {
+        await uploadGeneratedProjectImages(completedTask, [{ ...stored, dataUrl: image.dataUrl, source: 'generated' }])
+      }
       useStore.getState().setTaskStreamPreview(taskId)
       return taskId
     }
@@ -4793,6 +5386,7 @@ async function executeAgentRound(
         }
         const task: TaskRecord = {
           id: genId(),
+          ...(projectId ? { projectId } : {}),
           prompt: image.revisedPrompt ?? round?.prompt ?? userMessage.content,
           params,
           apiProvider: imageProfile.provider,
@@ -4823,6 +5417,8 @@ async function executeAgentRound(
         useStore.getState().setTasks([task, ...useStore.getState().tasks])
         attachTaskToAgentRound(task.id)
         await putTask(task)
+        await uploadGeneratedProjectImages(task, [{ ...stored, dataUrl: image.dataUrl, source: 'generated' }])
+        touchProject(projectId)
       }
 
       if (result.rawResponsePayload && streamingTaskIds.length > 0) {
@@ -5100,35 +5696,60 @@ async function executeTask(taskId: string) {
       ? task.transparentPrompt
       : task.prompt
 
-    const result = await callImageApi({
-      settings: requestSettings,
-      prompt: replaceImageMentionsForApi(requestPrompt, inputDataUrls.length),
-      params: task.params,
-      inputImageDataUrls: inputDataUrls,
-      maskDataUrl,
-      onFalRequestEnqueued: (request) => {
-        falRequestInfo = request
-        updateTaskInStore(taskId, {
-          falRequestId: request.requestId,
-          falEndpoint: request.endpoint,
-          falRecoverable: false,
+    const prompt = replaceImageMentionsForApi(requestPrompt, inputDataUrls.length)
+    const project = task.projectId
+      ? useStore.getState().projects.find((item) => item.id === task.projectId)
+      : undefined
+    const backendRequest = project?.storage === 'online' && project.remoteId && taskProvider === 'openai' && task.apiOverride?.apiKey
+      ? { projectId: project.remoteId, projectTitle: project.title, apiKey: task.apiOverride.apiKey }
+      : null
+    const result = backendRequest
+      ? await callBackendImageApi({
+          projectId: backendRequest.projectId,
+          projectTitle: backendRequest.projectTitle,
+          taskId: task.id,
+          apiKey: backendRequest.apiKey,
+          model: activeProfile.model,
+          apiMode: activeProfile.apiMode,
+          allowPromptRewrite: requestSettings.allowPromptRewrite,
+          codexCli: activeProfile.codexCli,
+          prompt,
+          params: task.params,
+          inputImageDataUrls: inputDataUrls,
+          maskDataUrl,
+          onImageStatusRequestCreated: (request) => {
+            addImageStatusRequestIdToTask(taskId, request.requestId)
+          },
         })
-      },
-      onCustomTaskEnqueued: (request) => {
-        customTaskInfo = request
-        updateTaskInStore(taskId, {
-          customTaskId: request.taskId,
-          customRecoverable: false,
+      : await callImageApi({
+          settings: requestSettings,
+          prompt,
+          params: task.params,
+          inputImageDataUrls: inputDataUrls,
+          maskDataUrl,
+          onFalRequestEnqueued: (request) => {
+            falRequestInfo = request
+            updateTaskInStore(taskId, {
+              falRequestId: request.requestId,
+              falEndpoint: request.endpoint,
+              falRecoverable: false,
+            })
+          },
+          onCustomTaskEnqueued: (request) => {
+            customTaskInfo = request
+            updateTaskInStore(taskId, {
+              customTaskId: request.taskId,
+              customRecoverable: false,
+            })
+          },
+          onImageStatusRequestCreated: (request) => {
+            addImageStatusRequestIdToTask(taskId, request.requestId)
+          },
+          onPartialImage: (partial) => {
+            useStore.getState().setTaskStreamPreview(taskId, partial.image, partial.requestIndex)
+            void persistTaskStreamPartialImage(taskId, partial.image)
+          },
         })
-      },
-      onImageStatusRequestCreated: (request) => {
-        addImageStatusRequestIdToTask(taskId, request.requestId)
-      },
-      onPartialImage: (partial) => {
-        useStore.getState().setTaskStreamPreview(taskId, partial.image, partial.requestIndex)
-        void persistTaskStreamPartialImage(taskId, partial.image)
-      },
-    })
 
     const latestBeforeSuccess = useStore.getState().tasks.find((t) => t.id === taskId)
     if (!latestBeforeSuccess || latestBeforeSuccess.status !== 'running') {
@@ -5137,7 +5758,9 @@ async function executeTask(taskId: string) {
     }
 
     // 存储输出图片
-    const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
+    const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images, {
+      alreadyStoredOnline: result.imagesStoredOnline && !task.transparentOutput,
+    })
     const isAsyncCustomTask = taskProvider !== 'fal' && taskProvider !== 'openai' && Boolean(customTaskInfo)
     const actualParamsList = await resolveImageSizeParamsList(
       outputDataUrls,
@@ -5283,6 +5906,7 @@ async function executeTask(taskId: string) {
       useStore.getState().setDetailTaskId(taskId)
     }
   } finally {
+    touchProject(task.projectId)
     // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）
     for (const imgId of task.inputImageIds) {
       imageCache.delete(imgId)
@@ -5499,6 +6123,7 @@ export async function retryTask(task: TaskRecord) {
   const taskId = genId()
   const newTask: TaskRecord = {
     id: taskId,
+    ...(task.projectId ? { projectId: task.projectId } : {}),
     prompt: task.prompt,
     params: taskParams,
     apiProvider: activeProfile.provider,
@@ -5523,6 +6148,7 @@ export async function retryTask(task: TaskRecord) {
   const latestTasks = useStore.getState().tasks
   useStore.getState().setTasks([newTask, ...latestTasks])
   await putTask(newTask)
+  touchProject(task.projectId)
 
   executeTask(taskId)
 }
@@ -5649,6 +6275,10 @@ export async function removeMultipleTasks(taskIds: string[]) {
       thumbnailCache.delete(imgId)
     }
   }
+  for (const projectId of new Set(deletedTasks.map((task) => task.projectId).filter((id): id is string => Boolean(id)))) {
+    touchProject(projectId)
+    scheduleOnlineProjectSync(projectId)
+  }
 
   // 如果删除的任务在选中列表中，则移除
   const newSelection = selectedTaskIds.filter(id => !toDelete.has(id))
@@ -5720,6 +6350,10 @@ export async function removeTask(task: TaskRecord) {
       thumbnailCache.delete(imgId)
     }
   }
+  if (task.projectId) {
+    touchProject(task.projectId)
+    scheduleOnlineProjectSync(task.projectId)
+  }
 
   showToast('任务已删除', 'success')
 }
@@ -5736,6 +6370,8 @@ export async function clearData(options: ClearOptions = { clearConfig: true, cle
 
   if (options.clearTasks) {
     await dbClearTasks()
+    await Promise.allSettled(projectPersistenceQueues.values())
+    await dbClearProjects()
     await dbClearAgentConversations()
     await clearImages()
     imageCache.clear()
@@ -5745,6 +6381,8 @@ export async function clearData(options: ClearOptions = { clearConfig: true, cle
     useStore.setState({
       agentConversations: [],
       activeAgentConversationId: null,
+      projects: [],
+      activeProjectId: null,
       supportPromptOpen: false,
       supportPromptSkippedForImportedData: false,
     })
@@ -5824,7 +6462,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
   try {
     const tasks = options.exportTasks ? await getAllTasks() : []
     const images = options.exportTasks ? await getAllImages() : []
-    const { settings, agentConversations, favoriteCollections, defaultFavoriteCollectionId } = useStore.getState()
+    const { settings, agentConversations, projects, favoriteCollections, defaultFavoriteCollectionId } = useStore.getState()
     const exportedAt = Date.now()
     const thumbnailsByImageId = new Map<string, NonNullable<Awaited<ReturnType<typeof getImageThumbnail>>>>()
 
@@ -5848,6 +6486,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       exportedAt,
       settings,
       tasks,
+      projects,
       images,
       thumbnailsByImageId,
       favoriteCollections,
@@ -5934,12 +6573,16 @@ export async function importData(file: File, options: ImportOptions = { importCo
         ? resolveDefaultFavoriteCollectionId(favoriteCollections, data.defaultFavoriteCollectionId)
         : state.defaultFavoriteCollectionId
       const normalizedFavorites = normalizeLoadedFavoriteState(tasks, favoriteCollections, defaultFavoriteCollectionId)
+      const importedProjects = normalizeProjects(data.projects)
+      const projects = normalizeProjects([...state.projects, ...importedProjects])
       useStore.setState({
         tasks: normalizedFavorites.tasks,
+        projects,
         favoriteCollections: normalizedFavorites.collections,
         defaultFavoriteCollectionId: normalizedFavorites.defaultFavoriteCollectionId,
       })
       if (normalizedFavorites.changed) await Promise.all(normalizedFavorites.tasks.map((task) => putTask(task)))
+      await Promise.all(importedProjects.map((project) => dbPutProject(project)))
       const importedAgentConversations = normalizeAgentConversations(data.agentConversations)
         .filter((conversation) => !isEmptyAgentConversation(conversation))
       useStore.setState((state) => {

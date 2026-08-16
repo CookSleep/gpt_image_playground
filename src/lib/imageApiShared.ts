@@ -36,6 +36,10 @@ export interface CallApiResult {
   rawImageUrls?: string[]
   /** 并发多图请求中失败的单张请求 */
   failedRequests?: Array<{ requestIndex: number; error: string }>
+  /** 图片是否已由后端写入在线项目 */
+  imagesStoredOnline?: boolean
+  /** 后端写入在线项目后的图片 ID */
+  imageIds?: string[]
 }
 
 export function isHttpUrl(value: unknown): value is string {

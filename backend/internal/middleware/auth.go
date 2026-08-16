@@ -19,6 +19,8 @@ const (
 // AuthMiddleware 校验 Authorization: Bearer <token>，校验通过后把 claims 放进 context
 func AuthMiddleware(mgr *appjwt.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+
 		token := extractBearerToken(c)
 		if token == "" {
 			abortJSON(c, http.StatusUnauthorized, "missing bearer token")

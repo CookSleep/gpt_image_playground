@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { authFetch } from '../auth/api'
 import { createDefaultOpenAIProfile } from './apiProfiles'
 import { queryImageStatuses } from './imageStatusApi'
+
+vi.mock('../auth/api', () => ({
+  authFetch: vi.fn(),
+}))
 
 describe('queryImageStatuses', () => {
   afterEach(() => {
@@ -40,5 +45,24 @@ describe('queryImageStatuses', () => {
     const result = await queryImageStatuses(profile, ['img_text'])
 
     expect(result.records[0].texts).toEqual(['Generated the image and adjusted the prompt.'])
+  })
+
+  it('queries statuses through the authenticated backend when requested', async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ request_id: 'img_backend', status: 'running' }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const profile = createDefaultOpenAIProfile({ baseUrl: 'https://api.example.com/v1', apiKey: 'oidc-api-key' })
+
+    const result = await queryImageStatuses(profile, ['img_backend'], { viaBackend: true })
+
+    expect(authFetch).toHaveBeenCalledWith('/api/v1/images/status', {
+      method: 'POST',
+      body: JSON.stringify({ api_key: 'oidc-api-key', request_ids: ['img_backend'] }),
+      cache: 'no-store',
+    })
+    expect(result.records).toEqual([expect.objectContaining({ requestId: 'img_backend', status: 'running' })])
   })
 })

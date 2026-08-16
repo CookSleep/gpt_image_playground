@@ -63,6 +63,7 @@ func main() {
 	// 5. JWT manager / repo / service
 	jwtMgr := appjwt.NewManager(cfg.JWT)
 	userRepo := database.NewUserRepository(db)
+	projectRepo := database.NewProjectRepository(db)
 	authSvc := services.NewAuthService(registry, userRepo, jwtMgr, cfg.Admin)
 
 	// 6. gin 引擎
@@ -89,6 +90,9 @@ func main() {
 			"provider": c.GetString(middleware.ContextKeyProvider),
 		})
 	})
+	handlers.NewProjectHandler(projectRepo).Register(api)
+	handlers.NewProjectImageHandler(projectRepo).Register(api)
+	handlers.NewProjectGenerationHandler(projectRepo, registry).Register(api)
 
 	// 前端 SPA fallback：所有 API 路由之后挂载，仅接管未匹配路由。
 	// 带 -tags embed 构建时服务嵌入的前端产物并注入运行时配置；否则为空 FS（本地开发交给 vite）。
@@ -146,7 +150,7 @@ func buildCORS(origins []string) gin.HandlerFunc {
 	}
 	return cors.New(cors.Config{
 		AllowOrigins:     origins,
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,

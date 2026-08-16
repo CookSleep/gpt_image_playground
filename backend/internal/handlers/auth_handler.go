@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -156,10 +158,16 @@ func (h *AuthHandler) GetUser(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "unauthenticated"})
 		return
 	}
-	user, err := h.svc.GetUser(c.Request.Context(), userID)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	user, err := h.svc.GetUser(ctx, userID)
 	if err != nil {
 		if errors.Is(err, database.ErrUserNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "message": "user not found"})
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			c.JSON(http.StatusGatewayTimeout, gin.H{"code": http.StatusGatewayTimeout, "message": "user lookup timed out"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError, "message": err.Error()})

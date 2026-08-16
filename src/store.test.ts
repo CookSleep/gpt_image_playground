@@ -2,13 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
 import { DEFAULT_PARAMS } from './types'
 import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
-import type { AgentConversation, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
+import type { AgentConversation, ExportData, Project, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
+const authState = vi.hoisted(() => ({ accessToken: null as string | null }))
+vi.mock('./auth/api', () => ({
+  isAuthEnabled: () => true,
+  getAccessToken: () => authState.accessToken,
+}))
 vi.mock('./lib/db', () => {
   const tasks = new Map<string, TaskRecord>()
   const images = new Map<string, StoredImage>()
   const thumbnails = new Map<string, StoredImageThumbnail>()
   const agentConversations = new Map<string, AgentConversation>()
+  const projects = new Map<string, Project>()
   let imageSeq = 0
 
   return {
@@ -23,6 +29,32 @@ vi.mock('./lib/db', () => {
     },
     clearTasks: async () => {
       tasks.clear()
+    },
+    getAllProjects: async () => [...projects.values()],
+    putProject: async (project: Project) => {
+      projects.set(project.id, project)
+      return project.id
+    },
+    deleteProject: async (id: string) => {
+      projects.delete(id)
+    },
+    clearProjects: async () => {
+      projects.clear()
+    },
+    putProjectWithRecords: async (project: Project, projectTasks: TaskRecord[], projectConversations: AgentConversation[]) => {
+      projects.set(project.id, project)
+      for (const task of projectTasks) tasks.set(task.id, task)
+      for (const conversation of projectConversations) agentConversations.set(conversation.id, conversation)
+    },
+    replaceProjectCache: async (projectRecords: Project[], taskRecords: TaskRecord[], conversationRecords: AgentConversation[], imageRecords: StoredImage[], thumbnailRecords: StoredImageThumbnail[]) => {
+      projects.clear()
+      tasks.clear()
+      agentConversations.clear()
+      for (const project of projectRecords) projects.set(project.id, project)
+      for (const task of taskRecords) tasks.set(task.id, task)
+      for (const conversation of conversationRecords) agentConversations.set(conversation.id, conversation)
+      for (const image of imageRecords) images.set(image.id, image)
+      for (const thumbnail of thumbnailRecords) thumbnails.set(thumbnail.id, thumbnail)
     },
     getAllAgentConversations: async () => [...agentConversations.values()],
     putAgentConversation: async (conversation: AgentConversation) => {
@@ -75,12 +107,77 @@ vi.mock('./lib/db', () => {
     },
   }
 })
+vi.mock('./lib/onlineProjects', () => ({
+  buildLegacyProjectArchive: vi.fn(async () => new Blob(['archive'], { type: 'application/zip' })),
+  getLegacyProjectUploadId: vi.fn(() => '86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8'),
+  clearLegacyProjectUploadId: vi.fn(),
+  uploadOnlineProject: vi.fn(async () => ({
+    id: '86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8',
+    title: '本地数据',
+    archive_size: 7,
+    archive_sha256: 'sha256',
+    created_at: '2026-08-16T00:00:00Z',
+    updated_at: '2026-08-16T00:00:00Z',
+  })),
+  renameOnlineProject: vi.fn(async (id: string, title: string) => ({
+    id,
+    title,
+    archive_size: 7,
+    archive_sha256: 'sha256',
+    created_at: '2026-08-16T00:00:00Z',
+    updated_at: '2026-08-16T00:00:00Z',
+  })),
+  listOnlineProjects: vi.fn(async () => []),
+  listOnlineProjectImages: vi.fn(async () => []),
+  uploadOnlineProjectImage: vi.fn(async () => ({
+    project_id: 'project-a',
+    image_id: 'image-a',
+    mime_type: 'image/png',
+    image_size: 1,
+    image_sha256: 'sha256',
+    created_at: '2026-08-16T00:00:00Z',
+    updated_at: '2026-08-16T00:00:00Z',
+  })),
+  downloadOnlineProjectImage: vi.fn(),
+  deleteOnlineProjectImage: vi.fn(async () => undefined),
+  downloadOnlineProject: vi.fn(async () => new Uint8Array()),
+  deleteOnlineProject: vi.fn(async () => undefined),
+  buildOnlineProjectArchive: vi.fn(async () => new Blob(['archive'], { type: 'application/zip' })),
+  readOnlineProjectArchive: vi.fn(() => ({
+    tasks: [],
+    agentConversations: [],
+    favoriteCollections: [],
+    defaultFavoriteCollectionId: null,
+    images: [],
+    thumbnails: [],
+  })),
+  createOnlineProject: vi.fn((response: { id: string; title: string; archive_sha256?: string }) => ({
+    id: response.id,
+    title: response.title,
+    initialPrompt: '',
+    storage: 'online',
+    remoteId: response.id,
+    remoteArchiveSha256: response.archive_sha256,
+    syncPending: false,
+    createdAt: 1,
+    updatedAt: 1,
+  })),
+}))
 vi.mock('./lib/api', () => ({
   callImageApi: vi.fn(async () => ({
     images: [],
     actualParams: {},
     actualParamsList: [],
     revisedPrompts: [],
+  })),
+}))
+vi.mock('./lib/backendImageApi', () => ({
+  callBackendImageApi: vi.fn(async () => ({
+    images: [],
+    actualParams: {},
+    actualParamsList: [],
+    revisedPrompts: [],
+    imagesStoredOnline: true,
   })),
 }))
 vi.mock('./lib/falAiImageApi', () => ({
@@ -133,11 +230,13 @@ vi.mock('./lib/agentApi', () => ({
     }
   }),
 }))
-import { clearAgentConversations, clearImages, clearTasks, getAllAgentConversations, getAllTasks, getImage, putAgentConversation, putImage, putTask as putDbTask } from './lib/db'
+import { clearAgentConversations, clearImages, clearProjects, clearTasks, getAllAgentConversations, getAllProjects, getAllTasks, getImage, putAgentConversation, putImage, putTask as putDbTask } from './lib/db'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
 import { getFalQueuedImageResult } from './lib/falAiImageApi'
 import { queryImageStatuses } from './lib/imageStatusApi'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
+import { callBackendImageApi } from './lib/backendImageApi'
+import { buildLegacyProjectArchive, clearLegacyProjectUploadId, deleteOnlineProject, downloadOnlineProject, downloadOnlineProjectImage, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
 import { cleanStaleAgentInputDrafts, clearFailedTasks, deleteAgentRoundFromConversation, deleteFavoriteCollection, editOutputs, getActiveAgentRounds, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, reuseConfig, retryTask, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
@@ -243,7 +342,10 @@ describe('favorite collection deletion', () => {
 })
 
 describe('mask draft lifecycle in store actions', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await clearProjects()
+    await clearTasks()
+    await clearAgentConversations()
     useStore.setState({
       settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
       prompt: 'prompt',
@@ -252,6 +354,8 @@ describe('mask draft lifecycle in store actions', () => {
       maskEditorImageId: null,
       params: { ...DEFAULT_PARAMS },
       tasks: [],
+      projects: [],
+      activeProjectId: null,
       detailTaskId: null,
       lightboxImageId: null,
       lightboxImageList: [],
@@ -301,6 +405,358 @@ describe('mask draft lifecycle in store actions', () => {
     const state = useStore.getState()
     expect(state.tasks).toHaveLength(1)
     expect(state.showToast).toHaveBeenCalledWith('任务已提交', 'success')
+  })
+
+  it('stores new gallery tasks in the active project', async () => {
+    const projectId = useStore.getState().createProject('夏日饮品海报')
+
+    await submitTask()
+
+    expect(useStore.getState().tasks[0]?.projectId).toBe(projectId)
+    expect((await getAllTasks())[0]?.projectId).toBe(projectId)
+    await vi.waitFor(async () => expect((await getAllProjects()).map((project) => project.id)).toContain(projectId))
+  })
+
+  it('removes a project without deleting its generation records', async () => {
+    const projectId = useStore.getState().createProject('品牌主视觉')
+    await submitTask()
+
+    await useStore.getState().deleteProject(projectId)
+
+    expect(useStore.getState().projects).toEqual([])
+    expect(useStore.getState().tasks[0]).not.toHaveProperty('projectId')
+    expect(await getAllProjects()).toEqual([])
+    expect(await getAllTasks()).toHaveLength(1)
+    expect((await getAllTasks())[0]).not.toHaveProperty('projectId')
+  })
+
+  it('renames a project and persists the new title', async () => {
+    const projectId = useStore.getState().createProject('旧项目名')
+
+    useStore.getState().renameProject(projectId, '  新   项目名  ')
+
+    expect(useStore.getState().projects[0]?.title).toBe('新 项目名')
+    await vi.waitFor(async () => expect((await getAllProjects()).find((project) => project.id === projectId)?.title).toBe('新 项目名'))
+  })
+
+  it('renames an online project through the backend', async () => {
+    const project = {
+      id: 'online-project',
+      title: '旧项目名',
+      initialPrompt: '',
+      storage: 'online' as const,
+      remoteId: '86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8',
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    useStore.setState({ projects: [project] })
+
+    useStore.getState().renameProject(project.id, '新项目名')
+
+    await vi.waitFor(() => expect(renameOnlineProject).toHaveBeenCalledWith(project.remoteId, '新项目名'))
+  })
+
+  it('creates an online UUID project when the user is logged in', () => {
+    authState.accessToken = 'token'
+    try {
+      const projectId = useStore.getState().createProject('在线项目')
+      const project = useStore.getState().projects.find((item) => item.id === projectId)
+
+      expect(project).toMatchObject({
+        id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        storage: 'online',
+        remoteId: projectId,
+        syncPending: true,
+      })
+    } finally {
+      authState.accessToken = null
+    }
+  })
+
+  it('uploads generated images immediately for an online project', async () => {
+    const { callImageApi } = await import('./lib/api')
+    authState.accessToken = 'token'
+    vi.mocked(uploadOnlineProjectImage).mockClear()
+    vi.mocked(callImageApi).mockResolvedValueOnce({
+      images: ['data:image/png;base64,AAECAw=='],
+      actualParams: {},
+      actualParamsList: [],
+      revisedPrompts: [],
+    })
+    try {
+      const projectId = useStore.getState().createProject('在线生成')
+      await submitTask()
+
+      await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
+      const generatedTask = useStore.getState().tasks[0]
+      expect(uploadOnlineProjectImage).toHaveBeenCalledWith(projectId, generatedTask.id, expect.objectContaining({
+        id: generatedTask.outputImages[0],
+        dataUrl: 'data:image/png;base64,AAECAw==',
+        source: 'generated',
+      }))
+    } finally {
+      authState.accessToken = null
+    }
+  })
+
+  it('generates and stores OIDC project images through the backend without uploading again', async () => {
+    const { callImageApi } = await import('./lib/api')
+    authState.accessToken = 'token'
+    vi.mocked(callImageApi).mockClear()
+    vi.mocked(callBackendImageApi).mockClear()
+    vi.mocked(uploadOnlineProjectImage).mockClear()
+    vi.mocked(callBackendImageApi).mockResolvedValueOnce({
+      images: ['data:image/png;base64,AAECAw=='],
+      imageIds: ['remote-image-id'],
+      actualParams: { size: '1024x1024', output_format: 'png', n: 1 },
+      actualParamsList: [{ size: '1024x1024', output_format: 'png', n: 1 }],
+      revisedPrompts: ['后端改写'],
+      imagesStoredOnline: true,
+    })
+    try {
+      const projectId = useStore.getState().createProject('后端在线生成')
+      useStore.setState({ oidcApiOverride: { apiKey: 'oidc-key', model: 'gpt-image-2' } })
+
+      await submitTask()
+
+      await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
+      const generatedTask = useStore.getState().tasks[0]
+      expect(callBackendImageApi).toHaveBeenCalledWith(expect.objectContaining({
+        projectId,
+        projectTitle: '后端在线生成',
+        taskId: generatedTask.id,
+        apiKey: 'oidc-key',
+        model: 'gpt-image-2',
+        prompt: 'prompt',
+        onImageStatusRequestCreated: expect.any(Function),
+      }))
+      expect(callImageApi).not.toHaveBeenCalled()
+      expect(uploadOnlineProjectImage).not.toHaveBeenCalled()
+      expect(generatedTask.outputImages).toHaveLength(1)
+    } finally {
+      authState.accessToken = null
+    }
+  })
+
+  it('routes online OIDC Responses image generation through the backend', async () => {
+    const { callImageApi } = await import('./lib/api')
+    const profile = createDefaultOpenAIProfile({
+      id: 'responses-profile',
+      apiMode: 'responses',
+      model: 'gpt-image-2',
+    })
+    authState.accessToken = 'token'
+    vi.mocked(callImageApi).mockClear()
+    vi.mocked(callBackendImageApi).mockClear()
+    vi.mocked(uploadOnlineProjectImage).mockClear()
+    vi.mocked(callBackendImageApi).mockImplementationOnce(async (options) => {
+      options.onImageStatusRequestCreated?.({ requestId: 'img-response-a' })
+      return {
+        images: ['data:image/png;base64,cmVzcG9uc2Vz'],
+        actualParams: { output_format: 'png', n: 1 },
+        actualParamsList: [{ output_format: 'png', n: 1 }],
+        revisedPrompts: [],
+        imagesStoredOnline: true,
+      }
+    })
+    try {
+      useStore.setState({
+        settings: normalizeSettings({
+          ...DEFAULT_SETTINGS,
+          profiles: [profile],
+          activeProfileId: profile.id,
+        }),
+      })
+      const projectId = useStore.getState().createProject('Responses 在线生成')
+      useStore.setState({ oidcApiOverride: { apiKey: 'oidc-key', model: 'gpt-image-2' } })
+
+      await submitTask()
+
+      await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
+      expect(callBackendImageApi).toHaveBeenCalledWith(expect.objectContaining({
+        projectId,
+        apiMode: 'responses',
+        apiKey: 'oidc-key',
+        model: 'gpt-image-2',
+        onImageStatusRequestCreated: expect.any(Function),
+      }))
+      expect(callImageApi).not.toHaveBeenCalled()
+      expect(uploadOnlineProjectImage).not.toHaveBeenCalled()
+      expect(useStore.getState().tasks[0].imageStatusRequestIds).toEqual(['img-response-a'])
+    } finally {
+      authState.accessToken = null
+    }
+  })
+
+  it('loads changed online project archives during startup', async () => {
+    const projectId = '86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8'
+    authState.accessToken = 'token'
+    await putDbTask(task({ id: 'legacy-local-task' }))
+    vi.mocked(listOnlineProjects).mockResolvedValueOnce([{
+      id: projectId,
+      title: '云端项目',
+      archive_size: 10,
+      archive_sha256: 'remote-sha',
+      created_at: '2026-08-16T00:00:00Z',
+      updated_at: '2026-08-16T01:00:00Z',
+    }])
+    vi.mocked(readOnlineProjectArchive).mockReturnValueOnce({
+      project: {
+        id: projectId,
+        title: '云端项目',
+        initialPrompt: '云端提示词',
+        storage: 'online',
+        remoteId: projectId,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      tasks: [task({ id: 'remote-task', outputImages: ['remote-image'] })],
+      agentConversations: [],
+      favoriteCollections: [],
+      defaultFavoriteCollectionId: null,
+      images: [],
+      thumbnails: [],
+    })
+    vi.mocked(listOnlineProjectImages).mockResolvedValueOnce([{
+      project_id: projectId,
+      image_id: 'remote-image',
+      task_id: 'remote-task',
+      source: 'generated',
+      mime_type: 'image/png',
+      image_size: 3,
+      image_sha256: 'image-sha',
+      created_at: '2026-08-16T00:00:00Z',
+      updated_at: '2026-08-16T01:00:00Z',
+    }])
+    vi.mocked(downloadOnlineProjectImage).mockResolvedValueOnce({
+      id: 'remote-image',
+      dataUrl: 'data:image/png;base64,AAECAw==',
+      source: 'generated',
+      createdAt: 1,
+    })
+    try {
+      await initStore()
+
+      expect(listOnlineProjects).toHaveBeenCalled()
+      expect(downloadOnlineProject).toHaveBeenCalledWith(projectId)
+      expect(useStore.getState().projects[0]).toMatchObject({
+        id: projectId,
+        storage: 'online',
+        remoteArchiveSha256: 'remote-sha',
+        initialPrompt: '云端提示词',
+      })
+      expect(useStore.getState().tasks.find((item) => item.id === 'remote-task')?.projectId).toBe(projectId)
+      expect(useStore.getState().tasks.find((item) => item.id === 'legacy-local-task')).not.toHaveProperty('projectId')
+      expect((await getImage('remote-image'))?.dataUrl).toBe('data:image/png;base64,AAECAw==')
+    } finally {
+      authState.accessToken = null
+    }
+  })
+
+  it('loads only the active online project contents and hydrates another project after switching', async () => {
+    const projectA = '86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8'
+    const projectB = '4d7493e9-2d64-4ef2-b106-9ce56fd9873d'
+    const responses = [projectA, projectB].map((id, index) => ({
+      id,
+      title: `项目 ${index + 1}`,
+      archive_size: 10,
+      archive_sha256: `remote-sha-${index + 1}`,
+      created_at: '2026-08-16T00:00:00Z',
+      updated_at: '2026-08-16T01:00:00Z',
+    }))
+    authState.accessToken = 'token'
+    vi.mocked(listOnlineProjects).mockResolvedValue(responses)
+    vi.mocked(downloadOnlineProject).mockClear()
+    vi.mocked(listOnlineProjectImages).mockClear()
+    useStore.setState({ activeProjectId: projectA })
+    try {
+      await initStore()
+
+      expect(downloadOnlineProject).toHaveBeenCalledTimes(1)
+      expect(downloadOnlineProject).toHaveBeenCalledWith(projectA)
+      expect(listOnlineProjectImages).toHaveBeenCalledTimes(1)
+      expect(listOnlineProjectImages).toHaveBeenCalledWith(projectA)
+      expect(useStore.getState().projects.find((project) => project.id === projectB)?.remoteArchiveSha256).toBeUndefined()
+
+      vi.mocked(downloadOnlineProject).mockClear()
+      vi.mocked(listOnlineProjectImages).mockClear()
+      useStore.getState().setActiveProjectId(projectB)
+      await initStore()
+
+      expect(downloadOnlineProject).toHaveBeenCalledTimes(1)
+      expect(downloadOnlineProject).toHaveBeenCalledWith(projectB)
+      expect(listOnlineProjectImages).toHaveBeenCalledTimes(1)
+      expect(listOnlineProjectImages).toHaveBeenCalledWith(projectB)
+    } finally {
+      vi.mocked(listOnlineProjects).mockResolvedValue([])
+      authState.accessToken = null
+    }
+  })
+
+  it('deduplicates concurrent startup project requests', async () => {
+    authState.accessToken = 'token'
+    vi.mocked(listOnlineProjects).mockClear()
+    let finishList: ((projects: Awaited<ReturnType<typeof listOnlineProjects>>) => void) | undefined
+    vi.mocked(listOnlineProjects).mockImplementationOnce(() => new Promise((resolve) => {
+      finishList = resolve
+    }))
+    try {
+      const first = initStore()
+      const second = initStore()
+
+      await vi.waitFor(() => expect(listOnlineProjects).toHaveBeenCalledTimes(1))
+      finishList?.([])
+      await Promise.all([first, second])
+
+      expect(listOnlineProjects).toHaveBeenCalledTimes(1)
+      await initStore()
+      expect(listOnlineProjects).toHaveBeenCalledTimes(2)
+    } finally {
+      finishList?.([])
+      authState.accessToken = null
+    }
+  })
+
+  it('deletes an online project through the backend before removing its cache', async () => {
+    const project = {
+      id: 'online-project',
+      title: '在线项目',
+      initialPrompt: '',
+      storage: 'online' as const,
+      remoteId: '86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8',
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    useStore.setState({ projects: [project] })
+
+    await useStore.getState().deleteProject(project.id)
+
+    expect(deleteOnlineProject).toHaveBeenCalledWith(project.remoteId)
+    expect(useStore.getState().projects).toEqual([])
+  })
+
+  it('keeps cached records as local data when an online project no longer exists', async () => {
+    const project = {
+      id: 'missing-online-project',
+      title: '已删除项目',
+      initialPrompt: '',
+      storage: 'online' as const,
+      remoteId: '86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8',
+      remoteArchiveSha256: 'old-sha',
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    authState.accessToken = 'token'
+    useStore.setState({ projects: [project] })
+    await putDbTask(task({ id: 'cached-task', projectId: project.id }))
+    try {
+      await initStore()
+
+      expect(useStore.getState().projects).toEqual([])
+      expect(useStore.getState().tasks.find((item) => item.id === 'cached-task')).not.toHaveProperty('projectId')
+    } finally {
+      authState.accessToken = null
+    }
   })
 
   it('keeps OIDC api override when retrying a task', async () => {
@@ -576,6 +1032,91 @@ describe('mask draft lifecycle in store actions', () => {
     const state = useStore.getState()
     expect(state.inputImages.map((img) => img.id)).toEqual([replacement.id, imageB.id])
     expect(state.prompt).toBe(prompt)
+  })
+})
+
+describe('legacy project online save', () => {
+  beforeEach(async () => {
+    await clearProjects()
+    await clearTasks()
+    await clearAgentConversations()
+    vi.mocked(buildLegacyProjectArchive).mockClear()
+    vi.mocked(uploadOnlineProject).mockClear()
+    vi.mocked(clearLegacyProjectUploadId).mockClear()
+    useStore.setState({
+      tasks: [],
+      projects: [],
+      activeProjectId: null,
+      agentConversations: [],
+      legacyProjectSaving: false,
+      showToast: vi.fn(),
+    })
+  })
+
+  it('moves only unassigned tasks into the uploaded online project', async () => {
+    const legacyTask = task({ id: 'legacy-task' })
+    const existingProjectTask = task({ id: 'project-task', projectId: 'project-a' })
+    await putDbTask(legacyTask)
+    await putDbTask(existingProjectTask)
+    useStore.setState({
+      tasks: [legacyTask, existingProjectTask],
+      agentConversations: [agentConversation({ id: 'legacy-conversation' })],
+    })
+
+    await useStore.getState().saveLegacyProjectOnline()
+
+    const state = useStore.getState()
+    const project = state.projects[0]
+    expect(project).toMatchObject({ storage: 'online', title: '本地数据' })
+    expect(state.tasks.find((item) => item.id === legacyTask.id)?.projectId).toBe(project.id)
+    expect(state.tasks.find((item) => item.id === existingProjectTask.id)?.projectId).toBe('project-a')
+    expect(state.agentConversations[0]?.projectId).toBe(project.id)
+    expect(state.activeProjectId).toBe(project.id)
+    expect((await getAllTasks()).find((item) => item.id === legacyTask.id)?.projectId).toBe(project.id)
+    expect((await getAllAgentConversations())[0]?.projectId).toBe(project.id)
+    expect(clearLegacyProjectUploadId).toHaveBeenCalledOnce()
+  })
+
+  it('does not move records assigned while the upload is in progress', async () => {
+    const legacyTask = task({ id: 'legacy-task' })
+    const legacyConversation = agentConversation({ id: 'legacy-conversation' })
+    await putDbTask(legacyTask)
+    await putAgentConversation(legacyConversation)
+    useStore.setState({ tasks: [legacyTask], agentConversations: [legacyConversation] })
+    let finishArchive: ((archive: Blob) => void) | undefined
+    vi.mocked(buildLegacyProjectArchive).mockImplementationOnce(() => new Promise((resolve) => {
+      finishArchive = resolve
+    }))
+
+    const saving = useStore.getState().saveLegacyProjectOnline()
+    await vi.waitFor(() => expect(finishArchive).toBeTypeOf('function'))
+    const reassignedTask = { ...legacyTask, projectId: 'project-a' }
+    const reassignedConversation = { ...legacyConversation, projectId: 'project-a' }
+    await putDbTask(reassignedTask)
+    await putAgentConversation(reassignedConversation)
+    useStore.setState({ tasks: [reassignedTask], agentConversations: [reassignedConversation] })
+    finishArchive?.(new Blob(['archive'], { type: 'application/zip' }))
+    await saving
+
+    expect(useStore.getState().tasks[0]?.projectId).toBe('project-a')
+    expect(useStore.getState().agentConversations[0]?.projectId).toBe('project-a')
+    expect((await getAllTasks())[0]?.projectId).toBe('project-a')
+    expect((await getAllAgentConversations())[0]?.projectId).toBe('project-a')
+  })
+
+  it('keeps local data unchanged when upload fails', async () => {
+    const legacyTask = task({ id: 'legacy-task' })
+    vi.mocked(uploadOnlineProject).mockRejectedValueOnce(new Error('网络错误'))
+    useStore.setState({ tasks: [legacyTask] })
+
+    await useStore.getState().saveLegacyProjectOnline()
+
+    const state = useStore.getState()
+    expect(state.tasks[0]).not.toHaveProperty('projectId')
+    expect(state.projects).toEqual([])
+    expect(state.legacyProjectSaving).toBe(false)
+    expect(state.showToast).toHaveBeenCalledWith('网络错误', 'error')
+    expect(clearLegacyProjectUploadId).not.toHaveBeenCalled()
   })
 })
 

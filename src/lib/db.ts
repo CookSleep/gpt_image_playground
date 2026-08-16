@@ -1,11 +1,12 @@
-import type { AgentConversation, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
+import type { AgentConversation, Project, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
 
 const DB_NAME = 'gpt-image-playground'
-const DB_VERSION = 3
+const DB_VERSION = 4
 const STORE_TASKS = 'tasks'
 const STORE_IMAGES = 'images'
 const STORE_THUMBNAILS = 'thumbnails'
 const STORE_AGENT_CONVERSATIONS = 'agentConversations'
+const STORE_PROJECTS = 'projects'
 const THUMBNAIL_MAX_SIZE = 720
 const THUMBNAIL_QUALITY = 0.9
 const THUMBNAIL_VERSION = 2
@@ -28,6 +29,9 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORE_AGENT_CONVERSATIONS)) {
         db.createObjectStore(STORE_AGENT_CONVERSATIONS, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(STORE_PROJECTS)) {
+        db.createObjectStore(STORE_PROJECTS, { keyPath: 'id' })
       }
     }
     req.onsuccess = () => resolve(req.result)
@@ -68,6 +72,72 @@ export function deleteTask(id: string): Promise<undefined> {
 
 export function clearTasks(): Promise<undefined> {
   return dbTransaction(STORE_TASKS, 'readwrite', (s) => s.clear())
+}
+
+// ===== Projects =====
+
+export function getAllProjects(): Promise<Project[]> {
+  return dbTransaction(STORE_PROJECTS, 'readonly', (s) => s.getAll())
+}
+
+export function putProject(project: Project): Promise<IDBValidKey> {
+  return dbTransaction(STORE_PROJECTS, 'readwrite', (s) => s.put(project))
+}
+
+export function deleteProject(id: string): Promise<undefined> {
+  return dbTransaction(STORE_PROJECTS, 'readwrite', (s) => s.delete(id))
+}
+
+export function clearProjects(): Promise<undefined> {
+  return dbTransaction(STORE_PROJECTS, 'readwrite', (s) => s.clear())
+}
+
+export function putProjectWithRecords(project: Project, tasks: TaskRecord[], conversations: AgentConversation[]): Promise<undefined> {
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE_PROJECTS, STORE_TASKS, STORE_AGENT_CONVERSATIONS], 'readwrite')
+        tx.objectStore(STORE_PROJECTS).put(project)
+        const taskStore = tx.objectStore(STORE_TASKS)
+        for (const task of tasks) taskStore.put(task)
+        const conversationStore = tx.objectStore(STORE_AGENT_CONVERSATIONS)
+        for (const conversation of conversations) conversationStore.put(conversation)
+        tx.oncomplete = () => resolve(undefined)
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      }),
+  )
+}
+
+export function replaceProjectCache(
+  projects: Project[],
+  tasks: TaskRecord[],
+  conversations: AgentConversation[],
+  images: StoredImage[],
+  thumbnails: StoredImageThumbnail[],
+): Promise<undefined> {
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE_PROJECTS, STORE_TASKS, STORE_AGENT_CONVERSATIONS, STORE_IMAGES, STORE_THUMBNAILS], 'readwrite')
+        const projectStore = tx.objectStore(STORE_PROJECTS)
+        projectStore.clear()
+        for (const project of projects) projectStore.put(project)
+        const taskStore = tx.objectStore(STORE_TASKS)
+        taskStore.clear()
+        for (const task of tasks) taskStore.put(task)
+        const conversationStore = tx.objectStore(STORE_AGENT_CONVERSATIONS)
+        conversationStore.clear()
+        for (const conversation of conversations) conversationStore.put(conversation)
+        const imageStore = tx.objectStore(STORE_IMAGES)
+        for (const image of images) imageStore.put(image)
+        const thumbnailStore = tx.objectStore(STORE_THUMBNAILS)
+        for (const thumbnail of thumbnails) thumbnailStore.put(thumbnail)
+        tx.oncomplete = () => resolve(undefined)
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      }),
+  )
 }
 
 // ===== Agent conversations =====

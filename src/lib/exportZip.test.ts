@@ -44,6 +44,7 @@ describe('exportZip', () => {
       exportedAt: 1700000001000,
       settings: {} as AppSettings,
       tasks: [task],
+      projects: [],
       images,
       thumbnailsByImageId: new Map([[thumbnail.id, thumbnail]]),
       favoriteCollections: [],
@@ -53,7 +54,7 @@ describe('exportZip', () => {
     const parsed = readExportZip(bytes)
 
     expect(parsed.manifest).toEqual(manifest)
-    expect(parsed.manifest.version).toBe(3)
+    expect(parsed.manifest.version).toBe(4)
     expect(parsed.manifest.exportedAt).toBe(new Date(1700000001000).toISOString())
     expect(parsed.manifest.imageFiles?.['img-1']).toEqual({
       path: 'images/task-task-1-input.png',

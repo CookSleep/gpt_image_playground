@@ -1,6 +1,6 @@
 # GPT Image Playground 后端（OIDC 账号体系）
 
-第一期目标：为前端提供 **OIDC 登录 + 用户身份**。后端只做账号体系，不做业务图像 API。
+后端提供 **OIDC 登录、在线项目持久化和图片生成**。在线项目使用 OIDC 选择的 API Key 时，前端只请求本后端，由后端调用受信任 provider 的 Images 或 Responses API，并在返回图片前写入数据库。
 
 - 框架：Gin + zerolog
 - 数据库：PostgreSQL
@@ -66,6 +66,13 @@ backend/
 | GET  | `/auth/user` | 当前登录用户的公开资料 |
 | POST | `/auth/logout` | 第一期 JWT 无状态，仅 204 |
 | GET  | `/api/v1/me` | 占位示例，演示登录后的 API 访问 |
+| GET/POST | `/api/v1/projects` | 查询或保存在线项目 |
+| GET/PATCH/DELETE | `/api/v1/projects/:id` | 读取、重命名或删除在线项目 |
+| GET/POST | `/api/v1/projects/:id/images` | 查询或保存项目图片 |
+| GET/DELETE | `/api/v1/projects/:id/images/:imageId` | 读取或删除项目图片 |
+| POST | `/api/v1/projects/:id/generations` | 由后端调用 Images 或 Responses API，图片落库后返回 |
+
+生图请求中的 API Key 仅用于本次上游请求，不会写入数据库。上游基址由当前 JWT 的 OIDC provider 配置决定，客户端不能指定任意地址。
 
 ### 回调 token 传递格式
 

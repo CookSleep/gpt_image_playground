@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ACCESS_TOKEN_KEY, fetchUser, getAuthBaseUrl, isAuthEnabled } from './api'
+import { ACCESS_TOKEN_KEY, authFetch, fetchUser, getAuthBaseUrl, isAuthEnabled } from './api'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -53,6 +53,26 @@ describe('fetchUser', () => {
     expect(first?.id).toBe('user-a')
     expect(second?.id).toBe('user-a')
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledWith('/auth/user', expect.any(Object))
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/^\/auth\/user\?_\=\d+$/), expect.objectContaining({
+      cache: 'no-store',
+      signal: expect.any(AbortSignal),
+    }))
+  })
+})
+
+describe('authFetch', () => {
+  it('lets the browser set multipart boundaries for FormData', async () => {
+    vi.stubGlobal('window', { __APP_CONFIG__: { AUTH_BACKEND_URL: '' } })
+    vi.stubGlobal('localStorage', { getItem: vi.fn(() => 'token-a') })
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const body = new FormData()
+    body.set('title', '本地数据')
+
+    await authFetch('/api/v1/projects', { method: 'POST', body })
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers
+    expect(headers.get('Authorization')).toBe('Bearer token-a')
+    expect(headers.has('Content-Type')).toBe(false)
   })
 })

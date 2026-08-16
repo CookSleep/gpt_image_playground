@@ -160,6 +160,8 @@ export type TaskStatus = 'running' | 'done' | 'error'
 
 export interface TaskRecord {
   id: string
+  /** 所属项目 ID；旧版任务可能没有该字段 */
+  projectId?: string
   prompt: string
   params: TaskParams
   /** 生成时使用的 Provider 类型 */
@@ -250,6 +252,20 @@ export interface FavoriteCollection {
   updatedAt: number
 }
 
+// ===== 项目 =====
+
+export interface Project {
+  id: string
+  title: string
+  initialPrompt: string
+  storage?: 'local' | 'online'
+  remoteId?: string
+  remoteArchiveSha256?: string
+  syncPending?: boolean
+  createdAt: number
+  updatedAt: number
+}
+
 // ===== Agent 模式 =====
 
 export type AgentMessageRole = 'user' | 'assistant'
@@ -294,6 +310,7 @@ export interface AgentRound {
 
 export interface AgentConversation {
   id: string
+  projectId?: string
   title: string
   activeRoundId?: string | null
   createdAt: number
@@ -437,6 +454,7 @@ export interface ExportData {
   exportedAt: string
   settings?: AppSettings
   tasks?: TaskRecord[]
+  projects?: Project[]
   favoriteCollections?: FavoriteCollection[]
   defaultFavoriteCollectionId?: string | null
   agentConversations?: AgentConversation[]

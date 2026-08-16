@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT } from '../lib/dropdown'
 import { ChevronDownIcon, EditIcon, PlusIcon, TrashIcon, DragHandleIcon } from './icons'
@@ -6,6 +6,8 @@ import { ChevronDownIcon, EditIcon, PlusIcon, TrashIcon, DragHandleIcon } from '
 interface Option {
   label: string
   value: string | number
+  icon?: ReactNode
+  description?: string
   variant?: 'action' | 'danger'
   draggable?: boolean
   actions?: Array<{
@@ -22,10 +24,11 @@ interface SelectProps {
   options: Option[]
   disabled?: boolean
   className?: string
+  menuClassName?: string
   onOpenChange?: (isOpen: boolean) => void
 }
 
-export default function Select({ value, onChange, onReorder, options, disabled, className, onOpenChange }: SelectProps) {
+export default function Select({ value, onChange, onReorder, options, disabled, className, menuClassName, onOpenChange }: SelectProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [menuMaxHeight, setMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [placement, setPlacement] = useState<'bottom' | 'top'>('bottom')
@@ -164,13 +167,19 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
           disabled ? '!opacity-50 !cursor-not-allowed !bg-gray-100/50 dark:!bg-white/[0.05]' : ''
         }`}
       >
-        <span className="min-w-0 flex-1 truncate">{selectedOption?.label ?? value}</span>
+        <span className="flex min-w-0 flex-1 items-center gap-2.5">
+          {selectedOption?.icon}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{selectedOption?.label ?? value}</span>
+            {selectedOption?.description && <span className="block truncate text-[10px] font-normal leading-3 text-gray-400 dark:text-gray-500">{selectedOption.description}</span>}
+          </span>
+        </span>
         <ChevronDownIcon className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
       </div>
 
       {isOpen && (
         <div
-          className={`absolute z-50 w-full overflow-hidden overflow-y-auto rounded-xl border border-gray-200/60 bg-white/95 py-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ring-1 ring-black/5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-900/95 dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] dark:ring-white/10 custom-scrollbar ${
+          className={`absolute z-50 w-full overflow-hidden overflow-y-auto rounded-xl border border-gray-200/60 bg-white/95 py-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ring-1 ring-black/5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-900/95 dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] dark:ring-white/10 custom-scrollbar ${menuClassName ?? ''} ${
             placement === 'top' ? 'bottom-full mb-1.5 animate-dropdown-up' : 'top-full mt-1.5 animate-dropdown-down'
           }`}
           style={{ maxHeight: menuMaxHeight }}
@@ -362,7 +371,11 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
                     <DragHandleIcon className="h-3.5 w-3.5" />
                   </div>
                 )}
-                <span className="min-w-0 truncate">{option.label}</span>
+                {option.icon}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{option.label}</span>
+                  {option.description && <span className="mt-0.5 block truncate text-[10px] font-normal text-gray-400 dark:text-gray-500">{option.description}</span>}
+                </span>
               </div>
               {option.actions?.length ? (
                 <span className="ml-auto flex shrink-0 items-center gap-1">

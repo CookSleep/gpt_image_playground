@@ -1,12 +1,14 @@
 import { useEffect } from 'react'
-import { initStore } from './store'
-import { useStore } from './store'
+import { LOCAL_PROJECT_ID, initStore, useStore } from './store'
 import { activateFirstImportedProfile, buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
 import { isDefaultConfigOnlyEnabled, mergeImportedSettings } from './lib/apiProfiles'
 import { getCustomProviderConfigUrl, loadCustomProviderSettingsFromUrl } from './lib/customProviderConfigUrl'
+import { getProjectIdFromUrl } from './lib/projectRoute'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import type { AppSettings } from './types'
 import Header from './components/Header'
+import ProjectHome from './components/ProjectHome'
+import LegacyProjectToolbar from './components/LegacyProjectToolbar'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
 import AgentWorkspace from './components/AgentWorkspace'
@@ -27,10 +29,21 @@ let customProviderConfigUrlImportStarted = false
 export default function App() {
   const setSettings = useStore((s) => s.setSettings)
   const appMode = useStore((s) => s.appMode)
+  const activeProjectId = useStore((s) => s.activeProjectId)
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   useDockerApiUrlMigrationNotice()
   useGlobalClickSuppression()
+
+  useEffect(() => {
+    const syncProjectFromUrl = () => {
+      useStore.getState().setActiveProjectId(getProjectIdFromUrl())
+    }
+
+    syncProjectFromUrl()
+    window.addEventListener('popstate', syncProjectFromUrl)
+    return () => window.removeEventListener('popstate', syncProjectFromUrl)
+  }, [])
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)
@@ -110,17 +123,20 @@ export default function App() {
   return (
     <>
       <Header />
-      {appMode === 'agent' ? (
+      {activeProjectId === null ? (
+        <ProjectHome />
+      ) : appMode === 'agent' ? (
         <AgentWorkspace />
       ) : (
         <main data-home-main data-drag-select-surface className="pb-48">
           <div className="safe-area-x max-w-7xl mx-auto">
             <SearchBar />
+            {activeProjectId === LOCAL_PROJECT_ID && <LegacyProjectToolbar />}
             {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
           </div>
         </main>
       )}
-      <InputBar />
+      {activeProjectId !== null && <InputBar />}
       <DetailModal />
       <Lightbox />
       <SettingsModal />

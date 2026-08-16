@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,6 +73,15 @@ func buildProvider(ctx context.Context, pc config.OIDCProviderConfig) (*Provider
 func (r *ProviderRegistry) Get(name string) (*Provider, bool) {
 	p, ok := r.providers[name]
 	return p, ok
+}
+
+// ResourceBaseURL 返回 provider 的受信任资源服务基址。
+func (r *ProviderRegistry) ResourceBaseURL(name string) (string, bool) {
+	p, ok := r.providers[name]
+	if !ok {
+		return "", false
+	}
+	return strings.TrimRight(p.cfg.IssuerURL, "/"), true
 }
 
 // List 列出所有 provider 的展示信息（供前端登录页使用）

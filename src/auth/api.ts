@@ -21,6 +21,7 @@ export const OIDC_TOKEN_EXPIRY_KEY = 'auth.oidc_access_token_expire_at'
 /** 预刷提前量（秒）：距过期还剩不足这么多就算“快过期” */
 const OIDC_REFRESH_SKEW_SEC = 60
 const FETCH_USER_CACHE_MS = 1000
+const AUTH_REQUEST_TIMEOUT_MS = 8000
 
 let fetchUserInFlight: { token: string; promise: Promise<PublicUser | null> } | null = null
 let fetchUserCache: { token: string; value: PublicUser | null; expiresAt: number } | null = null
@@ -212,7 +213,8 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
   const accessToken = getAccessToken()
   const headers = new Headers(init.headers || {})
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
-  if (init.body && !headers.has('Content-Type')) {
+  const isFormData = typeof FormData !== 'undefined' && init.body instanceof FormData
+  if (init.body && !isFormData && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
 
@@ -220,12 +222,12 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
   if (resp.status !== 401) return resp
 
   // 尝试 refresh
-  const refreshed = await refreshTokens()
+  const refreshed = await refreshTokens(init.signal ?? undefined)
   if (!refreshed) return resp
 
   const retryHeaders = new Headers(init.headers || {})
   retryHeaders.set('Authorization', `Bearer ${refreshed.access_token}`)
-  if (init.body && !retryHeaders.has('Content-Type')) {
+  if (init.body && !isFormData && !retryHeaders.has('Content-Type')) {
     retryHeaders.set('Content-Type', 'application/json')
   }
   resp = await fetch(url(input), { ...init, headers: retryHeaders })
@@ -234,7 +236,7 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
 
 /** 列出可用的 OIDC 提供商 */
 export async function listProviders(): Promise<Provider[]> {
-  const resp = await fetch(url('/auth/providers'))
+  const resp = await fetch(url('/auth/providers'), { signal: AbortSignal.timeout(AUTH_REQUEST_TIMEOUT_MS) })
   if (!resp.ok) throw new Error(`list providers: ${resp.status}`)
   const data = (await resp.json()) as { providers: Provider[] }
   return data.providers || []
@@ -254,7 +256,11 @@ export async function fetchUser(): Promise<PublicUser | null> {
   if (token && fetchUserInFlight?.token === token) return fetchUserInFlight.promise
 
   const promise = (async () => {
-    const resp = await authFetch('/auth/user')
+    // 查询参数绕过仍在控制当前页面的旧版 Service Worker 缓存；新版本身不会缓存 API。
+    const resp = await authFetch(`/auth/user?_=${Date.now()}`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(AUTH_REQUEST_TIMEOUT_MS),
+    })
     if (resp.status === 401 || resp.status === 404) return null
     if (!resp.ok) throw new Error(`fetch user: ${resp.status}`)
     return (await resp.json()) as PublicUser
@@ -278,7 +284,7 @@ export async function fetchUser(): Promise<PublicUser | null> {
 }
 
 /** 刷新 token，失败返回 null 并清掉本地 token */
-export async function refreshTokens(): Promise<TokenPair | null> {
+export async function refreshTokens(signal?: AbortSignal): Promise<TokenPair | null> {
   const refresh = getRefreshToken()
   if (!refresh) return null
   try {
@@ -286,6 +292,7 @@ export async function refreshTokens(): Promise<TokenPair | null> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: refresh }),
+      signal,
     })
     if (!resp.ok) {
       clearTokens()
