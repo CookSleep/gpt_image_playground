@@ -937,7 +937,7 @@ export default function AgentWorkspace({ embedded = false }: { embedded?: boolea
       </aside>
 
       {/* Center Chat Area */}
-      <section className="min-w-0 flex-1 flex flex-col relative">
+      <section className="min-h-0 min-w-0 flex-1 flex flex-col relative">
         {/* Mobile Header Toggles */}
         <div className={`sticky top-0 z-20 lg:hidden overflow-hidden transition-all duration-300 ease-in-out ${mobileTopBarVisible ? 'max-h-16 opacity-100 mb-2' : 'max-h-0 opacity-0 mb-0 pointer-events-none'}`}>
           <div
@@ -969,7 +969,7 @@ export default function AgentWorkspace({ embedded = false }: { embedded?: boolea
 
         <div 
           ref={scrollContainerRef}
-          className={`flex-1 space-y-4 ${embedded ? 'overflow-y-auto' : 'overflow-visible'} pb-[calc(var(--input-bar-clearance,12rem)+1.5rem)] px-1 lg:pt-14 lg:px-4`}
+          className={`min-h-0 flex-1 space-y-4 ${embedded ? 'overflow-y-auto' : 'overflow-visible'} pb-[calc(var(--input-bar-clearance,12rem)+1.5rem)] px-1 lg:pt-14 lg:px-4`}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}

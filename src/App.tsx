@@ -136,12 +136,13 @@ export default function App() {
             {activeProjectId === LOCAL_PROJECT_ID && <LegacyProjectToolbar />}
             {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
           </main>
-          <div className={`${appMode === 'gallery' ? 'hidden xl:block' : ''} min-w-0 border-gray-200 xl:border-l xl:pl-4 dark:border-white/[0.08] xl:fixed xl:right-0 xl:top-14 xl:bottom-0 xl:z-30 xl:w-[420px] xl:overflow-hidden`}>
+          <div className={`${appMode === 'gallery' ? 'hidden xl:block' : ''} relative min-w-0 border-gray-200 xl:border-l xl:pl-4 dark:border-white/[0.08] xl:fixed xl:right-0 xl:top-14 xl:bottom-0 xl:z-30 xl:w-[420px] xl:overflow-hidden`}>
             <AgentWorkspace embedded />
+            {appMode === 'agent' && <InputBar />}
           </div>
         </div>
       )}
-      {activeProjectId !== null && <InputBar />}
+      {activeProjectId !== null && appMode !== 'agent' && <InputBar />}
       <DetailModal />
       <Lightbox />
       <SettingsModal />
