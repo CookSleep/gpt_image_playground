@@ -62,6 +62,40 @@ describe('callBackendImageApi', () => {
     })
   })
 
+  it('sends image edits to the authenticated backend edit endpoint', async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      images: ['data:image/png;base64,AAECAw=='],
+      image_ids: ['image-a'],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+
+    const image = 'data:image/png;base64,aW1hZ2U='
+    const mask = 'data:image/png;base64,bWFzaw=='
+    await callBackendImageApi({
+      projectId: 'project/a',
+      projectTitle: '项目 A',
+      taskId: 'task-a',
+      apiKey: 'oidc-key',
+      model: 'gpt-image-2',
+      apiMode: 'images',
+      allowPromptRewrite: true,
+      codexCli: false,
+      prompt: '按参考图编辑',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [image],
+      maskDataUrl: mask,
+    })
+
+    expect(authFetch).toHaveBeenCalledWith('/api/v1/projects/project%2Fa/edits', expect.objectContaining({
+      method: 'POST',
+    }))
+    const request = JSON.parse(vi.mocked(authFetch).mock.calls[0][1]?.body as string)
+    expect(request).toMatchObject({
+      prompt: '按参考图编辑',
+      input_images: [image],
+      mask,
+    })
+  })
+
   it('surfaces backend generation errors', async () => {
     vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({ message: 'provider failed' }), {
       status: 502,

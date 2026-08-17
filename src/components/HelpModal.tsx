@@ -67,11 +67,11 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
               <section>
                 <div className="space-y-4">
                   <ul className="list-disc pl-4 space-y-2">
-                    <li>需要使用 Responses API 配置。</li>
+                    <li>Agent 消息始终通过 Responses API 提交。</li>
                     <li>如需 Agent 搜索互联网或读取 URL 内容，可在设置的 Agent 配置中开启“网络搜索”。</li>
                     <li>输入 <strong className="text-blue-500 dark:text-blue-400 font-medium">@</strong> 可引用参考图或前面轮次生成的图片；Agent 也会自行参考上下文中的图片。</li>
                     <li>编辑某轮消息重新发送，或重新生成某轮消息，会产生可切换的分支。</li>
-                    <li>生成的图片会同步到画廊；删除对话默认不会删除画廊中的任务。</li>
+                    <li>生成的图片会同步到当前项目；删除对话默认不会删除项目中的任务。</li>
                   </ul>
                 </div>
               </section>

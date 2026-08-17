@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Project, TaskRecord } from '../types'
+import { useAuth } from '../auth/AuthContext'
+import { fetchApiKeys, type ApiKeyItem } from '../auth/oidcResource'
 import { LOCAL_PROJECT_ID, ensureImageThumbnailCached, submitTask, useStore } from '../store'
 import { DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
 import { updateProjectUrl } from '../lib/projectRoute'
+import { readCachedApiKey, writeCachedApiKey } from '../lib/oidcApiKeySelection'
 import Select from './Select'
-import { ArrowUpIcon, EditIcon, OpenAIIcon, PlusIcon, TrashIcon } from './icons'
+import { ArrowUpIcon, EditIcon, KeyIcon, OpenAIIcon, PlusIcon, TrashIcon } from './icons'
 
 const HOME_MODEL_OPTIONS = [{
   label: 'GPT Image 2',
@@ -16,6 +19,12 @@ const HOME_MODEL_OPTIONS = [{
     </span>
   ),
 }]
+
+const HOME_API_KEY_ICON = (
+  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">
+    <KeyIcon className="h-4 w-4" />
+  </span>
+)
 
 function ProjectCover({ task }: { task?: TaskRecord }) {
   const [src, setSrc] = useState('')
@@ -145,11 +154,17 @@ function ProjectCard({ project, task, isLegacy = false }: { project: Project; ta
 }
 
 export default function ProjectHome() {
+  const { user } = useAuth()
   const projects = useStore((s) => s.projects)
   const projectsLoaded = useStore((s) => s.projectsLoaded)
   const tasks = useStore((s) => s.tasks)
   const createProject = useStore((s) => s.createProject)
-  const [prompt, setPrompt] = useState(() => useStore.getState().prompt)
+  const [prompt, setPrompt] = useState('')
+  const [apiKeys, setApiKeys] = useState<string[]>([])
+  const [apiKeyItems, setApiKeyItems] = useState<ApiKeyItem[]>([])
+  const [apiKey, setApiKey] = useState('')
+  const [apiKeysLoading, setApiKeysLoading] = useState(false)
+  const [apiKeysError, setApiKeysError] = useState('')
   const [model, setModel] = useState(DEFAULT_IMAGES_MODEL)
   const [submitting, setSubmitting] = useState(false)
   const promptRef = useRef<HTMLTextAreaElement>(null)
@@ -170,6 +185,33 @@ export default function ProjectHome() {
     const sorted = [...legacyTasks].sort((a, b) => b.createdAt - a.createdAt)
     return sorted.find((task) => task.outputImages.length > 0) ?? sorted[0]
   }, [legacyTasks])
+
+  const homeApiKeyOptions = useMemo(() => {
+    if (apiKeys.length === 0) {
+      return [{
+        label: apiKeysLoading ? '正在加载 API Key' : apiKeysError ? 'API Key 加载失败' : '没有可用的 API Key',
+        value: '',
+        description: apiKeysError || '请检查 OIDC Provider 账户',
+        icon: HOME_API_KEY_ICON,
+      }]
+    }
+
+    return [
+      {
+        label: '选择 API Key',
+        value: '',
+        description: '用于本次生成请求',
+        icon: HOME_API_KEY_ICON,
+      },
+      ...apiKeys.map((key) => {
+        const item = apiKeyItems.find((candidate) => candidate.key === key)
+        const keyPreview = key.length > 12 ? `${key.slice(0, 5)}…${key.slice(-4)}` : key
+        const label = item?.name || item?.groupName || 'API Key'
+        const description = [item?.name ? item.groupName : '', keyPreview].filter(Boolean).join(' · ')
+        return { label, value: key, description, icon: HOME_API_KEY_ICON }
+      }),
+    ]
+  }, [apiKeyItems, apiKeys, apiKeysError, apiKeysLoading])
   const legacyProject = useMemo<Project | null>(() => {
     if (legacyTasks.length === 0) return null
     const createdAt = Math.min(...legacyTasks.map((task) => task.createdAt))
@@ -184,27 +226,81 @@ export default function ProjectHome() {
     }
   }, [legacyTasks])
 
+  useEffect(() => {
+    if (user == null) {
+      setApiKeys([])
+      setApiKeyItems([])
+      setApiKey('')
+      setApiKeysError('')
+      setApiKeysLoading(false)
+      return
+    }
+
+    let cancelled = false
+    const run = async () => {
+      setApiKeysLoading(true)
+      setApiKeysError('')
+      try {
+        const res = await fetchApiKeys()
+        if (cancelled) return
+        const keys = res.sub2api_apikeys || []
+        setApiKeys(keys)
+        setApiKeyItems(res.items || [])
+        const cached = readCachedApiKey(user.id)
+        setApiKey(cached && keys.includes(cached) ? cached : '')
+      } catch (err) {
+        if (cancelled) return
+        console.error('[ProjectHome] fetchApiKeys failed:', err)
+        setApiKeys([])
+        setApiKeyItems([])
+        setApiKey('')
+        setApiKeysError(err instanceof Error ? err.message : String(err))
+      } finally {
+        if (!cancelled) setApiKeysLoading(false)
+      }
+    }
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [user])
+
+  useEffect(() => {
+    useStore.getState().setOidcApiOverride(apiKey ? { apiKey, model } : { model })
+  }, [apiKey, model])
+
+  const setHomeApiKey = (value: string) => {
+    setApiKey(value)
+    writeCachedApiKey(user?.id, value)
+    useStore.getState().setOidcApiOverride(value ? { apiKey: value, model } : { model })
+  }
+
   const startProject = async () => {
     const value = prompt.trim()
     if (!value || submitting) return
+    if (apiKey === '') {
+      useStore.getState().showToast('请先选择 API Key', 'error')
+      return
+    }
 
     setSubmitting(true)
-    const state = useStore.getState()
-    const projectId = createProject(value)
-    updateProjectUrl(projectId)
-    state.clearInputImages()
-    state.clearMaskDraft()
-    state.setReusedTaskApiProfile(null)
-    state.setPrompt(value)
+    let projectId: string | null = null
     try {
-      await submitTask({
-        apiOverride: {
-          ...state.oidcApiOverride,
-          model,
-        },
-      })
+      const state = useStore.getState()
+      const apiOverride = { ...state.oidcApiOverride, apiKey, model }
+      state.setOidcApiOverride(apiOverride)
+      writeCachedApiKey(user?.id, apiKey)
+
+      projectId = createProject(value)
+      updateProjectUrl(projectId)
+      const latestState = useStore.getState()
+      latestState.clearInputImages()
+      latestState.clearMaskDraft()
+      latestState.setReusedTaskApiProfile(null)
+      latestState.setPrompt(value)
+      await submitTask({ apiOverride })
     } finally {
-      if (!useStore.getState().tasks.some((task) => task.projectId === projectId)) {
+      if (projectId && !useStore.getState().tasks.some((task) => task.projectId === projectId)) {
         await useStore.getState().deleteProject(projectId)
         updateProjectUrl(null, true)
       }
@@ -232,13 +328,23 @@ export default function ProjectHome() {
             placeholder="描述你想生成的画面..."
             className="block min-h-28 w-full resize-none bg-transparent px-3 py-3 text-base leading-7 text-gray-900 outline-none placeholder:text-gray-400 dark:text-gray-100 dark:placeholder:text-gray-600 sm:px-4 sm:text-lg"
           />
-          <div className="flex items-center justify-between gap-3 px-1 pb-1 sm:px-2">
-            <div className="w-48 max-w-[calc(100%-3.25rem)]">
+          <div className="flex flex-wrap items-center gap-2 px-1 pb-1 sm:px-2">
+            <div className="min-w-0 w-48 max-w-full shrink-0">
               <Select
                 value={model}
                 onChange={(value) => setModel(String(value))}
                 options={HOME_MODEL_OPTIONS}
                 className="h-11 rounded-xl border border-transparent bg-gray-50 px-2.5 text-sm font-semibold leading-4 text-gray-800 transition hover:border-gray-200 hover:bg-gray-100 dark:bg-white/[0.05] dark:text-gray-100 dark:hover:border-white/[0.08] dark:hover:bg-white/[0.08]"
+                menuClassName="!py-0"
+              />
+            </div>
+            <div className="min-w-0 w-44 shrink-0 sm:w-48">
+              <Select
+                value={apiKey}
+                onChange={(value) => setHomeApiKey(String(value))}
+                disabled={apiKeysLoading || apiKeys.length === 0}
+                options={homeApiKeyOptions}
+                className="h-11 rounded-xl border border-transparent bg-gray-50 px-2.5 text-xs font-semibold leading-4 text-gray-800 transition hover:border-gray-200 hover:bg-gray-100 dark:bg-white/[0.05] dark:text-gray-100 dark:hover:border-white/[0.08]"
                 menuClassName="!py-0"
               />
             </div>

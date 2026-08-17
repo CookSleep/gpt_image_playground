@@ -162,7 +162,7 @@ func TestProjectGenerationHandlerUsesMultipartEdits(t *testing.T) {
 	})
 	r := newProjectGenerationRouter(store, transport)
 	image := "data:image/png;base64,AAECAw=="
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8/generations", generationRequestBody([]string{image}, image))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8/edits", generationRequestBody([]string{image}, image))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

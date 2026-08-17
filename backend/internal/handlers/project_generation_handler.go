@@ -54,6 +54,7 @@ func NewProjectGenerationHandler(projects projectGenerationStore, providers imag
 
 func (h *ProjectGenerationHandler) Register(api *gin.RouterGroup) {
 	api.POST("/projects/:id/generations", h.Generate)
+	api.POST("/projects/:id/edits", h.Generate)
 	api.POST("/images/status", h.Status)
 }
 
@@ -548,7 +549,7 @@ func (h *ProjectGenerationHandler) Status(c *gin.Context) {
 	c.Data(upstreamResponse.StatusCode, contentType, responseData)
 }
 
-// Generate POST /api/v1/projects/:id/generations，由后端生成并先落库再返回。
+// Generate POST /api/v1/projects/:id/generations 或 /edits，由后端生成并先落库再返回。
 func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 	userID := c.GetString(middleware.ContextKeyUserID)
 	providerName := c.GetString(middleware.ContextKeyProvider)

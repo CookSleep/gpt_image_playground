@@ -270,7 +270,7 @@ function getPageScrollTop() {
   return window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0
 }
 
-export default function AgentWorkspace() {
+export default function AgentWorkspace({ embedded = false }: { embedded?: boolean }) {
   const conversations = useStore((s) => s.agentConversations)
   const conversationsLoaded = useStore((s) => s.agentConversationsLoaded)
   const activeConversationId = useStore((s) => s.activeAgentConversationId)
@@ -319,24 +319,28 @@ export default function AgentWorkspace() {
 
   const updateIsScrolledToBottom = useCallback(() => {
     const sentinel = bottomSentinelRef.current
-    if (appMode !== 'agent' || !sentinel) {
+    if ((!embedded && appMode !== 'agent') || !sentinel) {
       setIsScrolledToBottom(true)
       return
     }
 
     const viewportHeight = window.visualViewport?.height ?? window.innerHeight
     setIsScrolledToBottom(sentinel.getBoundingClientRect().top <= viewportHeight + 24)
-  }, [appMode])
+  }, [appMode, embedded])
 
   const scrollToAgentBottom = useCallback(() => {
+    if (embedded && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' })
+      return
+    }
     const scrollingElement = document.scrollingElement ?? document.documentElement
     window.scrollTo({ top: scrollingElement.scrollHeight, behavior: 'smooth' })
-  }, [])
+  }, [embedded])
 
   const handleTouchStart = (e: React.TouchEvent) => {
     const touchY = e.touches[0]?.clientY ?? -1
     if (
-      appMode !== 'agent' ||
+      (!embedded && appMode !== 'agent') ||
       agentMobileHeaderVisible ||
       getPageScrollTop() > 0 ||
       touchY < MOBILE_HEADER_EDGE_GUARD
@@ -389,14 +393,14 @@ export default function AgentWorkspace() {
   }, [sidebarCollapsed, setAgentEditingConversationId])
 
   useEffect(() => {
-    if (appMode !== 'agent') return
+    if (!embedded && appMode !== 'agent') return
 
     document.documentElement.classList.add('agent-no-pull-refresh')
     return () => document.documentElement.classList.remove('agent-no-pull-refresh')
-  }, [appMode])
+  }, [appMode, embedded])
 
   useEffect(() => {
-    if (!agentMobileHeaderVisible || appMode !== 'agent') return
+    if (!agentMobileHeaderVisible || (!embedded && appMode !== 'agent')) return
 
     const handleInteract = (e: MouseEvent | TouchEvent) => {
       const target = e.target as HTMLElement
@@ -411,10 +415,10 @@ export default function AgentWorkspace() {
       document.removeEventListener('mousedown', handleInteract, { capture: true })
       document.removeEventListener('touchstart', handleInteract, { capture: true })
     }
-  }, [agentMobileHeaderVisible, appMode, setAgentMobileHeaderVisible])
+  }, [agentMobileHeaderVisible, appMode, embedded, setAgentMobileHeaderVisible])
 
   useEffect(() => {
-    if (appMode !== 'agent') return
+    if (!embedded && appMode !== 'agent') return
 
     setMobileTopBarVisible(true)
     let lastScrollY = window.scrollY
@@ -443,20 +447,29 @@ export default function AgentWorkspace() {
 
     const initialFrame = window.requestAnimationFrame(updateIsScrolledToBottom)
     const visualViewport = window.visualViewport
-    window.addEventListener('scroll', handleScroll, { passive: true })
+    const scrollContainer = scrollContainerRef.current
+    if (embedded && scrollContainer) {
+      scrollContainer.addEventListener('scroll', handleScroll, { passive: true })
+    } else {
+      window.addEventListener('scroll', handleScroll, { passive: true })
+    }
     window.addEventListener('resize', updateIsScrolledToBottom)
     visualViewport?.addEventListener('resize', updateIsScrolledToBottom)
 
     return () => {
       window.cancelAnimationFrame(initialFrame)
-      window.removeEventListener('scroll', handleScroll)
+      if (embedded && scrollContainer) {
+        scrollContainer.removeEventListener('scroll', handleScroll)
+      } else {
+        window.removeEventListener('scroll', handleScroll)
+      }
       window.removeEventListener('resize', updateIsScrolledToBottom)
       visualViewport?.removeEventListener('resize', updateIsScrolledToBottom)
     }
-  }, [appMode, updateIsScrolledToBottom])
+  }, [appMode, embedded, updateIsScrolledToBottom])
 
   useEffect(() => {
-    if (appMode !== 'agent') return
+    if (!embedded && appMode !== 'agent') return
     if (!conversationsLoaded) return
     
     if (conversations.length === 0) {
@@ -469,7 +482,7 @@ export default function AgentWorkspace() {
         createConversation()
       }
     }
-  }, [appMode, conversationsLoaded, conversations, conversation, createConversation, setActiveConversationId])
+  }, [appMode, embedded, conversationsLoaded, conversations, conversation, createConversation, setActiveConversationId])
 
   const sortedConversations = useMemo(
     () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
@@ -728,8 +741,8 @@ export default function AgentWorkspace() {
 
   const handleReuse = (task: TaskRecord) => {
     setConfirmDialog({
-      title: '切换到画廊模式？',
-      message: '复用参数会应用到画廊输入区。切换到画廊模式后，当前 Agent 对话仍会保留。',
+      title: '切换到填参数模式？',
+      message: '复用参数会应用到填参数输入区。切换后，当前 Agent 对话仍会保留。',
       confirmText: '切换并复用',
       cancelText: '取消',
       action: () => {
@@ -796,8 +809,26 @@ export default function AgentWorkspace() {
   return (
     <main 
       data-agent-workspace 
-      className="safe-area-x mx-auto flex min-h-[calc(100vh-100px)] flex-col lg:flex-row max-w-7xl lg:gap-3 px-3 lg:px-0 relative overflow-visible transition-all duration-300"
+      className={embedded
+        ? 'relative mx-auto flex h-full min-h-[calc(100vh-100px)] min-w-0 flex-col overflow-hidden px-1 transition-all duration-300'
+        : 'safe-area-x relative mx-auto flex min-h-[calc(100vh-100px)] max-w-7xl flex-col overflow-visible px-3 transition-all duration-300 lg:flex-row lg:gap-3 lg:px-0'}
     >
+      {embedded && (
+        <div className="sticky top-0 z-20 hidden h-12 items-center justify-between border-b border-gray-200 bg-white/90 px-3 backdrop-blur xl:flex dark:border-white/[0.08] dark:bg-gray-950/90">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 text-sm font-semibold text-gray-900 dark:text-white">Agent</span>
+            <span className="truncate text-xs text-gray-400" title={conversation?.title}>{conversation?.title}</span>
+          </div>
+          <button
+            type="button"
+            onClick={createConversation}
+            className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+            title="新对话"
+          >
+            <EditIcon className="h-4 w-4" />
+          </button>
+        </div>
+      )}
       {/* Pull Down Indicator */}
       {pullDownOffset > 0 && !agentMobileHeaderVisible && (
         <div 
@@ -938,7 +969,7 @@ export default function AgentWorkspace() {
 
         <div 
           ref={scrollContainerRef}
-          className="flex-1 space-y-4 overflow-visible pb-[calc(var(--input-bar-clearance,12rem)+1.5rem)] px-1 lg:pt-14 lg:px-4"
+          className={`flex-1 space-y-4 ${embedded ? 'overflow-y-auto' : 'overflow-visible'} pb-[calc(var(--input-bar-clearance,12rem)+1.5rem)] px-1 lg:pt-14 lg:px-4`}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}

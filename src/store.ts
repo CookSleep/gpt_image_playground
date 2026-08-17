@@ -1415,62 +1415,17 @@ export const useStore = create<AppState>()(
         }
 
         const state = get()
-        const settings = normalizeSettings(state.settings)
-        const activeProfile = getActiveApiProfile(settings)
-        const agentValidationError = getAgentProfileValidationError(settings)
-
-        if (!agentValidationError) {
-          const galleryInputDraft = saveGalleryInputDraft(state)
-          set((state) => ({
-            appMode: 'agent',
-            galleryInputDraft,
-            agentMobileHeaderVisible: false,
-            agentSidebarCollapsed: true,
-            agentAssetPanelCollapsed: true,
-            selectedTaskIds: [],
-            selectedFavoriteCollectionIds: [],
-            ...restoreAgentInputDraftState(state.agentInputDrafts, state.activeAgentConversationId),
-          }))
-          return
-        }
-
-        if (settings.agentApiConfigMode === 'off' && activeProfile.provider === 'openai' && activeProfile.apiMode !== 'responses') {
-          state.setConfirmDialog({
-            title: '需要 Responses API 配置',
-            message: `当前配置「${activeProfile.name}」使用的是 Images API，仅支持生成图片，无 Agent 模式需要的对话能力。\n\n请前往 API 配置页，将当前配置调整为 Responses API，或切换/新建一个支持 Responses API 的配置。`,
-            confirmText: '去设置',
-            cancelText: '取消',
-            action: () => {
-              useStore.getState().setShowSettings(true, 'api')
-            },
-          })
-          return
-        }
-
-        if (settings.agentApiConfigMode !== 'off') {
-          state.setConfirmDialog({
-            title: 'Agent API 配置不完整',
-            message: `${agentValidationError.message}\n\n请前往 Agent 配置页，选择或新建可用配置。`,
-            confirmText: '去设置',
-            cancelText: '取消',
-            action: () => {
-              useStore.getState().setShowSettings(true, 'agent')
-            },
-          })
-          return
-        }
-
-        // 兜底：agentApiConfigMode === 'off' 且 profile 已是 openai+responses，
-        // 但 validateApiProfile 挂了（缺 apiKey / model / baseUrl 等）
-        state.setConfirmDialog({
-          title: 'Agent API 配置不完整',
-          message: `${agentValidationError.message}\n\n请前往 API 配置页补全当前配置「${activeProfile.name}」。`,
-          confirmText: '去设置',
-          cancelText: '取消',
-          action: () => {
-            useStore.getState().setShowSettings(true, 'api')
-          },
-        })
+        const galleryInputDraft = saveGalleryInputDraft(state)
+        set((state) => ({
+          appMode: 'agent',
+          galleryInputDraft,
+          agentMobileHeaderVisible: false,
+          agentSidebarCollapsed: true,
+          agentAssetPanelCollapsed: true,
+          selectedTaskIds: [],
+          selectedFavoriteCollectionIds: [],
+          ...restoreAgentInputDraftState(state.agentInputDrafts, state.activeAgentConversationId),
+        }))
       },
 
       // Settings
@@ -2327,10 +2282,10 @@ function applyOidcOverrideToProfile(profile: ApiProfile): ApiProfile {
 function getAgentProfileValidationError(settings: AppSettings): { profile: ApiProfile | null; message: string } | null {
   const normalized = normalizeSettings(settings)
   const textProfile = getAgentTextApiProfile(normalized)
-  if (!textProfile || textProfile.provider !== 'openai' || textProfile.apiMode !== 'responses') {
-    return { profile: textProfile, message: 'Agent 模式需要使用支持 Responses API 的 OpenAI 兼容文本模型配置。' }
+  if (!textProfile || textProfile.provider !== 'openai') {
+    return { profile: textProfile, message: 'Agent 模式需要使用 OpenAI 兼容模型。' }
   }
-  const textProfileError = validateApiProfile(applyOidcOverrideToProfile(textProfile))
+  const textProfileError = validateApiProfile(applyOidcOverrideToProfile({ ...textProfile, apiMode: 'responses' }))
   if (textProfileError) return { profile: textProfile, message: `文本模型 API 配置不完整：${textProfileError}` }
 
   if (normalized.agentApiConfigMode === 'hybrid') {
@@ -3617,6 +3572,8 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     }
   }
 
+  activeProfile = { ...activeProfile, apiMode: 'images' }
+  requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
   if (validateApiProfile(activeProfile)) {
     // 若调用方提供了 apiKey/model 覆盖（例如 InputBar 中选择的 OIDC apiKey 与模型），
     // 则在校验时忽略对应字段缺失的问题。
@@ -3628,8 +3585,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
       return false
     })()
     if (!ignorable) {
-      showToast(`请先完善请求 API 配置：${validationMsg}`, 'error')
-      useStore.getState().setShowSettings(true)
+      showToast(validationMsg === '缺少 API Key' ? '请先选择 API Key' : `请求配置不可用：${validationMsg}`, 'error')
       return
     }
   }
@@ -4563,13 +4519,12 @@ export async function submitAgentMessage() {
 
   const agentValidationError = getAgentProfileValidationError(normalizedSettings)
   if (agentValidationError) {
-    showToast(`请先完善 Agent API 配置：${agentValidationError.message}`, 'error')
-    state.setShowSettings(true, normalizedSettings.agentApiConfigMode === 'off' ? 'api' : 'agent')
+    showToast(agentValidationError.message.includes('缺少 API Key') ? '请先选择 API Key' : `Agent 请求配置不可用：${agentValidationError.message}`, 'error')
     return
   }
 
   // 合并 OIDC override，保证 agentApi.ts 里 createHeaders 拿得到 apiKey
-  const activeProfile = applyOidcOverrideToProfile(getAgentTextApiProfile(normalizedSettings)!)
+  const activeProfile = { ...applyOidcOverrideToProfile(getAgentTextApiProfile(normalizedSettings)!), apiMode: 'responses' as const }
   const imageProfile = applyOidcOverrideToProfile(getAgentImageApiProfile(normalizedSettings)!)
 
   const trimmedPrompt = prompt.trim()
@@ -4716,13 +4671,12 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
 
   const agentValidationError = getAgentProfileValidationError(normalizedSettings)
   if (agentValidationError) {
-    showToast(`请先完善 Agent API 配置：${agentValidationError.message}`, 'error')
-    state.setShowSettings(true, normalizedSettings.agentApiConfigMode === 'off' ? 'api' : 'agent')
+    showToast(agentValidationError.message.includes('缺少 API Key') ? '请先选择 API Key' : `Agent 请求配置不可用：${agentValidationError.message}`, 'error')
     return
   }
 
   // 合并 OIDC override，保证 agentApi.ts 里 createHeaders 拿得到 apiKey
-  const activeProfile = applyOidcOverrideToProfile(getAgentTextApiProfile(normalizedSettings)!)
+  const activeProfile = { ...applyOidcOverrideToProfile(getAgentTextApiProfile(normalizedSettings)!), apiMode: 'responses' as const }
   const imageProfile = applyOidcOverrideToProfile(getAgentImageApiProfile(normalizedSettings)!)
 
   const conversation = state.agentConversations.find((item) => item.id === conversationId)
@@ -5654,13 +5608,14 @@ async function executeTask(taskId: string) {
     return
   }
   const baseProfile = taskProfile ?? getActiveApiProfile(settings)
-  const activeProfile = task.apiOverride && (task.apiOverride.apiKey || task.apiOverride.model)
+  const resolvedProfile = task.apiOverride && (task.apiOverride.apiKey || task.apiOverride.model)
     ? {
         ...baseProfile,
         ...(task.apiOverride.apiKey ? { apiKey: task.apiOverride.apiKey } : {}),
         ...(task.apiOverride.model ? { model: task.apiOverride.model } : {}),
       }
     : baseProfile
+  const activeProfile = { ...resolvedProfile, apiMode: task.apiMode ?? 'images' }
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
   const taskProvider = task.apiProvider ?? activeProfile.provider
   let falRequestInfo: { requestId: string; endpoint: string } | null = task.falRequestId && task.falEndpoint

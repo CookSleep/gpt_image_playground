@@ -129,24 +129,6 @@ export default function GeneralSettingsTab({
       </div>
       <div className="block">
         <div className="mb-1 flex items-center justify-between">
-          <span className="block text-sm text-gray-600 dark:text-gray-300">复用配置时临时复用该任务的 API 配置</span>
-          <button
-            type="button"
-            onClick={() => commitSettings({ ...draft, reuseTaskApiProfileTemporarily: !draft.reuseTaskApiProfileTemporarily })}
-            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${draft.reuseTaskApiProfileTemporarily ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-            role="switch"
-            aria-checked={draft.reuseTaskApiProfileTemporarily}
-            aria-label="复用配置时临时复用该任务的 API 配置"
-          >
-            <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${draft.reuseTaskApiProfileTemporarily ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-          </button>
-        </div>
-        <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-          开启后，复用历史任务时会临时使用该任务的 API 配置，找不到该配置时提交会提示；关闭后，会继续使用当前的 API 配置。
-        </div>
-      </div>
-      <div className="block">
-        <div className="mb-1 flex items-center justify-between">
           <span className="block text-sm text-gray-600 dark:text-gray-300">成功任务仍然展示重试按钮</span>
           <button
             type="button"
@@ -196,7 +178,7 @@ export default function GeneralSettingsTab({
           </button>
         </div>
         <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-          开启后，画廊模式图像生成完成、Agent 模式回复结束时，会发送浏览器系统通知。浏览器可能会请求通知权限或默认拒绝，请查看相关提示。
+          开启后，填参数模式图像生成完成、Agent 模式回复结束时，会发送浏览器系统通知。浏览器可能会请求通知权限或默认拒绝，请查看相关提示。
         </div>
       </div>
       <div className="block">

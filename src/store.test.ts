@@ -407,6 +407,18 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.showToast).toHaveBeenCalledWith('任务已提交', 'success')
   })
 
+  it('forces parameter submissions to use the Images API', async () => {
+    const settings = normalizeSettings(useStore.getState().settings)
+    const profiles = settings.profiles.map((profile) => (
+      profile.id === settings.activeProfileId ? { ...profile, apiMode: 'responses' as const } : profile
+    ))
+    useStore.setState({ settings: normalizeSettings({ ...settings, apiMode: 'responses', profiles }) })
+
+    await submitTask()
+
+    expect(useStore.getState().tasks[0]?.apiMode).toBe('images')
+  })
+
   it('stores new gallery tasks in the active project', async () => {
     const projectId = useStore.getState().createProject('夏日饮品海报')
 
@@ -2734,6 +2746,27 @@ describe('agent context for removed outputs', () => {
       outputItems: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
       responseId: 'response-b',
     })
+  })
+
+  it('forces Agent submissions to use the Responses API', async () => {
+    const current = useStore.getState()
+    const settings = normalizeSettings({
+      ...current.settings,
+      apiMode: 'images',
+      profiles: current.settings.profiles.map((profile) => ({ ...profile, apiMode: 'images' as const })),
+    })
+    useStore.setState({
+      settings,
+      tasks: [],
+      agentConversations: [agentConversation({ id: 'conversation-mode', rounds: [], messages: [] })],
+      activeAgentConversationId: 'conversation-mode',
+      prompt: '生成图片',
+    })
+
+    await submitAgentMessage()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(vi.mocked(callAgentResponsesApi).mock.calls[0][0].profile.apiMode).toBe('responses')
   })
 
   it('does not send removed image_generation results back to the model', async () => {

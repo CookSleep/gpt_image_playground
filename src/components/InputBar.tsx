@@ -2,8 +2,10 @@ import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect } fr
 import { createPortal } from 'react-dom'
 import { ALL_FAVORITES_COLLECTION_ID, ALL_PROJECTS_ID, LOCAL_PROJECT_ID, deleteFavoriteCollection, getTaskFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { useAuth } from '../auth/AuthContext'
-import { fetchApiKeys, fetchUsage, fetchModels, extractBalance, invalidateApiKeysCache, type ModelInfo, type ApiKeyItem } from '../auth/oidcResource'
+import { getOIDCIssuer } from '../auth/api'
+import { estimateModelPricing, fetchApiKeys, fetchUsage, fetchModels, extractBalance, invalidateApiKeysCache, type ModelInfo, type ApiKeyItem } from '../auth/oidcResource'
 import { DEFAULT_PARAMS, type TaskRecord } from '../types'
+import { readCachedApiKey, writeCachedApiKey } from '../lib/oidcApiKeySelection'
 import { getActiveApiProfile, getAgentImageApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { getAtImageQuery, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, getSelectedImageMentionLabel, getSelectedTextMentionLabel, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
@@ -12,44 +14,16 @@ import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { getSafeBoundingClientRect } from '../lib/domRect'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { useHintTooltip } from '../hooks/useHintTooltip'
+import { useTooltip } from '../hooks/useTooltip'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getTaskOutputImageZipEntries } from '../lib/downloadImages'
 import SizePickerModal from './SizePickerModal'
 import Select from './Select'
+import ViewportTooltip from './ViewportTooltip'
 import { CloseIcon } from './icons'
 import ButtonTooltip from './input/buttonTooltip'
 import DragUploadOverlay from './input/dragUploadOverlay'
 import InputBatchBars from './input/inputBatchBars'
 import InputParamsPanel from './input/inputParamsPanel'
-
-// 上次选中的 API Key 本地缓存：按用户维度存储，避免每次刷新都回落到列表第一个。
-const SELECTED_API_KEY_STORAGE_PREFIX = 'gpt-image-playground:selected-api-key:'
-
-function getSelectedApiKeyStorageKey(userId?: string | null): string {
-  return `${SELECTED_API_KEY_STORAGE_PREFIX}${userId || 'anonymous'}`
-}
-
-function readCachedApiKey(userId?: string | null): string {
-  if (typeof window === 'undefined') return ''
-  try {
-    return window.localStorage.getItem(getSelectedApiKeyStorageKey(userId)) || ''
-  } catch {
-    return ''
-  }
-}
-
-function writeCachedApiKey(userId: string | null | undefined, key: string): void {
-  if (typeof window === 'undefined') return
-  try {
-    const storageKey = getSelectedApiKeyStorageKey(userId)
-    if (key) {
-      window.localStorage.setItem(storageKey, key)
-    } else {
-      window.localStorage.removeItem(storageKey)
-    }
-  } catch {
-    // localStorage 不可用时忽略，仅保留内存态
-  }
-}
 
 
 function getMentionTagTextLength(el: Element) {
@@ -429,9 +403,23 @@ export default function InputBar() {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [modelsLoading, setModelsLoading] = useState<boolean>(false)
   const [selectedModel, setSelectedModel] = useState<string>('gpt-image-2')
+  const [priceEstimate, setPriceEstimate] = useState<string>('')
+  const [priceEstimateLoading, setPriceEstimateLoading] = useState(false)
+  const [priceEstimateError, setPriceEstimateError] = useState('')
+  const priceEstimateTooltip = useTooltip()
+  const oidcUsageUrl = useMemo(() => {
+    const issuer = getOIDCIssuer()
+    if (!issuer) return '/usage'
+    try {
+      return new URL('/usage', issuer).toString()
+    } catch {
+      return issuer.replace(/\/+$/, '') + '/usage'
+    }
+  }, [user])
   const setOidcApiOverride = useStore((s) => s.setOidcApiOverride)
   const prompt = useStore((s) => s.prompt)
   const appMode = useStore((s) => s.appMode)
+  const setAppMode = useStore((s) => s.setAppMode)
   const setPrompt = useStore((s) => s.setPrompt)
   const inputImages = useStore((s) => s.inputImages)
   const addInputImage = useStore((s) => s.addInputImage)
@@ -443,7 +431,6 @@ export default function InputBar() {
   const settings = useStore((s) => s.settings)
   const setSettings = useStore((s) => s.setSettings)
   const reusedTaskApiProfileId = useStore((s) => s.reusedTaskApiProfileId)
-  const setShowSettings = useStore((s) => s.setShowSettings)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const showToast = useStore((s) => s.showToast)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
@@ -915,10 +902,12 @@ export default function InputBar() {
   const submitButtonAriaLabel = activeAgentIsRunning
     ? '停止生成'
     : hasSubmitApiConfig
-    ? maskDraft ? '遮罩编辑' : '生成图像'
-    : '请先配置 API'
-  const submitTooltipText = activeAgentIsRunning ? '停止生成' : '尚未完成 API 配置，请在右上角设置中进行'
-  const promptPlaceholder = '描述你想生成的图片，可输入 @ 来指定参考图...'
+    ? appMode === 'agent' ? '发送给 Agent' : maskDraft ? '遮罩编辑' : '生成图像'
+    : '请先选择 API Key'
+  const submitTooltipText = activeAgentIsRunning ? '停止生成' : '请先选择 API Key'
+  const promptPlaceholder = appMode === 'agent'
+    ? '向 Agent 描述你的需求，可输入 @ 来指定参考图...'
+    : '描述你想生成的图片，可输入 @ 来指定参考图...'
   const submitCurrentMode = useCallback(() => {
     if (appMode === 'agent') {
       void submitAgentMessage()
@@ -959,6 +948,41 @@ export default function InputBar() {
   const displaySize = isFalTextToImage && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
     : normalizeImageSize(params.size) || DEFAULT_PARAMS.size
+
+  useEffect(() => {
+    if (!apiKey || !selectedModel || appMode === 'agent') {
+      setPriceEstimate('')
+      setPriceEstimateError('')
+      setPriceEstimateLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+    const body: Record<string, unknown> = {
+      image_size: displaySize === 'auto' ? '1024x1024' : displaySize,
+      num_images: Math.max(1, Math.min(outputImageLimit, Number(params.n) || 1)),
+    }
+    if (params.quality !== 'auto') body.quality = params.quality
+
+    setPriceEstimateLoading(true)
+    setPriceEstimateError('')
+    estimateModelPricing(apiKey, selectedModel, body, { signal: controller.signal })
+      .then((res) => {
+        const value = typeof res.estimated_price === 'number' ? res.estimated_price : Number(res.estimated_price)
+        setPriceEstimate(Number.isFinite(value) ? String(Number(value.toFixed(6))) : '')
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return
+        console.warn('[InputBar] estimate pricing failed:', err)
+        setPriceEstimate('')
+        setPriceEstimateError('预估不可用')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setPriceEstimateLoading(false)
+      })
+
+    return () => controller.abort()
+  }, [apiKey, selectedModel, appMode, displaySize, outputImageLimit, params.n, params.quality])
 
   const qualityOptions = isFalProvider
     ? [
@@ -2143,7 +2167,11 @@ export default function InputBar() {
         />
       )}
 
-      <div data-input-bar className="fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-30 w-full max-w-4xl px-3 sm:px-4 transition-all duration-300">
+      <div
+        data-input-bar
+        data-input-mode={appMode === 'agent' ? 'agent' : 'params'}
+        className={`fixed bottom-4 left-1/2 z-40 w-full -translate-x-1/2 px-3 transition-all duration-300 sm:bottom-6 sm:max-w-4xl sm:px-4 ${appMode === 'agent' ? 'xl:left-auto xl:right-0 xl:w-[420px] xl:max-w-[420px] xl:translate-x-0 xl:px-3' : 'xl:left-[calc(50%-210px)] xl:w-[calc(100%-460px)]'}`}
+      >
         <InputBatchBars
           showFavoriteCollectionBatchBar={showFavoriteCollectionBatchBar}
           showTaskBatchBar={showTaskBatchBar}
@@ -2228,6 +2256,23 @@ export default function InputBar() {
             )}
             
             {/* API Key / 余额 / 模型 显示区域 */}
+            <div className="mt-2 inline-flex w-fit items-center rounded-lg bg-gray-100 p-1 dark:bg-white/[0.05]">
+              <button
+                type="button"
+                onClick={() => setAppMode('gallery')}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${appMode === 'gallery' ? 'bg-white text-gray-900 shadow-sm dark:bg-white/[0.1] dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'}`}
+              >
+                填参数
+              </button>
+              <button
+                type="button"
+                onClick={() => setAppMode('agent')}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${appMode === 'agent' ? 'bg-white text-gray-900 shadow-sm dark:bg-white/[0.1] dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'}`}
+              >
+                Agent
+              </button>
+            </div>
+
             <div className="mt-2 flex flex-col gap-1 text-xs sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="shrink-0 font-medium text-gray-500 dark:text-gray-400">API Key:</span>
@@ -2274,23 +2319,43 @@ export default function InputBar() {
                   {modelsLoading ? (
                     <span className="text-gray-400 dark:text-gray-500">加载中...</span>
                   ) : (
-                  <div className="min-w-0 w-fit max-w-full sm:max-w-[260px]">
-                    <Select
-                      value={selectedModel}
-                      onChange={(val) => setSelectedModel(String(val))}
-                      options={(() => {
-                        const list = models.length > 0
-                          ? models.map((m) => ({ label: m.id, value: m.id }))
-                          : [{ label: 'gpt-image-2', value: 'gpt-image-2' }]
-                        // 当当前选中值不在列表中时，兵底插入一项，保留默认选择
-                        if (selectedModel && !list.some((o) => o.value === selectedModel)) {
-                          return [{ label: selectedModel, value: selectedModel }, ...list]
-                        }
-                        return list
-                      })()}
-                      className={`${selectClass} font-mono`}
-                    />
-                  </div>
+                    <>
+                      <div className="min-w-0 w-fit max-w-full sm:max-w-[260px]">
+                        <Select
+                          value={selectedModel}
+                          onChange={(val) => setSelectedModel(String(val))}
+                          options={(() => {
+                            const list = models.length > 0
+                              ? models.map((m) => ({ label: m.id, value: m.id }))
+                              : [{ label: 'gpt-image-2', value: 'gpt-image-2' }]
+                            // 当当前选中值不在列表中时，兜底插入一项，保留默认选择
+                            if (selectedModel && !list.some((o) => o.value === selectedModel)) {
+                              return [{ label: selectedModel, value: selectedModel }, ...list]
+                            }
+                            return list
+                          })()}
+                          className={`${selectClass} font-mono`}
+                        />
+                      </div>
+                      <span className={`${appMode === 'agent' ? 'hidden' : ''} inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 shadow-sm dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200`}>
+                        <span className="font-mono">
+                          {priceEstimateLoading ? '预估中...' : priceEstimate ? `≈ $${priceEstimate}` : priceEstimateError || '预估 --'}
+                        </span>
+                        <span className="relative inline-flex" {...priceEstimateTooltip.handlers}>
+                          <button
+                            type="button"
+                            className="flex h-4 w-4 items-center justify-center rounded-full border border-amber-400/60 text-[10px] font-semibold leading-none text-amber-700 transition-colors hover:bg-amber-100 focus:outline-none dark:border-amber-300/40 dark:text-amber-200 dark:hover:bg-amber-300/10"
+                            aria-label="预估费用说明"
+                          >
+                            ?
+                          </button>
+                          <ViewportTooltip visible={priceEstimateTooltip.visible} className="w-72 whitespace-normal text-left leading-5">
+                            <span>该费用仅为预估，不代表真实扣费。真实扣费请前往 OIDC Provider 主站查看。</span>
+                            <span className="mt-1 block break-all font-mono text-[11px] text-amber-200">{oidcUsageUrl}</span>
+                          </ViewportTooltip>
+                        </span>
+                      </span>
+                    </>
                   )}
                 </div>
               </div>
@@ -2368,7 +2433,7 @@ export default function InputBar() {
           <div className="mt-3">
             {/* 桌面端布局 */}
             <div className="hidden sm:flex items-end justify-between gap-3">
-              {renderParams('grid-cols-6')}
+              {appMode === 'gallery' && renderParams('grid-cols-6')}
 
               <div className="flex gap-2 flex-shrink-0 mb-0.5">
                 <div
@@ -2398,7 +2463,7 @@ export default function InputBar() {
                 >
                   <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig) && submitHover} text={submitTooltipText} />
                   <button
-                    onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : setShowSettings(true)}
+                    onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : showToast('请先选择 API Key', 'error')}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
                     className={`p-2.5 rounded-xl transition-all shadow-sm hover:shadow ${
                       activeAgentIsRunning
@@ -2427,7 +2492,7 @@ export default function InputBar() {
             <div className="sm:hidden flex flex-col gap-2">
               <div className={`collapse-section${mobileCollapsed ? ' collapsed' : ''}`}>
                 <div className="collapse-inner">
-                  {renderParams('grid-cols-2')}
+                  {appMode === 'gallery' && renderParams('grid-cols-2')}
                   <div className="h-2" />
                 </div>
               </div>
@@ -2505,7 +2570,7 @@ export default function InputBar() {
                 >
                   <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig) && submitHover} text={submitTooltipText} />
                   <button
-                    onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : setShowSettings(true)}
+                    onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : showToast('请先选择 API Key', 'error')}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
                     aria-label={submitButtonAriaLabel}
                     className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all shadow-sm ${
@@ -2525,7 +2590,7 @@ export default function InputBar() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                       </svg>
                     )}
-                    {activeAgentIsRunning ? '停止生成' : maskDraft ? '遮罩编辑' : '生成图像'}
+                    {activeAgentIsRunning ? '停止生成' : appMode === 'agent' ? '发送' : maskDraft ? '遮罩编辑' : '生成图像'}
                   </button>
                 </div>
               </div>

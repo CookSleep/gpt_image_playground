@@ -70,7 +70,8 @@ backend/
 | GET/PATCH/DELETE | `/api/v1/projects/:id` | 读取、重命名或删除在线项目 |
 | GET/POST | `/api/v1/projects/:id/images` | 查询或保存项目图片 |
 | GET/DELETE | `/api/v1/projects/:id/images/:imageId` | 读取或删除项目图片 |
-| POST | `/api/v1/projects/:id/generations` | 由后端调用 Images 或 Responses API，图片落库后返回 |
+| POST | `/api/v1/projects/:id/generations` | 由后端调用 Images 或 Responses API 生成图片，图片落库后返回 |
+| POST | `/api/v1/projects/:id/edits` | 由后端调用 Images Edits 或 Responses API 编辑图片，图片落库后返回 |
 
 生图请求中的 API Key 仅用于本次上游请求，不会写入数据库。上游基址由当前 JWT 的 OIDC provider 配置决定，客户端不能指定任意地址。
 

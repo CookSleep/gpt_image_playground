@@ -41,6 +41,20 @@ export type ModelsResponse = {
   object?: string
 }
 
+export type EstimatePricingResponse = {
+  endpoint: string
+  billing_mode?: string
+  pricing_source?: string
+  tier?: string
+  resolution?: { width: number; height: number }
+  image_count?: number
+  unit_price?: number
+  total_cost?: number
+  rate_multiplier?: number
+  estimated_price?: number
+  [k: string]: unknown
+}
+
 const usageInFlight = new Map<string, Promise<UsageResponse>>()
 
 function joinUrl(base: string, path: string): string {
@@ -281,6 +295,38 @@ export async function fetchModels(apiKey: string, options?: { signal?: AbortSign
     data: Array.isArray(data?.data) ? data.data : [],
     object: data?.object,
   }
+}
+
+
+function encodeEndpointPath(endpoint: string): string {
+  return endpoint.split('/').map((part) => encodeURIComponent(part)).join('/')
+}
+
+/** POST {issuer}/api/v1/model/{endpoint}/estimate_pricing —— 用所选 api_key 作 Bearer */
+export async function estimateModelPricing(
+  apiKey: string,
+  endpoint: string,
+  body: Record<string, unknown>,
+  options?: { signal?: AbortSignal },
+): Promise<EstimatePricingResponse> {
+  if (!apiKey) throw new Error('apiKey 不能为空')
+  if (!endpoint) throw new Error('endpoint 不能为空')
+  const issuer = requireIssuer()
+  const resp = await fetch(joinUrl(issuer, `/api/v1/model/${encodeEndpointPath(endpoint)}/estimate_pricing`), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    signal: options?.signal,
+  })
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '')
+    throw new Error(`estimate pricing failed: ${resp.status} ${text}`)
+  }
+  return (await resp.json()) as EstimatePricingResponse
 }
 
 /** 在 UsageResponse 里尽量提取一个可读的 balance 数值/字符串 */

@@ -125,16 +125,21 @@ export default function App() {
       <Header />
       {activeProjectId === null ? (
         <ProjectHome />
-      ) : appMode === 'agent' ? (
-        <AgentWorkspace />
       ) : (
-        <main data-home-main data-drag-select-surface className="pb-48">
-          <div className="safe-area-x max-w-7xl mx-auto">
+        <div className="safe-area-x mx-auto grid w-full max-w-[1600px] xl:grid-cols-[minmax(0,1fr)_420px] xl:gap-4">
+          <main
+            data-home-main
+            data-drag-select-surface
+            className={`${appMode === 'agent' ? 'hidden xl:block' : ''} min-w-0 pb-48`}
+          >
             <SearchBar />
             {activeProjectId === LOCAL_PROJECT_ID && <LegacyProjectToolbar />}
             {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
+          </main>
+          <div className={`${appMode === 'gallery' ? 'hidden xl:block' : ''} min-w-0 border-gray-200 xl:border-l xl:pl-4 dark:border-white/[0.08] xl:fixed xl:right-0 xl:top-14 xl:bottom-0 xl:z-30 xl:w-[420px] xl:overflow-hidden`}>
+            <AgentWorkspace embedded />
           </div>
-        </main>
+        </div>
       )}
       {activeProjectId !== null && <InputBar />}
       <DetailModal />

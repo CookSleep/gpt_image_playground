@@ -155,6 +155,15 @@ export function OpenAIIcon(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+export function KeyIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" {...props}>
+      <circle cx="7.5" cy="15.5" r="4.5" strokeWidth={2} />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.7 12.3 21 2m-4 4 3 3m-6-1 2 2" />
+    </svg>
+  )
+}
+
 export function SidebarLeftIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" {...props}>
