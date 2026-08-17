@@ -12,7 +12,7 @@ const API_KEY_ICON = (
   </span>
 )
 
-export default function ProjectApiControls() {
+export function ProjectApiKeySelect() {
   const { user } = useAuth()
   const oidcApiOverride = useStore((s) => s.oidcApiOverride)
   const setOidcApiOverride = useStore((s) => s.setOidcApiOverride)
@@ -21,8 +21,6 @@ export default function ProjectApiControls() {
   const [apiKey, setApiKey] = useState('')
   const [apiKeysLoading, setApiKeysLoading] = useState(false)
   const [apiKeysError, setApiKeysError] = useState('')
-  const [balance, setBalance] = useState('')
-  const [balanceLoading, setBalanceLoading] = useState(false)
 
   const apiKeyOptions = useMemo(() => {
     if (apiKeys.length === 0) {
@@ -88,34 +86,6 @@ export default function ProjectApiControls() {
   }, [user, oidcApiOverride?.apiKey])
 
   useEffect(() => {
-    if (!apiKey) {
-      setBalance('')
-      setBalanceLoading(false)
-      return
-    }
-
-    let cancelled = false
-    setBalanceLoading(true)
-    void fetchUsage(apiKey)
-      .then((usage) => {
-        if (!cancelled) setBalance(extractBalance(usage))
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setBalance('')
-          console.warn('[ProjectApiControls] fetchUsage failed:', err)
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setBalanceLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [apiKey])
-
-  useEffect(() => {
     if (!apiKey) return
     const current = useStore.getState().oidcApiOverride
     if (current?.apiKey === apiKey) return
@@ -136,23 +106,58 @@ export default function ProjectApiControls() {
   }
 
   return (
-    <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-2">
-      <div className="min-w-0 w-44 sm:w-48">
-        <Select
-          value={apiKey}
-          onChange={(value) => handleApiKeyChange(String(value))}
-          disabled={apiKeysLoading || apiKeys.length === 0}
-          options={apiKeyOptions}
-          className="h-[42px] rounded-xl border border-gray-200 bg-white px-2.5 text-xs font-semibold leading-4 text-gray-800 shadow-sm transition hover:bg-gray-50 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-white/[0.06]"
-          menuClassName="!py-0"
-        />
-      </div>
-      <div className="flex h-[42px] items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 text-xs shadow-sm dark:border-white/[0.08] dark:bg-gray-900">
-        <span className="font-medium text-gray-500 dark:text-gray-400">余额</span>
-        <span className="font-mono text-gray-800 dark:text-gray-100">
-          {balanceLoading ? '加载中...' : balance || '(未获取到)'}
-        </span>
-      </div>
+    <div className="min-w-0 w-28 shrink-0 sm:w-48">
+      <Select
+        value={apiKey}
+        onChange={(value) => handleApiKeyChange(String(value))}
+        disabled={apiKeysLoading || apiKeys.length === 0}
+        options={apiKeyOptions}
+        className="h-[42px] rounded-xl border border-gray-200 bg-white px-2.5 text-xs font-semibold leading-4 text-gray-800 shadow-sm transition hover:bg-gray-50 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-white/[0.06]"
+        menuClassName="!py-0"
+      />
+    </div>
+  )
+}
+
+export function ProjectBalance() {
+  const apiKey = useStore((s) => s.oidcApiOverride?.apiKey || '')
+  const [balance, setBalance] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!apiKey) {
+      setBalance('')
+      setLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setLoading(true)
+    void fetchUsage(apiKey)
+      .then((usage) => {
+        if (!cancelled) setBalance(extractBalance(usage))
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setBalance('')
+          console.warn('[ProjectBalance] fetchUsage failed:', err)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [apiKey])
+
+  return (
+    <div className="hidden h-8 shrink-0 items-center gap-1.5 rounded-lg bg-gray-100 px-2.5 text-xs dark:bg-white/[0.05] sm:flex">
+      <span className="text-gray-500 dark:text-gray-400">余额</span>
+      <span className="font-mono font-medium text-gray-800 dark:text-gray-100">
+        {loading ? '加载中...' : balance || '--'}
+      </span>
     </div>
   )
 }

@@ -9,6 +9,7 @@ import { downloadImageEntriesAsZip, downloadImageIds, getImageZipEntries } from 
 import TaskCard from './TaskCard'
 import MarkdownRenderer from './MarkdownRenderer'
 import { TooltipButton as AgentActionButton } from './TooltipButton'
+import HistoryModal from './HistoryModal'
 import { TrashIcon, DownloadIcon, EditIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, SidebarLeftIcon, FavoriteIcon, CloseIcon, CopyIcon, RefreshIcon, ArrowDownIcon } from './icons'
 
 function ChatImageThumb({ imageId, imageIndex, maskImageId }: { imageId: string; imageIndex: number; maskImageId?: string | null }) {
@@ -270,7 +271,7 @@ function getPageScrollTop() {
   return window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0
 }
 
-export default function AgentWorkspace({ embedded = false }: { embedded?: boolean }) {
+export default function AgentWorkspace({ embedded = false, onCollapse }: { embedded?: boolean; onCollapse?: () => void }) {
   const conversations = useStore((s) => s.agentConversations)
   const conversationsLoaded = useStore((s) => s.agentConversationsLoaded)
   const activeConversationId = useStore((s) => s.activeAgentConversationId)
@@ -287,6 +288,7 @@ export default function AgentWorkspace({ embedded = false }: { embedded?: boolea
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setPrompt = useStore((s) => s.setPrompt)
+  const setAgentInputPrompt = useStore((s) => s.setAgentInputPrompt)
   const setInputImages = useStore((s) => s.setInputImages)
   const setMaskDraft = useStore((s) => s.setMaskDraft)
   const clearMaskDraft = useStore((s) => s.clearMaskDraft)
@@ -301,6 +303,9 @@ export default function AgentWorkspace({ embedded = false }: { embedded?: boolea
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
   const agentGeneratingTitleIds = useStore((s) => s.agentGeneratingTitleIds)
   const conversation = conversations.find((item) => item.id === activeConversationId) ?? null
+  const firstPrompt = conversation?.rounds[0]?.prompt.trim()
+    || conversation?.messages.find((message) => message.role === 'user')?.content.trim()
+    || ''
   const [editingConversationTitle, setEditingConversationTitle] = useState('')
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -310,6 +315,9 @@ export default function AgentWorkspace({ embedded = false }: { embedded?: boolea
   const [pullDownOffset, setPullDownOffset] = useState(0)
   const [mobileTopBarVisible, setMobileTopBarVisible] = useState(true)
   const [conversationSearchQuery, setConversationSearchQuery] = useState('')
+  const [showHistoryModal, setShowHistoryModal] = useState(false)
+  const historyButtonRef = useRef<HTMLButtonElement>(null)
+  const mobileHistoryButtonRef = useRef<HTMLButtonElement>(null)
   const [conversationActionsId, setConversationActionsId] = useState<string | null>(null)
   const [isScrolledToBottom, setIsScrolledToBottom] = useState(true)
   const touchStartY = useRef(-1)
@@ -774,7 +782,8 @@ export default function AgentWorkspace({ embedded = false }: { embedded?: boolea
         })
       }
     }
-    setPrompt(content)
+    if (embedded && conversation) setAgentInputPrompt(conversation.id, content)
+    else setPrompt(content)
   }
 
   const handleCopyMessage = async (content: string, successMessage = '提示词已复制', failureMessage = '复制提示词失败') => {
@@ -810,23 +819,51 @@ export default function AgentWorkspace({ embedded = false }: { embedded?: boolea
     <main 
       data-agent-workspace 
       className={embedded
-        ? 'relative mx-auto flex h-full min-h-[calc(100vh-100px)] min-w-0 flex-col overflow-hidden px-1 transition-all duration-300'
+        ? 'relative mx-auto flex h-full min-h-[calc(100vh-100px)] min-w-0 flex-col overflow-hidden px-0 transition-all duration-300'
         : 'safe-area-x relative mx-auto flex min-h-[calc(100vh-100px)] max-w-7xl flex-col overflow-visible px-3 transition-all duration-300 lg:flex-row lg:gap-3 lg:px-0'}
     >
       {embedded && (
         <div className="sticky top-0 z-20 hidden h-12 items-center justify-between border-b border-gray-200 bg-white/90 px-3 backdrop-blur xl:flex dark:border-white/[0.08] dark:bg-gray-950/90">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="shrink-0 text-sm font-semibold text-gray-900 dark:text-white">Agent</span>
-            <span className="truncate text-xs text-gray-400" title={conversation?.title}>{conversation?.title}</span>
+          <div className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold text-gray-900 dark:text-white" title={firstPrompt || '新对话'}>{firstPrompt || '新对话'}</span>
           </div>
-          <button
-            type="button"
-            onClick={createConversation}
-            className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
-            title="新对话"
-          >
-            <EditIcon className="h-4 w-4" />
-          </button>
+          <div className="relative flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setShowHistoryModal(false)
+                createConversation()
+              }}
+              className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+              title="新对话"
+            >
+              <EditIcon className="h-4 w-4" />
+            </button>
+            <button
+              ref={historyButtonRef}
+              type="button"
+              onClick={() => setShowHistoryModal((visible) => !visible)}
+              className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+              title="历史会话"
+              aria-label="历史会话"
+            >
+              <ChevronDownIcon className="h-4 w-4" />
+            </button>
+            {showHistoryModal && (
+              <HistoryModal onClose={() => setShowHistoryModal(false)} ignoreOutsideClickRef={historyButtonRef} align="right" />
+            )}
+            {onCollapse && (
+              <button
+                type="button"
+                onClick={onCollapse}
+                className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+                title="收起 Agent"
+                aria-label="收起 Agent"
+              >
+                <ChevronRightIcon className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
       )}
       {/* Pull Down Indicator */}
@@ -959,11 +996,39 @@ export default function AgentWorkspace({ embedded = false }: { embedded?: boolea
               }}
               className="text-sm font-semibold text-gray-700 dark:text-gray-300 truncate flex-1 text-center px-2 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded transition-colors"
             >
-              {conversation?.title || 'Agent'}
+              {firstPrompt || '新对话'}
             </button>
-            <button type="button" onClick={createConversation} className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded-lg transition-colors" title="新对话">
-              <EditIcon className="w-5 h-5" />
-            </button>
+            <div className="relative flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowHistoryModal(false)
+                  createConversation()
+                }}
+                className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded-lg transition-colors"
+                title="新对话"
+              >
+                <EditIcon className="w-5 h-5" />
+              </button>
+              <button
+                ref={mobileHistoryButtonRef}
+                type="button"
+                onClick={() => setShowHistoryModal((visible) => !visible)}
+                className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded-lg transition-colors"
+                title="历史会话"
+                aria-label="历史会话"
+              >
+                <ChevronDownIcon className="w-4 h-4" />
+              </button>
+              {showHistoryModal && (
+                <HistoryModal onClose={() => setShowHistoryModal(false)} ignoreOutsideClickRef={mobileHistoryButtonRef} align="right" />
+              )}
+            </div>
+            {onCollapse && (
+              <button type="button" onClick={onCollapse} className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded-lg transition-colors" title="收起 Agent" aria-label="收起 Agent">
+                <ChevronRightIcon className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -1022,10 +1087,8 @@ export default function AgentWorkspace({ embedded = false }: { embedded?: boolea
                           : `bg-gray-100 dark:bg-[#2A2D31] rounded-tr-sm ${isEditing ? 'ring-2 ring-blue-500/50 dark:ring-blue-400/50' : ''}`
                       }`}
                       >
-                    <div className="mb-2 flex items-center justify-between gap-4 text-sm text-gray-500 dark:text-gray-400">
-                      <span className="font-medium">
-                         <span className={isAssistant ? 'text-blue-600 dark:text-blue-400 font-semibold' : 'text-gray-700 dark:text-gray-200 font-semibold'}>{isAssistant ? 'Agent' : '用户'}</span> <span className="opacity-60 font-normal ml-1">· 第 {round?.index ?? '?'} 轮</span>
-                      </span>
+                    <div className="mb-2 flex items-center justify-between gap-4 text-xs text-gray-400 dark:text-gray-500">
+                      <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>
                     </div>
                     
                     {message.role === 'user' && round && round.inputImageIds.length > 0 && (

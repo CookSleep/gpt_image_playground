@@ -908,6 +908,7 @@ interface AppState {
   agentConversationsLoaded: boolean
   activeAgentConversationId: string | null
   agentInputDrafts: Record<string, AgentInputDraft>
+  setAgentInputPrompt: (conversationId: string, prompt: string) => void
   agentSidebarCollapsed: boolean
   agentAssetTab: 'references' | 'outputs'
   agentAssetPanelCollapsed: boolean
@@ -1619,7 +1620,7 @@ export const useStore = create<AppState>()(
               agentInputDrafts,
               agentSidebarCollapsed: true,
               agentEditingRoundId: null,
-              ...restoreAgentInputDraftState(agentInputDrafts, latestConversation.id),
+              ...(state.appMode === 'agent' ? restoreAgentInputDraftState(agentInputDrafts, latestConversation.id) : {}),
             }
           })
           return latestConversation.id
@@ -1637,7 +1638,7 @@ export const useStore = create<AppState>()(
             agentInputDrafts,
             agentSidebarCollapsed: true,
             agentEditingRoundId: null,
-            ...restoreAgentInputDraftState(agentInputDrafts, conversation.id),
+            ...(state.appMode === 'agent' ? restoreAgentInputDraftState(agentInputDrafts, conversation.id) : {}),
           }
         })
         return conversation.id
@@ -1658,7 +1659,23 @@ export const useStore = create<AppState>()(
           agentSidebarCollapsed: true,
           agentAssetPanelCollapsed: true,
           agentEditingRoundId: null,
-          ...restoreAgentInputDraftState(agentInputDrafts, id),
+          ...(state.appMode === 'agent' ? restoreAgentInputDraftState(agentInputDrafts, id) : {}),
+        }
+      }),
+      setAgentInputPrompt: (conversationId, prompt) => set((state) => {
+        const current = state.agentInputDrafts[conversationId] ?? {
+          prompt: '',
+          inputImages: [],
+          maskDraft: null,
+          maskEditorImageId: null,
+          updatedAt: Date.now(),
+        }
+        return {
+          agentInputDrafts: setAgentInputDraft(state.agentInputDrafts, conversationId, {
+            ...current,
+            prompt,
+            updatedAt: Date.now(),
+          }),
         }
       }),
       setActiveAgentRoundId: (conversationId, roundId) => set((state) => ({
@@ -4513,7 +4530,11 @@ async function buildAgentApiInput(conversation: AgentConversation, currentRound:
 
 export async function submitAgentMessage() {
   const state = useStore.getState()
-  const { settings, prompt, inputImages, maskDraft, params, showToast } = state
+  const { settings, inputImages, maskDraft, params, showToast } = state
+  const activeAgentDraft = state.appMode !== 'agent' && state.activeAgentConversationId
+    ? state.agentInputDrafts[state.activeAgentConversationId]
+    : null
+  const prompt = activeAgentDraft?.prompt ?? state.prompt
   const projectId = getActiveTaskProjectId()
   const normalizedSettings = normalizeSettings(settings)
 
@@ -4652,7 +4673,8 @@ export async function submitAgentMessage() {
     }
   })
 
-  state.setPrompt('')
+  if (state.appMode !== 'agent' && conversation.id) state.setAgentInputPrompt(conversation.id, '')
+  else state.setPrompt('')
   state.clearInputImages()
   state.clearMaskDraft()
   state.setAgentEditingRoundId(null)

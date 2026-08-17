@@ -11,6 +11,7 @@ import { useFavoriteCollectionTitle } from './FavoriteCollections'
 import { EditIcon, HelpCircleIcon, HistoryIcon, InstallIcon, SettingsIcon } from './icons'
 import UserMenu from '../auth/UserMenu'
 import { useAuth } from '../auth/AuthContext'
+import { ProjectBalance } from './ProjectApiControls'
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -146,7 +147,8 @@ export default function Header() {
       <header data-no-drag-select className={`safe-area-top fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-gray-950/80 backdrop-blur border-b border-gray-200 dark:border-white/[0.08] transition-transform duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? '-translate-y-full sm:translate-y-0' : 'translate-y-0'}`}>
         <div className="safe-area-x safe-header-inner max-w-7xl mx-auto flex items-center justify-between relative">
           <div className="flex-1 min-w-0 pr-2 flex items-center gap-2">
-            <h1 className="inline-flex min-w-0 items-start relative mr-2">
+            <h1 className="inline-flex min-w-0 items-center relative mr-2 gap-2">
+              <img src="/logo.png" alt="" className="h-6 w-6 shrink-0 rounded-md object-cover sm:h-7 sm:w-7" />
               {showFavoriteCollectionTitle ? (
                 <>
                   <span className="min-w-0 truncate text-[17px] font-bold tracking-tight text-gray-800 dark:text-gray-100 sm:hidden" title={favoriteCollectionTitle}>{favoriteCollectionTitle}</span>
@@ -339,6 +341,7 @@ export default function Header() {
                 设置
               </ViewportTooltip>
             </div>
+            {user && <ProjectBalance />}
             <UserMenu />
           </div>
         </div>

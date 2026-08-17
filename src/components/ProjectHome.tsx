@@ -121,7 +121,7 @@ function ProjectCard({ project, task, isLegacy = false }: { project: Project; ta
             </button>
           )}
           <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-            最后更新 {new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(project.updatedAt)} · {taskCount} 个作品 · {project.storage === 'online' ? '在线' : '本地'}
+            更新于 {new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(project.updatedAt)} · {taskCount} 个作品{isLegacy ? ' · 未保存' : ''}
           </p>
         </div>
         {!isLegacy && <button
@@ -311,8 +311,11 @@ export default function ProjectHome() {
   return (
     <main className="safe-area-x mx-auto w-full max-w-7xl px-4 pb-20 sm:px-6">
       <section className="mx-auto flex min-h-[46vh] max-w-4xl flex-col items-center justify-center pb-8 pt-10 text-center sm:min-h-[52vh] sm:pt-16">
-        <p className="mb-4 text-sm font-medium text-gray-500 dark:text-gray-400">OpenToken 创作空间</p>
-        <h1 className="text-3xl font-semibold leading-tight text-gray-950 dark:text-white sm:text-5xl">马上开始设计</h1>
+        <h1 className="flex items-center justify-center gap-3 text-2xl font-normal leading-tight text-gray-950 dark:text-white sm:text-4xl">
+          <img src="/logo.png" alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover sm:h-10 sm:w-10" />
+          <span className="font-[Poppins,HarmonyOS_Sans_SC,PingFang_SC,Microsoft_YaHei,sans-serif] tracking-wide">OpenToken 和AI一起设计</span>
+        </h1>
+        <p className="mt-3 text-lg font-medium text-gray-500 dark:text-gray-400 sm:text-xl">马上开始设计</p>
         <div className="mt-8 w-full rounded-2xl border border-gray-200 bg-white p-2 text-left shadow-[0_18px_60px_rgba(0,0,0,0.08)] ring-1 ring-black/[0.03] dark:border-white/[0.1] dark:bg-gray-900 dark:shadow-[0_18px_60px_rgba(0,0,0,0.35)] dark:ring-white/[0.04] sm:rounded-3xl sm:p-3">
           <textarea
             ref={promptRef}
@@ -338,26 +341,28 @@ export default function ProjectHome() {
                 menuClassName="!py-0"
               />
             </div>
-            <div className="min-w-0 w-44 shrink-0 sm:w-48">
-              <Select
-                value={apiKey}
-                onChange={(value) => setHomeApiKey(String(value))}
-                disabled={apiKeysLoading || apiKeys.length === 0}
-                options={homeApiKeyOptions}
-                className="h-11 rounded-xl border border-transparent bg-gray-50 px-2.5 text-xs font-semibold leading-4 text-gray-800 transition hover:border-gray-200 hover:bg-gray-100 dark:bg-white/[0.05] dark:text-gray-100 dark:hover:border-white/[0.08]"
-                menuClassName="!py-0"
-              />
+            <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2">
+              <div className="min-w-0 w-44 shrink-0 sm:w-48">
+                <Select
+                  value={apiKey}
+                  onChange={(value) => setHomeApiKey(String(value))}
+                  disabled={apiKeysLoading || apiKeys.length === 0}
+                  options={homeApiKeyOptions}
+                  className="h-11 rounded-xl border border-transparent bg-gray-50 px-2.5 text-xs font-semibold leading-4 text-gray-800 transition hover:border-gray-200 hover:bg-gray-100 dark:bg-white/[0.05] dark:text-gray-100 dark:hover:border-white/[0.08]"
+                  menuClassName="!py-0"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => void startProject()}
+                disabled={!prompt.trim() || submitting}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-950 text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200 dark:disabled:bg-gray-800 dark:disabled:text-gray-600"
+                aria-label="创建项目并开始生成"
+                title="创建项目并开始生成"
+              >
+                <ArrowUpIcon className="h-5 w-5" />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => void startProject()}
-              disabled={!prompt.trim() || submitting}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-950 text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200 dark:disabled:bg-gray-800 dark:disabled:text-gray-600"
-              aria-label="创建项目并开始生成"
-              title="创建项目并开始生成"
-            >
-              <ArrowUpIcon className="h-5 w-5" />
-            </button>
           </div>
         </div>
       </section>

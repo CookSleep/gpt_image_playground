@@ -33,6 +33,7 @@ export default function InputParamsPanel({
   commitOutputCompression,
   moderationHint,
   moderationDisabled,
+  hideModeration,
   agentAutoImageCount,
   outputImageLimit,
   nInput,
@@ -73,6 +74,7 @@ export default function InputParamsPanel({
   commitOutputCompression: () => void
   moderationHint: HintTooltipState
   moderationDisabled: boolean
+  hideModeration: boolean
   agentAutoImageCount: boolean
   outputImageLimit: number
   nInput: string
@@ -222,35 +224,37 @@ export default function InputParamsPanel({
           />
         </label>
       )}
-      <label
-        className="relative flex flex-col gap-0.5"
-        onMouseEnter={moderationHint.show}
-        onMouseLeave={moderationHint.hide}
-        onTouchStart={moderationHint.startTouch}
-        onTouchEnd={moderationHint.clearTimer}
-        onTouchCancel={moderationHint.hide}
-        onClick={moderationHint.show}
-      >
-        <span className="text-gray-400 dark:text-gray-500 ml-1">审核</span>
-        <Select
-          value={moderationDisabled ? 'auto' : params.moderation}
-          onChange={(val) => {
-            if (!moderationDisabled) setParams({ moderation: val as TaskParams['moderation'] })
-          }}
-          options={[
-            { label: 'auto', value: 'auto' },
-            { label: 'low', value: 'low' },
-          ]}
-          disabled={moderationDisabled}
-          className={moderationDisabled
-            ? 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-gray-100/50 dark:bg-white/[0.05] opacity-50 cursor-not-allowed text-xs transition-all duration-200 shadow-sm'
-            : selectClass}
-        />
-        <ButtonTooltip
-          visible={moderationDisabled && moderationHint.visible}
-          text="fal.ai 不支持审核参数"
-        />
-      </label>
+      {!hideModeration && (
+        <label
+          className="relative flex flex-col gap-0.5"
+          onMouseEnter={moderationHint.show}
+          onMouseLeave={moderationHint.hide}
+          onTouchStart={moderationHint.startTouch}
+          onTouchEnd={moderationHint.clearTimer}
+          onTouchCancel={moderationHint.hide}
+          onClick={moderationHint.show}
+        >
+          <span className="text-gray-400 dark:text-gray-500 ml-1">审核</span>
+          <Select
+            value={moderationDisabled ? 'auto' : params.moderation}
+            onChange={(val) => {
+              if (!moderationDisabled) setParams({ moderation: val as TaskParams['moderation'] })
+            }}
+            options={[
+              { label: 'auto', value: 'auto' },
+              { label: 'low', value: 'low' },
+            ]}
+            disabled={moderationDisabled}
+            className={moderationDisabled
+              ? 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-gray-100/50 dark:bg-white/[0.05] opacity-50 cursor-not-allowed text-xs transition-all duration-200 shadow-sm'
+              : selectClass}
+          />
+          <ButtonTooltip
+            visible={moderationDisabled && moderationHint.visible}
+            text="fal.ai 不支持审核参数"
+          />
+        </label>
+      )}
       <label
         className="relative flex flex-col gap-0.5"
         onMouseEnter={() => { showAgentNHint(); streamConcurrentHint.show() }}

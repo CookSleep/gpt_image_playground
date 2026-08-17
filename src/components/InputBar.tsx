@@ -19,11 +19,17 @@ import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getT
 import SizePickerModal from './SizePickerModal'
 import Select from './Select'
 import ViewportTooltip from './ViewportTooltip'
-import { CloseIcon } from './icons'
+import { CloseIcon, OpenAIIcon } from './icons'
 import ButtonTooltip from './input/buttonTooltip'
 import DragUploadOverlay from './input/dragUploadOverlay'
 import InputBatchBars from './input/inputBatchBars'
 import InputParamsPanel from './input/inputParamsPanel'
+
+const MODEL_ICON = (
+  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gray-950 text-white shadow-sm dark:bg-white dark:text-gray-950">
+    <OpenAIIcon className="h-4 w-4" />
+  </span>
+)
 
 
 function getMentionTagTextLength(el: Element) {
@@ -391,7 +397,7 @@ function AtImageOptionThumb({ option }: { option: AtImageOption }) {
   )
 }
 
-export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = false, hideModeToggle = false }: { embeddedAgent?: boolean; hideApiKeyBalance?: boolean; hideModeToggle?: boolean } = {}) {
+export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = false, hideModeToggle = false, moveModelToAttachment = false, hideModeration = false }: { embeddedAgent?: boolean; hideApiKeyBalance?: boolean; hideModeToggle?: boolean; moveModelToAttachment?: boolean; hideModeration?: boolean } = {}) {
   const { user } = useAuth()
   const [apiKeys, setApiKeys] = useState<string[]>([])
   const [apiKeyItems, setApiKeyItems] = useState<ApiKeyItem[]>([])
@@ -418,11 +424,24 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   }, [user])
   const setOidcApiOverride = useStore((s) => s.setOidcApiOverride)
   const oidcApiOverride = useStore((s) => s.oidcApiOverride)
-  const prompt = useStore((s) => s.prompt)
   const appMode = useStore((s) => s.appMode)
   const inputMode = embeddedAgent ? 'agent' : appMode
+  const activeAgentConversationId = useStore((s) => s.activeAgentConversationId)
+  const galleryPrompt = useStore((s) => s.prompt)
+  const agentPrompt = useStore((s) => embeddedAgent && s.activeAgentConversationId
+    ? s.agentInputDrafts[s.activeAgentConversationId]?.prompt ?? ''
+    : '')
   const setAppMode = useStore((s) => s.setAppMode)
-  const setPrompt = useStore((s) => s.setPrompt)
+  const setGalleryPrompt = useStore((s) => s.setPrompt)
+  const setAgentInputPrompt = useStore((s) => s.setAgentInputPrompt)
+  const prompt = embeddedAgent ? agentPrompt : galleryPrompt
+  const setPrompt = useCallback((value: string) => {
+    if (embeddedAgent && activeAgentConversationId) {
+      setAgentInputPrompt(activeAgentConversationId, value)
+      return
+    }
+    setGalleryPrompt(value)
+  }, [activeAgentConversationId, embeddedAgent, setAgentInputPrompt, setGalleryPrompt])
   const inputImages = useStore((s) => s.inputImages)
   const addInputImage = useStore((s) => s.addInputImage)
   const replaceInputImage = useStore((s) => s.replaceInputImage)
@@ -445,7 +464,6 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const tasks = useStore((s) => s.tasks)
   const favoriteCollections = useStore((s) => s.favoriteCollections)
   const agentConversations = useStore((s) => s.agentConversations)
-  const activeAgentConversationId = useStore((s) => s.activeAgentConversationId)
   const filterStatus = useStore((s) => s.filterStatus)
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
@@ -572,6 +590,11 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
         }
       : null)
   }, [apiKey, selectedModel, embeddedAgent, hideApiKeyBalance, setOidcApiOverride])
+
+  useEffect(() => {
+    if (!hideModeration || params.moderation === 'auto') return
+    setParams({ moderation: 'auto' })
+  }, [hideModeration, params.moderation, setParams])
 
   // 监听任务完成时间推进，刷新 Balance；避免任务列表其它更新取消掉刷新请求。
   const lastSeenFinishedAtRef = useRef<number>(0)
@@ -953,9 +976,11 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const displaySize = isFalTextToImage && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
     : normalizeImageSize(params.size) || DEFAULT_PARAMS.size
+  const estimateApiKey = oidcApiOverride?.apiKey || apiKey
+  const estimateModel = oidcApiOverride?.model || selectedModel
 
   useEffect(() => {
-    if (!apiKey || !selectedModel || inputMode === 'agent') {
+    if (!estimateApiKey || !estimateModel || inputMode === 'agent') {
       setPriceEstimate('')
       setPriceEstimateError('')
       setPriceEstimateLoading(false)
@@ -971,7 +996,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
 
     setPriceEstimateLoading(true)
     setPriceEstimateError('')
-    estimateModelPricing(apiKey, selectedModel, body, { signal: controller.signal })
+    estimateModelPricing(estimateApiKey, estimateModel, body, { signal: controller.signal })
       .then((res) => {
         const value = typeof res.estimated_price === 'number' ? res.estimated_price : Number(res.estimated_price)
         setPriceEstimate(Number.isFinite(value) ? String(Number(value.toFixed(6))) : '')
@@ -987,7 +1012,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       })
 
     return () => controller.abort()
-  }, [apiKey, selectedModel, inputMode, displaySize, outputImageLimit, params.n, params.quality])
+  }, [estimateApiKey, estimateModel, inputMode, displaySize, outputImageLimit, params.n, params.quality])
 
   const qualityOptions = isFalProvider
     ? [
@@ -1002,6 +1027,29 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
         { label: 'high', value: 'high' },
       ]
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
+  const modelOptions = useMemo(() => {
+    const list = models.length > 0
+      ? models.map((m) => ({
+          label: m.id === 'gpt-image-2' ? 'GPT Image 2' : m.id,
+          value: m.id,
+          ...(m.id === 'gpt-image-2' ? { description: 'OpenAI', icon: MODEL_ICON } : {}),
+        }))
+      : [{ label: 'GPT Image 2', value: 'gpt-image-2', description: 'OpenAI', icon: MODEL_ICON }]
+    if (selectedModel && !list.some((option) => option.value === selectedModel)) {
+      return [{ label: selectedModel, value: selectedModel }, ...list]
+    }
+    return list
+  }, [models, selectedModel])
+  const handleModelChange = useCallback((value: string) => {
+    const next = String(value)
+    setSelectedModel(next)
+    if (!hideApiKeyBalance) return
+    const current = useStore.getState().oidcApiOverride
+    setOidcApiOverride({
+      ...(current?.apiKey ? { apiKey: current.apiKey } : {}),
+      model: next,
+    })
+  }, [hideApiKeyBalance, setOidcApiOverride])
   const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加` : '上传图片'
   const transparentOutputHint = useHintTooltip()
   const handleTransparentOutputMenuOpenChange = useCallback((open: boolean) => {
@@ -2135,6 +2183,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       commitOutputCompression={commitOutputCompression}
       moderationHint={moderationHint}
       moderationDisabled={moderationDisabled}
+      hideModeration={hideModeration}
       agentAutoImageCount={agentAutoImageCount}
       outputImageLimit={outputImageLimit}
       nInput={nInput}
@@ -2155,6 +2204,24 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       onOpenSizePicker={() => setShowSizePicker(true)}
     />
   )
+
+  const renderModelSelector = (fullWidth = false) => (
+    <div className={`min-w-0 shrink-0 ${fullWidth ? 'w-full' : 'w-48'}`}>
+      <Select
+        value={selectedModel}
+        onChange={(value) => handleModelChange(String(value))}
+        options={modelOptions}
+        className="h-11 rounded-xl border border-transparent bg-gray-50 px-2.5 text-sm font-semibold leading-4 text-gray-800 transition hover:border-gray-200 hover:bg-gray-100 dark:bg-white/[0.05] dark:text-gray-100 dark:hover:border-white/[0.08] dark:hover:bg-white/[0.08]"
+        menuClassName="!py-0"
+      />
+    </div>
+  )
+
+  const priceEstimateLabel = priceEstimateLoading
+    ? '预估中...'
+    : priceEstimate
+    ? `≈ $${priceEstimate}`
+    : priceEstimateError || '预估 --'
 
   const showFavoriteCollectionBatchBar = inCollectionOverview && selectedFavoriteCollectionIds.length > 0
   const showTaskBatchBar = !showFavoriteCollectionBatchBar && selectedTaskIds.length > 0
@@ -2280,7 +2347,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
               </div>
             )}
 
-            <div className="mt-2 flex flex-col gap-1 text-xs sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
+            {(!hideApiKeyBalance || !hideModeToggle || !moveModelToAttachment) && <div className="mt-2 flex flex-col gap-1 text-xs sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
               <div className="flex min-w-0 items-center gap-2">
                 {!hideApiKeyBalance && <span className="shrink-0 font-medium text-gray-500 dark:text-gray-400">API Key:</span>}
                 {!hideApiKeyBalance && (apiKeysLoading ? (
@@ -2327,34 +2394,15 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                     <span className="text-gray-400 dark:text-gray-500">加载中...</span>
                   ) : (
                     <>
-                      <div className="min-w-0 w-fit max-w-full sm:max-w-[260px]">
+                      {!moveModelToAttachment && <div className="min-w-0 w-fit max-w-full sm:max-w-[260px]">
                         <Select
                           value={selectedModel}
-                          onChange={(val) => {
-                            const next = String(val)
-                            setSelectedModel(next)
-                            if (hideApiKeyBalance) {
-                              const current = useStore.getState().oidcApiOverride
-                              setOidcApiOverride({
-                                ...(current?.apiKey ? { apiKey: current.apiKey } : {}),
-                                model: next,
-                              })
-                            }
-                          }}
-                          options={(() => {
-                            const list = models.length > 0
-                              ? models.map((m) => ({ label: m.id, value: m.id }))
-                              : [{ label: 'gpt-image-2', value: 'gpt-image-2' }]
-                            // 当当前选中值不在列表中时，兜底插入一项，保留默认选择
-                            if (selectedModel && !list.some((o) => o.value === selectedModel)) {
-                              return [{ label: selectedModel, value: selectedModel }, ...list]
-                            }
-                            return list
-                          })()}
+                          onChange={(val) => handleModelChange(String(val))}
+                          options={modelOptions}
                           className={`${selectClass} font-mono`}
                         />
-                      </div>
-                      <span className={`${inputMode === 'agent' ? 'hidden' : ''} inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 shadow-sm dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200`}>
+                      </div>}
+                      {!moveModelToAttachment && <span className={`${inputMode === 'agent' ? 'hidden' : ''} inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 shadow-sm dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200`}>
                         <span className="font-mono">
                           {priceEstimateLoading ? '预估中...' : priceEstimate ? `≈ $${priceEstimate}` : priceEstimateError || '预估 --'}
                         </span>
@@ -2371,12 +2419,12 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                             <span className="mt-1 block break-all font-mono text-[11px] text-amber-200">{oidcUsageUrl}</span>
                           </ViewportTooltip>
                         </span>
-                      </span>
+                      </span>}
                     </>
                   )}
                 </div>
               </div>
-            </div>
+            </div>}
 
             <div
               ref={textareaRef}
@@ -2449,12 +2497,13 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
           {/* 参数 + 按钮 */}
           <div className="mt-3">
             {/* 桌面端布局 */}
-            <div className="hidden sm:flex items-end justify-between gap-3">
-              {inputMode === 'gallery' && renderParams('grid-cols-6')}
+            <div className="hidden sm:flex items-end justify-between gap-2">
+              {inputMode === 'gallery' && renderParams(hideModeration ? 'grid-cols-5' : 'grid-cols-6')}
+              {moveModelToAttachment && renderModelSelector()}
 
-              <div className="flex gap-2 flex-shrink-0 mb-0.5">
+              <div className={`flex shrink-0 flex-nowrap items-end gap-2 ${inputMode === 'agent' ? 'ml-auto' : ''}`}>
                 <div
-                  className="relative"
+                  className="relative shrink-0"
                   onMouseEnter={() => setAttachHover(true)}
                   onMouseLeave={() => setAttachHover(false)}
                 >
@@ -2474,7 +2523,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                   </button>
                 </div>
                 <div
-                  className="relative"
+                  className="relative shrink-0"
                   onMouseEnter={() => setSubmitHover(true)}
                   onMouseLeave={() => setSubmitHover(false)}
                 >
@@ -2482,7 +2531,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                   <button
                     onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : showToast('请先选择 API Key', 'error')}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
-                    className={`p-2.5 rounded-xl transition-all shadow-sm hover:shadow ${
+                    className={`inline-flex min-w-max flex-nowrap items-center justify-center whitespace-nowrap p-2.5 rounded-xl transition-all shadow-sm hover:shadow ${
                       activeAgentIsRunning
                         ? 'bg-red-500 text-white hover:bg-red-600'
                         : !hasSubmitApiConfig
@@ -2491,6 +2540,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                     }`}
                     aria-label={submitButtonAriaLabel}
                   >
+                    {moveModelToAttachment && inputMode === 'gallery' && <span className="mr-1 shrink-0 text-sm font-semibold">{priceEstimateLabel}</span>}
                     {activeAgentIsRunning ? (
                       <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                         <rect x="7" y="7" width="10" height="10" rx="1.5" />
@@ -2514,7 +2564,14 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                 </div>
               </div>
 
+              {moveModelToAttachment && !embeddedAgent && (
+                <div className="flex w-full">
+                  {renderModelSelector(true)}
+                </div>
+              )}
+
               <div className="flex items-center gap-2">
+                {moveModelToAttachment && embeddedAgent && renderModelSelector()}
                 <div
                   className="relative"
                   onMouseEnter={() => setAttachHover(true)}
@@ -2581,7 +2638,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                   )}
                 </div>
                 <div
-                  className="relative flex-1"
+                  className="relative min-w-0 flex-1"
                   onMouseEnter={() => setSubmitHover(true)}
                   onMouseLeave={() => setSubmitHover(false)}
                 >
@@ -2590,7 +2647,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                     onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : showToast('请先选择 API Key', 'error')}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
                     aria-label={submitButtonAriaLabel}
-                    className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all shadow-sm ${
+                    className={`flex w-full min-w-0 flex-nowrap items-center justify-center gap-2 whitespace-nowrap py-2.5 rounded-xl text-sm font-medium transition-all shadow-sm ${
                       activeAgentIsRunning
                         ? 'bg-red-500 text-white hover:bg-red-600'
                         : !hasSubmitApiConfig
@@ -2607,6 +2664,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                       </svg>
                     )}
+                    {moveModelToAttachment && inputMode === 'gallery' && <span className="ml-1 shrink-0 text-sm font-semibold">{priceEstimateLabel}</span>}
                     {activeAgentIsRunning ? '停止生成' : inputMode === 'agent' ? '发送' : maskDraft ? '遮罩编辑' : '生成图像'}
                   </button>
                 </div>
