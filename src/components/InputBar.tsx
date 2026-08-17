@@ -391,7 +391,7 @@ function AtImageOptionThumb({ option }: { option: AtImageOption }) {
   )
 }
 
-export default function InputBar() {
+export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = false, hideModeToggle = false }: { embeddedAgent?: boolean; hideApiKeyBalance?: boolean; hideModeToggle?: boolean } = {}) {
   const { user } = useAuth()
   const [apiKeys, setApiKeys] = useState<string[]>([])
   const [apiKeyItems, setApiKeyItems] = useState<ApiKeyItem[]>([])
@@ -417,8 +417,10 @@ export default function InputBar() {
     }
   }, [user])
   const setOidcApiOverride = useStore((s) => s.setOidcApiOverride)
+  const oidcApiOverride = useStore((s) => s.oidcApiOverride)
   const prompt = useStore((s) => s.prompt)
   const appMode = useStore((s) => s.appMode)
+  const inputMode = embeddedAgent ? 'agent' : appMode
   const setAppMode = useStore((s) => s.setAppMode)
   const setPrompt = useStore((s) => s.setPrompt)
   const inputImages = useStore((s) => s.inputImages)
@@ -562,13 +564,14 @@ export default function InputBar() {
   }, [apiKey])
 
   useEffect(() => {
+    if (embeddedAgent || hideApiKeyBalance) return
     setOidcApiOverride((apiKey || selectedModel)
       ? {
           ...(apiKey ? { apiKey } : {}),
           ...(selectedModel ? { model: selectedModel } : {}),
         }
       : null)
-  }, [apiKey, selectedModel, setOidcApiOverride])
+  }, [apiKey, selectedModel, embeddedAgent, hideApiKeyBalance, setOidcApiOverride])
 
   // 监听任务完成时间推进，刷新 Balance；避免任务列表其它更新取消掉刷新请求。
   const lastSeenFinishedAtRef = useRef<number>(0)
@@ -877,16 +880,16 @@ export default function InputBar() {
 
   const settingsActiveProfile = useMemo(() => getActiveApiProfile(settings), [settings])
   const currentActiveProfile = useMemo(() => (
-    appMode === 'agent'
+    inputMode === 'agent'
       ? getAgentImageApiProfile(settings) ?? settingsActiveProfile
       : settingsActiveProfile
-  ), [appMode, settings, settingsActiveProfile])
+  ), [inputMode, settings, settingsActiveProfile])
   const activeProfile = useMemo(() => (
-    appMode !== 'agent' && settings.reuseTaskApiProfileTemporarily && reusedTaskApiProfileId
+    inputMode !== 'agent' && settings.reuseTaskApiProfileTemporarily && reusedTaskApiProfileId
       ? settings.profiles.find((profile) => profile.id === reusedTaskApiProfileId) ?? currentActiveProfile
       : currentActiveProfile
-  ), [appMode, currentActiveProfile, reusedTaskApiProfileId, settings])
-  const activeAgentConversation = appMode === 'agent'
+  ), [inputMode, currentActiveProfile, reusedTaskApiProfileId, settings])
+  const activeAgentConversation = inputMode === 'agent'
     ? agentConversations.find((conversation) => conversation.id === activeAgentConversationId) ?? null
     : null
   const activeAgentIsRunning = Boolean(activeAgentConversation?.rounds.some((round) => round.status === 'running'))
@@ -897,24 +900,26 @@ export default function InputBar() {
   ), [activeProfile.id, settingsActiveProfile.id, settings])
   // 提交所需的 API 配置：优先使用 InputBar 中选择的 OIDC apiKey + 模型；
   // 仍兼容老的 settings 中 profile 自带 apiKey 的方式。
-  const hasSubmitApiConfig = Boolean((apiKey && selectedModel) || activeProfile.apiKey)
+  const submitApiKey = oidcApiOverride?.apiKey || apiKey
+  const submitModel = oidcApiOverride?.model || selectedModel
+  const hasSubmitApiConfig = Boolean((submitApiKey && submitModel) || activeProfile.apiKey)
   const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !activeAgentIsRunning)
   const submitButtonAriaLabel = activeAgentIsRunning
     ? '停止生成'
     : hasSubmitApiConfig
-    ? appMode === 'agent' ? '发送给 Agent' : maskDraft ? '遮罩编辑' : '生成图像'
+    ? inputMode === 'agent' ? '发送给 Agent' : maskDraft ? '遮罩编辑' : '生成图像'
     : '请先选择 API Key'
   const submitTooltipText = activeAgentIsRunning ? '停止生成' : '请先选择 API Key'
-  const promptPlaceholder = appMode === 'agent'
+  const promptPlaceholder = inputMode === 'agent'
     ? '向 Agent 描述你的需求，可输入 @ 来指定参考图...'
     : '描述你想生成的图片，可输入 @ 来指定参考图...'
   const submitCurrentMode = useCallback(() => {
-    if (appMode === 'agent') {
+    if (inputMode === 'agent') {
       void submitAgentMessage()
     } else {
       void submitTask()
     }
-  }, [appMode])
+  }, [inputMode])
   const stopActiveAgentResponse = useCallback(() => {
     stopAgentResponse(activeAgentConversationId)
   }, [activeAgentConversationId])
@@ -929,9 +934,9 @@ export default function InputBar() {
   }, [setPrompt])
   const activeProvider = activeProfile.provider
   const isFalProvider = activeProvider === 'fal'
-  const agentAutoImageCount = appMode === 'agent'
+  const agentAutoImageCount = inputMode === 'agent'
   const moderationDisabled = isFalProvider
-  const transparentOutputAvailable = appMode === 'gallery'
+  const transparentOutputAvailable = inputMode === 'gallery'
   const showTransparentOutputControl = transparentOutputAvailable && params.output_format === 'png'
   const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
   const compressionDisabled = params.output_format === 'png' || isFalProvider
@@ -950,7 +955,7 @@ export default function InputBar() {
     : normalizeImageSize(params.size) || DEFAULT_PARAMS.size
 
   useEffect(() => {
-    if (!apiKey || !selectedModel || appMode === 'agent') {
+    if (!apiKey || !selectedModel || inputMode === 'agent') {
       setPriceEstimate('')
       setPriceEstimateError('')
       setPriceEstimateLoading(false)
@@ -982,7 +987,7 @@ export default function InputBar() {
       })
 
     return () => controller.abort()
-  }, [apiKey, selectedModel, appMode, displaySize, outputImageLimit, params.n, params.quality])
+  }, [apiKey, selectedModel, inputMode, displaySize, outputImageLimit, params.n, params.quality])
 
   const qualityOptions = isFalProvider
     ? [
@@ -2169,8 +2174,8 @@ export default function InputBar() {
 
       <div
         data-input-bar
-        data-input-mode={appMode === 'agent' ? 'agent' : 'params'}
-        className={`fixed bottom-4 left-1/2 z-40 w-full -translate-x-1/2 px-3 transition-all duration-300 sm:bottom-6 sm:max-w-4xl sm:px-4 ${appMode === 'agent' ? 'xl:left-auto xl:right-0 xl:w-[420px] xl:max-w-[420px] xl:translate-x-0 xl:px-3' : 'xl:left-[calc(50%-210px)] xl:w-[calc(100%-460px)]'}`}
+        data-input-mode={inputMode === 'agent' ? 'agent' : 'params'}
+        className={`fixed bottom-4 left-1/2 z-40 w-full -translate-x-1/2 px-3 transition-all duration-300 sm:bottom-6 sm:max-w-4xl sm:px-4 ${inputMode === 'agent' ? 'xl:left-auto xl:right-0 xl:w-[420px] xl:max-w-[420px] xl:translate-x-0 xl:px-3' : 'xl:left-[calc(50%-210px)] xl:w-[calc(100%-460px)]'}`}
       >
         <InputBatchBars
           showFavoriteCollectionBatchBar={showFavoriteCollectionBatchBar}
@@ -2256,27 +2261,29 @@ export default function InputBar() {
             )}
             
             {/* API Key / 余额 / 模型 显示区域 */}
-            <div className="mt-2 inline-flex w-fit items-center rounded-lg bg-gray-100 p-1 dark:bg-white/[0.05]">
-              <button
-                type="button"
-                onClick={() => setAppMode('gallery')}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${appMode === 'gallery' ? 'bg-white text-gray-900 shadow-sm dark:bg-white/[0.1] dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'}`}
-              >
-                填参数
-              </button>
-              <button
-                type="button"
-                onClick={() => setAppMode('agent')}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${appMode === 'agent' ? 'bg-white text-gray-900 shadow-sm dark:bg-white/[0.1] dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'}`}
-              >
-                Agent
-              </button>
-            </div>
+            {!embeddedAgent && !hideModeToggle && (
+              <div className="mt-2 inline-flex w-fit items-center rounded-lg bg-gray-100 p-1 dark:bg-white/[0.05]">
+                <button
+                  type="button"
+                  onClick={() => setAppMode('gallery')}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${appMode === 'gallery' ? 'bg-white text-gray-900 shadow-sm dark:bg-white/[0.1] dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                >
+                  填参数
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAppMode('agent')}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${appMode === 'agent' ? 'bg-white text-gray-900 shadow-sm dark:bg-white/[0.1] dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                >
+                  Agent
+                </button>
+              </div>
+            )}
 
             <div className="mt-2 flex flex-col gap-1 text-xs sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
               <div className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0 font-medium text-gray-500 dark:text-gray-400">API Key:</span>
-                {apiKeysLoading ? (
+                {!hideApiKeyBalance && <span className="shrink-0 font-medium text-gray-500 dark:text-gray-400">API Key:</span>}
+                {!hideApiKeyBalance && (apiKeysLoading ? (
                   <span className="text-gray-400 dark:text-gray-500">加载中...</span>
                 ) : apiKeys.length > 0 ? (
                   <div className="min-w-0 w-fit max-w-full sm:max-w-[420px]">
@@ -2303,16 +2310,16 @@ export default function InputBar() {
                   <span className="rounded-xl border border-gray-200/60 bg-white/50 px-3 py-1.5 font-mono text-xs text-gray-500 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400">
                     {apiKeysError ? `加载失败: ${apiKeysError}` : '(未获取到)'}
                   </span>
-                )}
+                ))}
               </div>
 
               <div className="flex min-w-0 items-center justify-between gap-2 sm:contents">
-                <div className="flex shrink-0 items-center gap-2">
+                {!hideApiKeyBalance && <div className="flex shrink-0 items-center gap-2">
                   <span className="font-medium text-gray-500 dark:text-gray-400">余额:</span>
                   <span className="rounded-xl border border-gray-200/60 bg-white/50 px-3 py-1.5 font-mono text-xs text-gray-700 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200">
                     {balanceLoading ? '加载中...' : balance || '(未获取到)'}
                   </span>
-                </div>
+                </div>}
 
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="ml-2 shrink-0 font-medium text-gray-500 dark:text-gray-400 sm:ml-0">模型:</span>
@@ -2323,7 +2330,17 @@ export default function InputBar() {
                       <div className="min-w-0 w-fit max-w-full sm:max-w-[260px]">
                         <Select
                           value={selectedModel}
-                          onChange={(val) => setSelectedModel(String(val))}
+                          onChange={(val) => {
+                            const next = String(val)
+                            setSelectedModel(next)
+                            if (hideApiKeyBalance) {
+                              const current = useStore.getState().oidcApiOverride
+                              setOidcApiOverride({
+                                ...(current?.apiKey ? { apiKey: current.apiKey } : {}),
+                                model: next,
+                              })
+                            }
+                          }}
                           options={(() => {
                             const list = models.length > 0
                               ? models.map((m) => ({ label: m.id, value: m.id }))
@@ -2337,7 +2354,7 @@ export default function InputBar() {
                           className={`${selectClass} font-mono`}
                         />
                       </div>
-                      <span className={`${appMode === 'agent' ? 'hidden' : ''} inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 shadow-sm dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200`}>
+                      <span className={`${inputMode === 'agent' ? 'hidden' : ''} inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 shadow-sm dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200`}>
                         <span className="font-mono">
                           {priceEstimateLoading ? '预估中...' : priceEstimate ? `≈ $${priceEstimate}` : priceEstimateError || '预估 --'}
                         </span>
@@ -2433,7 +2450,7 @@ export default function InputBar() {
           <div className="mt-3">
             {/* 桌面端布局 */}
             <div className="hidden sm:flex items-end justify-between gap-3">
-              {appMode === 'gallery' && renderParams('grid-cols-6')}
+              {inputMode === 'gallery' && renderParams('grid-cols-6')}
 
               <div className="flex gap-2 flex-shrink-0 mb-0.5">
                 <div
@@ -2492,7 +2509,7 @@ export default function InputBar() {
             <div className="sm:hidden flex flex-col gap-2">
               <div className={`collapse-section${mobileCollapsed ? ' collapsed' : ''}`}>
                 <div className="collapse-inner">
-                  {appMode === 'gallery' && renderParams('grid-cols-2')}
+                  {inputMode === 'gallery' && renderParams('grid-cols-2')}
                   <div className="h-2" />
                 </div>
               </div>
@@ -2590,7 +2607,7 @@ export default function InputBar() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                       </svg>
                     )}
-                    {activeAgentIsRunning ? '停止生成' : appMode === 'agent' ? '发送' : maskDraft ? '遮罩编辑' : '生成图像'}
+                    {activeAgentIsRunning ? '停止生成' : inputMode === 'agent' ? '发送' : maskDraft ? '遮罩编辑' : '生成图像'}
                   </button>
                 </div>
               </div>

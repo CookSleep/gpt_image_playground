@@ -10,6 +10,7 @@ import Header from './components/Header'
 import ProjectHome from './components/ProjectHome'
 import LegacyProjectToolbar from './components/LegacyProjectToolbar'
 import SearchBar from './components/SearchBar'
+import ProjectApiControls from './components/ProjectApiControls'
 import TaskGrid from './components/TaskGrid'
 import AgentWorkspace from './components/AgentWorkspace'
 import InputBar from './components/InputBar'
@@ -130,19 +131,31 @@ export default function App() {
           <main
             data-home-main
             data-drag-select-surface
-            className={`${appMode === 'agent' ? 'hidden xl:block' : ''} min-w-0 pb-48`}
+            className={`${appMode === 'agent' ? 'hidden xl:block' : ''} relative min-w-0 pb-48`}
           >
-            <SearchBar />
+            <div className="relative">
+              <div className="xl:pr-[22rem]">
+                <SearchBar />
+              </div>
+              <div className="mt-3 flex justify-end xl:fixed xl:right-[420px] xl:top-[4.5rem] xl:z-30 xl:mt-0 xl:pr-3">
+                <ProjectApiControls />
+              </div>
+            </div>
             {activeProjectId === LOCAL_PROJECT_ID && <LegacyProjectToolbar />}
             {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
           </main>
           <div className={`${appMode === 'gallery' ? 'hidden xl:block' : ''} relative min-w-0 border-gray-200 xl:border-l xl:pl-4 dark:border-white/[0.08] xl:fixed xl:right-0 xl:top-14 xl:bottom-0 xl:z-30 xl:w-[420px] xl:overflow-hidden`}>
             <AgentWorkspace embedded />
-            {appMode === 'agent' && <InputBar />}
+            {appMode === 'agent' && <InputBar hideApiKeyBalance hideModeToggle />}
+            {appMode === 'gallery' && (
+              <div className="hidden xl:block">
+                <InputBar embeddedAgent hideApiKeyBalance hideModeToggle />
+              </div>
+            )}
           </div>
         </div>
       )}
-      {activeProjectId !== null && appMode !== 'agent' && <InputBar />}
+      {activeProjectId !== null && appMode !== 'agent' && <InputBar hideApiKeyBalance hideModeToggle />}
       <DetailModal />
       <Lightbox />
       <SettingsModal />
