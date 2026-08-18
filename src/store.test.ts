@@ -385,6 +385,7 @@ describe('mask draft lifecycle in store actions', () => {
       lightboxImageId: null,
       lightboxImageList: [],
       oidcApiOverride: null,
+      agentOidcApiOverride: null,
       showSettings: false,
       toast: null,
       confirmDialog: null,
@@ -2911,6 +2912,8 @@ describe('agent context for removed outputs', () => {
       })],
       activeAgentConversationId: 'conversation-a',
       agentEditingRoundId: null,
+      oidcApiOverride: null,
+      agentOidcApiOverride: null,
       showToast: vi.fn(),
     })
     vi.mocked(callAgentResponsesApi).mockClear()
@@ -2969,6 +2972,25 @@ describe('agent context for removed outputs', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(vi.mocked(callAgentResponsesApi).mock.calls[0][0].profile.apiMode).toBe('responses')
+  })
+
+  it('uses the Agent model without changing the gallery model override', async () => {
+    useStore.setState({
+      oidcApiOverride: { apiKey: 'shared-key', model: 'gallery-model' },
+      agentOidcApiOverride: { model: 'agent-model' },
+      agentConversations: [agentConversation({ id: 'conversation-model', rounds: [], messages: [] })],
+      activeAgentConversationId: 'conversation-model',
+      prompt: '生成图片',
+    })
+
+    await submitAgentMessage()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(vi.mocked(callAgentResponsesApi).mock.calls[0][0].profile).toMatchObject({
+      apiKey: 'shared-key',
+      model: 'agent-model',
+    })
+    expect(useStore.getState().oidcApiOverride).toEqual({ apiKey: 'shared-key', model: 'gallery-model' })
   })
 
   it('does not send removed image_generation results back to the model', async () => {

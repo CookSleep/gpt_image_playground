@@ -409,7 +409,11 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const [balanceLoading, setBalanceLoading] = useState<boolean>(false)
   const [models, setModels] = useState<ModelInfo[]>([])
   const [modelsLoading, setModelsLoading] = useState<boolean>(false)
-  const [selectedModel, setSelectedModel] = useState<string>('gpt-image-2')
+  const [selectedModel, setSelectedModel] = useState<string>(() => (
+    (embeddedAgent || useStore.getState().appMode === 'agent'
+      ? useStore.getState().agentOidcApiOverride?.model
+      : useStore.getState().oidcApiOverride?.model) || 'gpt-image-2'
+  ))
   const [priceEstimate, setPriceEstimate] = useState<string>('')
   const [priceEstimateLoading, setPriceEstimateLoading] = useState(false)
   const [priceEstimateError, setPriceEstimateError] = useState('')
@@ -424,7 +428,9 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     }
   }, [user])
   const setOidcApiOverride = useStore((s) => s.setOidcApiOverride)
-  const oidcApiOverride = useStore((s) => s.oidcApiOverride)
+  const galleryOidcApiOverride = useStore((s) => s.oidcApiOverride)
+  const agentOidcApiOverride = useStore((s) => s.agentOidcApiOverride)
+  const setAgentOidcApiOverride = useStore((s) => s.setAgentOidcApiOverride)
   const appMode = useStore((s) => s.appMode)
   const inputMode = embeddedAgent ? 'agent' : appMode
   const activeAgentConversationId = useStore((s) => s.activeAgentConversationId)
@@ -595,11 +601,11 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       if (modelsRes.status === 'fulfilled') {
         const list = modelsRes.value.data || []
         setModels(list)
-        // 默认优先选中 gpt-image-2；否则若当前选择已不在列表中，回落到第一个；都没有则保留 'gpt-image-2'
+        // 保留当前输入栏的模型；不可用时优先回落到 gpt-image-2。
         setSelectedModel((prev) => {
           const ids = list.map((m) => m.id)
-          if (ids.includes('gpt-image-2')) return 'gpt-image-2'
           if (prev && ids.includes(prev)) return prev
+          if (ids.includes('gpt-image-2')) return 'gpt-image-2'
           if (ids.length > 0) return ids[0]
           return 'gpt-image-2'
         })
@@ -621,6 +627,11 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       controller.abort()
     }
   }, [apiKey])
+
+  useEffect(() => {
+    if (inputMode !== 'agent' || !selectedModel || agentOidcApiOverride?.model === selectedModel) return
+    setAgentOidcApiOverride({ model: selectedModel })
+  }, [agentOidcApiOverride?.model, inputMode, selectedModel, setAgentOidcApiOverride])
 
   useEffect(() => {
     if (embeddedAgent || hideApiKeyBalance) return
@@ -974,8 +985,10 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   ), [activeProfile.id, settingsActiveProfile.id, settings])
   // 提交所需的 API 配置：优先使用 InputBar 中选择的 OIDC apiKey + 模型；
   // 仍兼容老的 settings 中 profile 自带 apiKey 的方式。
-  const submitApiKey = oidcApiOverride?.apiKey || apiKey
-  const submitModel = oidcApiOverride?.model || selectedModel
+  const submitApiKey = galleryOidcApiOverride?.apiKey || apiKey
+  const submitModel = inputMode === 'agent'
+    ? agentOidcApiOverride?.model || selectedModel
+    : galleryOidcApiOverride?.model || selectedModel
   const hasSubmitApiConfig = Boolean((submitApiKey && submitModel) || activeProfile.apiKey)
   const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !activeAgentIsRunning)
   const submitButtonAriaLabel = activeAgentIsRunning
@@ -1027,8 +1040,8 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const displaySize = isFalTextToImage && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
     : normalizeImageSize(params.size) || DEFAULT_PARAMS.size
-  const estimateApiKey = oidcApiOverride?.apiKey || apiKey
-  const estimateModel = oidcApiOverride?.model || selectedModel
+  const estimateApiKey = galleryOidcApiOverride?.apiKey || apiKey
+  const estimateModel = galleryOidcApiOverride?.model || selectedModel
 
   useEffect(() => {
     if (!estimateApiKey || !estimateModel || inputMode === 'agent') {
@@ -1095,12 +1108,16 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     const next = String(value)
     setSelectedModel(next)
     if (!hideApiKeyBalance) return
+    if (inputMode === 'agent') {
+      setAgentOidcApiOverride({ model: next })
+      return
+    }
     const current = useStore.getState().oidcApiOverride
     setOidcApiOverride({
       ...(current?.apiKey ? { apiKey: current.apiKey } : {}),
       model: next,
     })
-  }, [hideApiKeyBalance, setOidcApiOverride])
+  }, [hideApiKeyBalance, inputMode, setAgentOidcApiOverride, setOidcApiOverride])
   const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加` : '上传图片'
   const transparentOutputHint = useHintTooltip()
   const handleTransparentOutputMenuOpenChange = useCallback((open: boolean) => {

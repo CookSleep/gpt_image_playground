@@ -872,6 +872,8 @@ interface AppState {
   setSettings: (s: Partial<AppSettings>) => void
   oidcApiOverride: { apiKey?: string; model?: string } | null
   setOidcApiOverride: (apiOverride: { apiKey?: string; model?: string } | null) => void
+  agentOidcApiOverride: { model?: string } | null
+  setAgentOidcApiOverride: (apiOverride: { model?: string } | null) => void
   dismissedCodexCliPrompts: string[]
   dismissCodexCliPrompt: (key: string) => void
 
@@ -1528,6 +1530,10 @@ export const useStore = create<AppState>()(
         oidcApiOverride: apiOverride && (apiOverride.apiKey || apiOverride.model)
           ? { ...apiOverride }
           : null,
+      }),
+      agentOidcApiOverride: null,
+      setAgentOidcApiOverride: (apiOverride) => set({
+        agentOidcApiOverride: apiOverride?.model ? { model: apiOverride.model } : null,
       }),
       dismissedCodexCliPrompts: [],
       dismissCodexCliPrompt: (key) => set((st) => ({
@@ -2447,11 +2453,15 @@ function createSettingsForApiProfile(settings: AppSettings, profile: ApiProfile)
   })
 }
 
-// OIDC 登录形态下 apiKey/model 由 InputBar 通过 oidcApiOverride 运行时注入。
-// 无论是校验还是实际发请求，被检 / 被用的 profile 都需要合并 override，
-// 否则 validateApiProfile 会误报"缺少 API Key"、agentApi.ts 也拿不到 key。
-function applyOidcOverrideToProfile(profile: ApiProfile): ApiProfile {
-  const override = useStore.getState().oidcApiOverride
+function getAgentOidcApiOverride() {
+  const state = useStore.getState()
+  const apiKey = state.oidcApiOverride?.apiKey
+  const model = state.agentOidcApiOverride?.model || state.oidcApiOverride?.model
+  return apiKey || model ? { ...(apiKey ? { apiKey } : {}), ...(model ? { model } : {}) } : null
+}
+
+function applyAgentOidcOverrideToProfile(profile: ApiProfile): ApiProfile {
+  const override = getAgentOidcApiOverride()
   if (!override) return profile
   return {
     ...profile,
@@ -2466,13 +2476,13 @@ function getAgentProfileValidationError(settings: AppSettings): { profile: ApiPr
   if (!textProfile || textProfile.provider !== 'openai') {
     return { profile: textProfile, message: 'Agent 模式需要使用 OpenAI 兼容模型。' }
   }
-  const textProfileError = validateApiProfile(applyOidcOverrideToProfile({ ...textProfile, apiMode: 'responses' }))
+  const textProfileError = validateApiProfile(applyAgentOidcOverrideToProfile({ ...textProfile, apiMode: 'responses' }))
   if (textProfileError) return { profile: textProfile, message: `文本模型 API 配置不完整：${textProfileError}` }
 
   if (normalized.agentApiConfigMode === 'hybrid') {
     const imageProfile = getAgentImageApiProfile(normalized)
     if (!imageProfile) return { profile: null, message: '图像模型 API 配置不存在，请在 Agent 配置页选择可用的图像模型配置。' }
-    const imageProfileError = validateApiProfile(applyOidcOverrideToProfile(imageProfile))
+    const imageProfileError = validateApiProfile(applyAgentOidcOverrideToProfile(imageProfile))
     if (imageProfileError) return { profile: imageProfile, message: `图像模型 API 配置不完整：${imageProfileError}` }
   }
 
@@ -2970,7 +2980,7 @@ function getAgentRoundImageStatusRecoveryProfile(settings: AppSettings, round: A
   const profile = round.imageStatusApiProfileId
     ? normalized.profiles.find((item) => item.id === round.imageStatusApiProfileId) ?? null
     : getAgentTextApiProfile(normalized)
-  return profile ? applyOidcOverrideToProfile(profile) : null
+  return profile ? applyAgentOidcOverrideToProfile(profile) : null
 }
 
 async function ensureAgentRoundImageStatusTask(conversation: AgentConversation, round: AgentRound, profile: ApiProfile, requestIds: string[]) {
@@ -4710,8 +4720,8 @@ export async function submitAgentMessage() {
   }
 
   // 合并 OIDC override，保证 agentApi.ts 里 createHeaders 拿得到 apiKey
-  const activeProfile = { ...applyOidcOverrideToProfile(getAgentTextApiProfile(normalizedSettings)!), apiMode: 'responses' as const }
-  const imageProfile = applyOidcOverrideToProfile(getAgentImageApiProfile(normalizedSettings)!)
+  const activeProfile = { ...applyAgentOidcOverrideToProfile(getAgentTextApiProfile(normalizedSettings)!), apiMode: 'responses' as const }
+  const imageProfile = applyAgentOidcOverrideToProfile(getAgentImageApiProfile(normalizedSettings)!)
 
   const trimmedPrompt = prompt.trim()
   if (!trimmedPrompt) {
@@ -4867,8 +4877,8 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
   }
 
   // 合并 OIDC override，保证 agentApi.ts 里 createHeaders 拿得到 apiKey
-  const activeProfile = { ...applyOidcOverrideToProfile(getAgentTextApiProfile(normalizedSettings)!), apiMode: 'responses' as const }
-  const imageProfile = applyOidcOverrideToProfile(getAgentImageApiProfile(normalizedSettings)!)
+  const activeProfile = { ...applyAgentOidcOverrideToProfile(getAgentTextApiProfile(normalizedSettings)!), apiMode: 'responses' as const }
+  const imageProfile = applyAgentOidcOverrideToProfile(getAgentImageApiProfile(normalizedSettings)!)
 
   const conversation = state.agentConversations.find((item) => item.id === conversationId)
   const sourceRound = conversation?.rounds.find((item) => item.id === roundId) ?? null
