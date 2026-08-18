@@ -15,7 +15,7 @@ func (r *ProjectRepository) SaveImage(ctx context.Context, userID string, image 
 		INSERT INTO project_images (project_id, image_id, task_id, source, mime_type, width, height, image_data, image_size, image_sha256)
 		SELECT p.id, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, $10, $11
 		FROM online_projects p
-		WHERE p.id = $1 AND p.user_id = $2
+		WHERE p.id = $1 AND p.user_id = $2 AND p.deleted_at IS NULL
 		ON CONFLICT (project_id, image_id) DO UPDATE SET
 			task_id = EXCLUDED.task_id,
 			source = EXCLUDED.source,
@@ -69,7 +69,7 @@ func (r *ProjectRepository) ListImages(ctx context.Context, userID, projectID st
 			i.width, i.height, i.image_size, i.image_sha256, i.created_at, i.updated_at
 		FROM project_images i
 		JOIN online_projects p ON p.id = i.project_id
-		WHERE i.project_id = $1 AND p.user_id = $2
+		WHERE i.project_id = $1 AND p.user_id = $2 AND p.deleted_at IS NULL
 		ORDER BY i.created_at`
 	rows, err := r.db.QueryContext(ctx, q, projectID, userID)
 	if err != nil {
@@ -110,7 +110,7 @@ func (r *ProjectRepository) GetImage(ctx context.Context, userID, projectID, ima
 			i.width, i.height, i.image_size, i.image_sha256, i.created_at, i.updated_at, i.image_data
 		FROM project_images i
 		JOIN online_projects p ON p.id = i.project_id
-		WHERE i.project_id = $1 AND i.image_id = $2 AND p.user_id = $3`
+		WHERE i.project_id = $1 AND i.image_id = $2 AND p.user_id = $3 AND p.deleted_at IS NULL`
 	var image models.ProjectImage
 	var data []byte
 	err := r.db.QueryRowContext(ctx, q, projectID, imageID, userID).Scan(
@@ -141,7 +141,7 @@ func (r *ProjectRepository) DeleteImage(ctx context.Context, userID, projectID, 
 	const q = `
 		DELETE FROM project_images i
 		USING online_projects p
-		WHERE i.project_id = $1 AND i.image_id = $2 AND p.id = i.project_id AND p.user_id = $3`
+		WHERE i.project_id = $1 AND i.image_id = $2 AND p.id = i.project_id AND p.user_id = $3 AND p.deleted_at IS NULL`
 	result, err := r.db.ExecContext(ctx, q, projectID, imageID, userID)
 	if err != nil {
 		return fmt.Errorf("delete project image: %w", err)

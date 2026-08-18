@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"gpt-image-backend/internal/models"
 )
@@ -35,7 +36,7 @@ func (r *ProjectRepository) Ensure(ctx context.Context, userID, id, title string
 		INSERT INTO online_projects (id, user_id, title, archive, archive_size, archive_sha256)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title
-		WHERE online_projects.user_id = EXCLUDED.user_id
+		WHERE online_projects.user_id = EXCLUDED.user_id AND online_projects.deleted_at IS NULL
 		RETURNING id`
 	var savedID string
 	err := r.db.QueryRowContext(ctx, q, id, userID, title, emptyProjectArchive, len(emptyProjectArchive), hex.EncodeToString(digest[:])).Scan(&savedID)
@@ -59,7 +60,7 @@ func (r *ProjectRepository) Save(ctx context.Context, userID, id, title string, 
 			archive_size = EXCLUDED.archive_size,
 			archive_sha256 = EXCLUDED.archive_sha256,
 			updated_at = NOW()
-		WHERE online_projects.user_id = EXCLUDED.user_id
+		WHERE online_projects.user_id = EXCLUDED.user_id AND online_projects.deleted_at IS NULL
 		RETURNING id, user_id, title, archive_size, archive_sha256, created_at, updated_at`
 	var project models.OnlineProject
 	err := r.db.QueryRowContext(ctx, q, id, userID, title, archive, len(archive), sha256).Scan(
@@ -85,7 +86,7 @@ func (r *ProjectRepository) List(ctx context.Context, userID string) ([]models.O
 	const q = `
 		SELECT id, user_id, title, archive_size, archive_sha256, created_at, updated_at
 		FROM online_projects
-		WHERE user_id = $1
+		WHERE user_id = $1 AND deleted_at IS NULL
 		ORDER BY updated_at DESC`
 	rows, err := r.db.QueryContext(ctx, q, userID)
 	if err != nil {
@@ -120,7 +121,7 @@ func (r *ProjectRepository) Get(ctx context.Context, userID, id string) (*models
 	const q = `
 		SELECT id, user_id, title, archive_size, archive_sha256, created_at, updated_at, archive
 		FROM online_projects
-		WHERE id = $1 AND user_id = $2`
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`
 	var project models.OnlineProject
 	var archive []byte
 	err := r.db.QueryRowContext(ctx, q, id, userID).Scan(
@@ -147,7 +148,7 @@ func (r *ProjectRepository) Rename(ctx context.Context, userID, id, title string
 	const q = `
 		UPDATE online_projects
 		SET title = $3, updated_at = NOW()
-		WHERE id = $1 AND user_id = $2
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
 		RETURNING id, user_id, title, archive_size, archive_sha256, created_at, updated_at`
 	var project models.OnlineProject
 	err := r.db.QueryRowContext(ctx, q, id, userID, title).Scan(
@@ -168,9 +169,13 @@ func (r *ProjectRepository) Rename(ctx context.Context, userID, id, title string
 	return &project, nil
 }
 
-// Delete 删除当前用户的项目。
+// Delete 标记删除当前用户的项目。
 func (r *ProjectRepository) Delete(ctx context.Context, userID, id string) error {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM online_projects WHERE id = $1 AND user_id = $2`, id, userID)
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE online_projects
+		SET deleted_at = COALESCE(deleted_at, NOW()),
+			updated_at = CASE WHEN deleted_at IS NULL THEN NOW() ELSE updated_at END
+		WHERE id = $1 AND user_id = $2`, id, userID)
 	if err != nil {
 		return fmt.Errorf("delete online project: %w", err)
 	}
@@ -182,4 +187,17 @@ func (r *ProjectRepository) Delete(ctx context.Context, userID, id string) error
 		return ErrProjectNotFound
 	}
 	return nil
+}
+
+// PurgeDeleted 物理删除保留期之前已标记的项目，关联图片由外键级联删除。
+func (r *ProjectRepository) PurgeDeleted(ctx context.Context, before time.Time) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM online_projects WHERE deleted_at IS NOT NULL AND deleted_at <= $1`, before)
+	if err != nil {
+		return 0, fmt.Errorf("purge deleted online projects: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("purge deleted online project rows: %w", err)
+	}
+	return count, nil
 }

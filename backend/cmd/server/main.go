@@ -25,6 +25,40 @@ import (
 	appjwt "gpt-image-backend/pkg/jwt"
 )
 
+const (
+	deletedProjectRetention       = 7 * 24 * time.Hour
+	deletedProjectCleanupInterval = time.Hour
+)
+
+func startDeletedProjectCleanup(ctx context.Context, repo *database.ProjectRepository) {
+	cleanup := func() {
+		cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		count, err := repo.PurgeDeleted(cleanupCtx, time.Now().Add(-deletedProjectRetention))
+		if err != nil {
+			log.Error().Err(err).Msg("purge deleted projects failed")
+			return
+		}
+		if count > 0 {
+			log.Info().Int64("count", count).Msg("purged deleted projects")
+		}
+	}
+
+	go func() {
+		cleanup()
+		ticker := time.NewTicker(deletedProjectCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cleanup()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
 func main() {
 	configPath := flag.String("config", "", "path to config.yaml (overrides BACKEND_CONFIG_PATH)")
 	flag.Parse()
@@ -64,6 +98,9 @@ func main() {
 	jwtMgr := appjwt.NewManager(cfg.JWT)
 	userRepo := database.NewUserRepository(db)
 	projectRepo := database.NewProjectRepository(db)
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	defer cleanupCancel()
+	startDeletedProjectCleanup(cleanupCtx, projectRepo)
 	authSvc := services.NewAuthService(registry, userRepo, jwtMgr, cfg.Admin)
 
 	// 6. gin 引擎
@@ -119,6 +156,7 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 	log.Info().Msg("shutting down")
+	cleanupCancel()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
