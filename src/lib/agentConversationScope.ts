@@ -63,3 +63,30 @@ export function getAgentConversationProjectId(conversation: AgentConversation, t
     ),
   )?.projectId
 }
+
+export function getChangedAgentConversationProjectIds(
+  previous: AgentConversation[],
+  current: AgentConversation[],
+  tasks: TaskRecord[],
+) {
+  const previousById = new Map(previous.map((conversation) => [conversation.id, conversation]))
+  const currentById = new Map(current.map((conversation) => [conversation.id, conversation]))
+  const projectIds = new Set<string>()
+  const addProjectId = (conversation: AgentConversation) => {
+    const projectId = getAgentConversationProjectId(conversation, tasks)
+    if (projectId) projectIds.add(projectId)
+  }
+
+  // Store 以不可变方式更新会话，未变化的会话会保留对象引用。
+  for (const conversation of previous) {
+    const next = currentById.get(conversation.id)
+    if (next === conversation) continue
+    addProjectId(conversation)
+    if (next) addProjectId(next)
+  }
+  for (const conversation of current) {
+    if (!previousById.has(conversation.id)) addProjectId(conversation)
+  }
+
+  return projectIds
+}

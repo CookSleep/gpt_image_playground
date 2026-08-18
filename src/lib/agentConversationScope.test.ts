@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_PARAMS, type AgentConversation, type TaskRecord } from '../types'
-import { getAgentConversationProjectId, getAgentConversationTitle, getProjectAgentConversations } from './agentConversationScope'
+import { getAgentConversationProjectId, getAgentConversationTitle, getChangedAgentConversationProjectIds, getProjectAgentConversations } from './agentConversationScope'
 
 function conversation(overrides: Partial<AgentConversation> = {}): AgentConversation {
   return {
@@ -61,5 +61,32 @@ describe('agent conversation project scope', () => {
     const tasks = [task({ projectId: 'project-a', agentConversationId: item.id })]
 
     expect(getProjectAgentConversations([item], tasks, 'project-a', '__all_projects__', '__local_project__')).toEqual([item])
+  })
+
+  it('syncs only projects whose agent conversations changed', () => {
+    const unchanged = conversation({ id: 'unchanged-chat', projectId: 'project-a' })
+    const changed = conversation({ id: 'changed-chat', projectId: 'project-b' })
+    const added = conversation({ id: 'added-chat', projectId: 'project-c' })
+
+    const projectIds = getChangedAgentConversationProjectIds(
+      [unchanged, changed],
+      [unchanged, { ...changed, title: 'Changed' }, added],
+      [],
+    )
+
+    expect([...projectIds]).toEqual(['project-b', 'project-c'])
+  })
+
+  it('syncs both projects when a conversation moves or is deleted', () => {
+    const moved = conversation({ id: 'moved-chat', projectId: 'project-a' })
+    const removed = conversation({ id: 'removed-chat', projectId: 'project-c' })
+
+    const projectIds = getChangedAgentConversationProjectIds(
+      [moved, removed],
+      [{ ...moved, projectId: 'project-b' }],
+      [],
+    )
+
+    expect([...projectIds]).toEqual(['project-a', 'project-b', 'project-c'])
   })
 })

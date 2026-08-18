@@ -68,7 +68,7 @@ import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBa
 import { blobToDataUrl, fileToDataUrl } from './lib/dataUrl'
 import { formatExportFileTime } from './lib/exportFileName'
 import { buildExportZip, readExportZip, readExportZipFileAsDataUrl } from './lib/exportZip'
-import { getAgentConversationProjectId } from './lib/agentConversationScope'
+import { getAgentConversationProjectId, getChangedAgentConversationProjectIds } from './lib/agentConversationScope'
 
 export const ALL_FAVORITES_COLLECTION_ID = '__all_favorites__'
 export const ALL_PROJECTS_ID = '__all_projects__'
@@ -2040,11 +2040,7 @@ async function flushAgentConversationsToIndexedDB() {
       const previousConversations = lastStoredAgentConversations
       lastStoredAgentConversations = conversations
       const currentState = useStore.getState()
-      const affectedProjectIds = new Set(
-        [...previousConversations, ...conversations]
-          .map((conversation) => getAgentConversationProjectId(conversation, currentState.tasks))
-          .filter((id): id is string => Boolean(id)),
-      )
+      const affectedProjectIds = getChangedAgentConversationProjectIds(previousConversations, conversations, currentState.tasks)
       if (onlineProjectCacheReady) {
         for (const projectId of affectedProjectIds) scheduleOnlineProjectSync(projectId)
       }
