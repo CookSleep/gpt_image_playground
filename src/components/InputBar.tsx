@@ -634,14 +634,14 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   }, [agentOidcApiOverride?.model, inputMode, selectedModel, setAgentOidcApiOverride])
 
   useEffect(() => {
-    if (embeddedAgent || hideApiKeyBalance) return
-    setOidcApiOverride((apiKey || selectedModel)
-      ? {
-          ...(apiKey ? { apiKey } : {}),
-          ...(selectedModel ? { model: selectedModel } : {}),
-        }
-      : null)
-  }, [apiKey, selectedModel, embeddedAgent, hideApiKeyBalance, setOidcApiOverride])
+    if (embeddedAgent || inputMode === 'agent' || !selectedModel) return
+    const selectedApiKey = hideApiKeyBalance ? galleryOidcApiOverride?.apiKey : apiKey
+    if (galleryOidcApiOverride?.apiKey === selectedApiKey && galleryOidcApiOverride?.model === selectedModel) return
+    setOidcApiOverride({
+      ...(selectedApiKey ? { apiKey: selectedApiKey } : {}),
+      model: selectedModel,
+    })
+  }, [apiKey, embeddedAgent, galleryOidcApiOverride, hideApiKeyBalance, inputMode, selectedModel, setOidcApiOverride])
 
   useEffect(() => {
     if (!hideModeration || params.moderation === 'auto') return
@@ -983,12 +983,9 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       ? settings
       : normalizeSettings({ ...settings, activeProfileId: activeProfile.id })
   ), [activeProfile.id, settingsActiveProfile.id, settings])
-  // 提交所需的 API 配置：优先使用 InputBar 中选择的 OIDC apiKey + 模型；
-  // 仍兼容老的 settings 中 profile 自带 apiKey 的方式。
+  // 项目页的图片模型只使用当前下拉框选择，避免回退到 Agent 的文本模型配置。
   const submitApiKey = galleryOidcApiOverride?.apiKey || apiKey
-  const submitModel = inputMode === 'agent'
-    ? agentOidcApiOverride?.model || selectedModel
-    : galleryOidcApiOverride?.model || selectedModel
+  const submitModel = selectedModel
   const hasSubmitApiConfig = Boolean((submitApiKey && submitModel) || activeProfile.apiKey)
   const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !activeAgentIsRunning)
   const submitButtonAriaLabel = activeAgentIsRunning
@@ -1004,9 +1001,14 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     if (inputMode === 'agent') {
       void submitAgentMessage()
     } else {
-      void submitTask()
+      void submitTask({
+        apiOverride: {
+          ...(submitApiKey ? { apiKey: submitApiKey } : {}),
+          model: selectedModel,
+        },
+      })
     }
-  }, [inputMode])
+  }, [inputMode, selectedModel, submitApiKey])
   const stopActiveAgentResponse = useCallback(() => {
     stopAgentResponse(activeAgentConversationId)
   }, [activeAgentConversationId])

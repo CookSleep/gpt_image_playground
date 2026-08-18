@@ -436,7 +436,7 @@ describe('mask draft lifecycle in store actions', () => {
   it('forces parameter submissions to use the Images API', async () => {
     const settings = normalizeSettings(useStore.getState().settings)
     const profiles = settings.profiles.map((profile) => (
-      profile.id === settings.activeProfileId ? { ...profile, apiMode: 'responses' as const } : profile
+      profile.id === settings.activeProfileId ? { ...profile, apiKey: 'test-key', apiMode: 'responses' as const } : profile
     ))
     useStore.setState({ settings: normalizeSettings({ ...settings, apiMode: 'responses', profiles }) })
 
@@ -657,10 +657,23 @@ describe('mask draft lifecycle in store actions', () => {
       imagesStoredOnline: true,
     })
     try {
+      const settings = normalizeSettings(useStore.getState().settings)
+      useStore.setState({
+        settings: normalizeSettings({
+          ...settings,
+          model: 'gpt-5.5',
+          apiMode: 'responses',
+          profiles: settings.profiles.map((profile) => (
+            profile.id === settings.activeProfileId
+              ? { ...profile, model: 'gpt-5.5', apiMode: 'responses' as const }
+              : profile
+          )),
+        }),
+      })
       const projectId = useStore.getState().createProject('后端在线生成')
-      useStore.setState({ oidcApiOverride: { apiKey: 'oidc-key', model: 'gpt-image-2' } })
+      useStore.setState({ oidcApiOverride: { apiKey: 'oidc-key' } })
 
-      await submitTask()
+      await submitTask({ apiOverride: { apiKey: 'oidc-key', model: 'gpt-image-2' } })
 
       await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
       const generatedTask = useStore.getState().tasks[0]
@@ -676,12 +689,13 @@ describe('mask draft lifecycle in store actions', () => {
       expect(callImageApi).not.toHaveBeenCalled()
       expect(uploadOnlineProjectImage).not.toHaveBeenCalled()
       expect(generatedTask.outputImages).toHaveLength(1)
+      expect(generatedTask).toMatchObject({ apiMode: 'images', apiModel: 'gpt-image-2' })
     } finally {
       authState.accessToken = null
     }
   })
 
-  it('routes online OIDC Responses image generation through the backend', async () => {
+  it('uses the Images API for online OIDC project generation with a Responses profile', async () => {
     const { callImageApi } = await import('./lib/api')
     const profile = createDefaultOpenAIProfile({
       id: 'responses-profile',
@@ -718,7 +732,7 @@ describe('mask draft lifecycle in store actions', () => {
       await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
       expect(callBackendImageApi).toHaveBeenCalledWith(expect.objectContaining({
         projectId,
-        apiMode: 'responses',
+        apiMode: 'images',
         apiKey: 'oidc-key',
         model: 'gpt-image-2',
         onImageStatusRequestCreated: expect.any(Function),

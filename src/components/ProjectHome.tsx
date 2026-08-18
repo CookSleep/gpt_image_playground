@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext'
 import { fetchApiKeys, type ApiKeyItem } from '../auth/oidcResource'
 import { LOCAL_PROJECT_ID, createInputImageFromFile, deleteImageIfUnreferenced, ensureImageThumbnailCached, submitTask, useStore } from '../store'
 import { DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
+import { createLegacyProject } from '../lib/legacyProject'
 import { updateProjectUrl } from '../lib/projectRoute'
 import { readCachedApiKey, writeCachedApiKey } from '../lib/oidcApiKeySelection'
 import Select from './Select'
@@ -223,19 +224,7 @@ export default function ProjectHome() {
       }),
     ]
   }, [apiKeyItems, apiKeys, apiKeysError, apiKeysLoading])
-  const legacyProject = useMemo<Project | null>(() => {
-    if (legacyTasks.length === 0) return null
-    const createdAt = Math.min(...legacyTasks.map((task) => task.createdAt))
-    const updatedAt = Math.max(...legacyTasks.map((task) => task.finishedAt ?? task.createdAt))
-    return {
-      id: LOCAL_PROJECT_ID,
-      title: '本地数据',
-      initialPrompt: '',
-      storage: 'local',
-      createdAt,
-      updatedAt,
-    }
-  }, [legacyTasks])
+  const legacyProject = useMemo(() => createLegacyProject(legacyTasks, LOCAL_PROJECT_ID), [legacyTasks])
 
   useEffect(() => {
     if (user == null) {
