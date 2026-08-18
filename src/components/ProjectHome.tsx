@@ -345,6 +345,18 @@ export default function ProjectHome() {
     }
   }
 
+  const createEmptyProject = () => {
+    const state = useStore.getState()
+    state.setPrompt('')
+    state.clearInputImages()
+    state.clearMaskDraft()
+    state.setReusedTaskApiProfile(null)
+    for (const attachment of attachments) void deleteImageIfUnreferenced(attachment.id)
+    const projectId = createProject('')
+    updateProjectUrl(projectId)
+    window.scrollTo({ top: 0 })
+  }
+
   return (
     <main className="safe-area-x mx-auto w-full max-w-7xl px-4 pb-20 sm:px-6">
       <section className="mx-auto flex min-h-[46vh] max-w-4xl flex-col items-center justify-center pb-8 pt-10 text-center sm:min-h-[52vh] sm:pt-16">
@@ -457,11 +469,7 @@ export default function ProjectHome() {
             <article className="group min-w-0">
               <button
                 type="button"
-                onClick={() => {
-                  setPrompt('')
-                  promptRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                  promptRef.current?.focus()
-                }}
+                onClick={createEmptyProject}
                 className="flex aspect-[4/3] w-full items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-400 transition hover:border-gray-400 hover:bg-gray-100 hover:text-gray-800 dark:border-white/[0.14] dark:bg-white/[0.025] dark:text-gray-600 dark:hover:border-white/[0.24] dark:hover:bg-white/[0.05] dark:hover:text-gray-200"
                 aria-label="新建项目"
                 title="新建项目"
