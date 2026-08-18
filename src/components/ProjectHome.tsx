@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Project, TaskRecord } from '../types'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import type { InputImage, Project, TaskRecord } from '../types'
 import { useAuth } from '../auth/AuthContext'
 import { fetchApiKeys, type ApiKeyItem } from '../auth/oidcResource'
-import { LOCAL_PROJECT_ID, ensureImageThumbnailCached, submitTask, useStore } from '../store'
+import { LOCAL_PROJECT_ID, createInputImageFromFile, deleteImageIfUnreferenced, ensureImageThumbnailCached, submitTask, useStore } from '../store'
 import { DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
 import { updateProjectUrl } from '../lib/projectRoute'
 import { readCachedApiKey, writeCachedApiKey } from '../lib/oidcApiKeySelection'
 import Select from './Select'
-import { ArrowUpIcon, EditIcon, KeyIcon, OpenAIIcon, PlusIcon, TrashIcon } from './icons'
+import { ArrowUpIcon, CloseIcon, EditIcon, KeyIcon, OpenAIIcon, PlusIcon, TrashIcon } from './icons'
 
 const HOME_MODEL_OPTIONS = [{
   label: 'GPT Image 2',
@@ -25,6 +25,8 @@ const HOME_API_KEY_ICON = (
     <KeyIcon className="h-4 w-4" />
   </span>
 )
+
+const HOME_MAX_ATTACHMENTS = 16
 
 function ProjectCover({ task }: { task?: TaskRecord }) {
   const [src, setSrc] = useState('')
@@ -168,6 +170,9 @@ export default function ProjectHome() {
   const [model, setModel] = useState(DEFAULT_IMAGES_MODEL)
   const [submitting, setSubmitting] = useState(false)
   const promptRef = useRef<HTMLTextAreaElement>(null)
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
+  const [attachments, setAttachments] = useState<InputImage[]>([])
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false)
   const legacyTasks = useMemo(() => tasks.filter((task) => !task.projectId), [tasks])
 
   const latestTaskByProject = useMemo(() => {
@@ -275,6 +280,38 @@ export default function ProjectHome() {
     useStore.getState().setOidcApiOverride(value ? { apiKey: value, model } : { model })
   }
 
+  const handleAttachmentChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ''
+    if (files.length === 0) return
+    const imageFiles = files.filter((file) => file.type.startsWith('image/'))
+    if (imageFiles.length === 0) {
+      useStore.getState().showToast('请选择图片文件', 'error')
+      return
+    }
+    const remaining = HOME_MAX_ATTACHMENTS - attachments.length
+    if (remaining <= 0) {
+      useStore.getState().showToast(`最多添加 ${HOME_MAX_ATTACHMENTS} 张图片`, 'error')
+      return
+    }
+    setAttachmentsLoading(true)
+    try {
+      const loaded: InputImage[] = []
+      for (const file of imageFiles.slice(0, remaining)) {
+        const image = await createInputImageFromFile(file)
+        if (image) loaded.push(image)
+      }
+      if (loaded.length > 0) setAttachments((current) => [...current, ...loaded])
+      if (imageFiles.length > remaining) {
+        useStore.getState().showToast(`最多添加 ${HOME_MAX_ATTACHMENTS} 张图片`, 'error')
+      }
+    } catch (err) {
+      useStore.getState().showToast(`附件添加失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+    } finally {
+      setAttachmentsLoading(false)
+    }
+  }
+
   const startProject = async () => {
     const value = prompt.trim()
     if (!value || submitting) return
@@ -294,7 +331,7 @@ export default function ProjectHome() {
       projectId = createProject(value)
       updateProjectUrl(projectId)
       const latestState = useStore.getState()
-      latestState.clearInputImages()
+      latestState.setInputImages(attachments)
       latestState.clearMaskDraft()
       latestState.setReusedTaskApiProfile(null)
       latestState.setPrompt(value)
@@ -331,6 +368,27 @@ export default function ProjectHome() {
             placeholder="描述你想生成的画面..."
             className="block min-h-28 w-full resize-none bg-transparent px-3 py-3 text-base leading-7 text-gray-900 outline-none placeholder:text-gray-400 dark:text-gray-100 dark:placeholder:text-gray-600 sm:px-4 sm:text-lg"
           />
+          {attachments.length > 0 && (
+            <div className="flex gap-2 overflow-x-auto px-3 pb-2 sm:px-4">
+              {attachments.map((image, index) => (
+                <div key={image.id} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-gray-200 bg-gray-100 dark:border-white/[0.1] dark:bg-gray-800">
+                  <img src={image.dataUrl} alt={`附件 ${index + 1}`} className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachments((current) => current.filter((item) => item.id !== image.id))
+                      void deleteImageIfUnreferenced(image.id)
+                    }}
+                    className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
+                    aria-label={`移除附件 ${index + 1}`}
+                    title="移除附件"
+                  >
+                    <CloseIcon className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2 px-1 pb-1 sm:px-2">
             <div className="min-w-0 w-48 max-w-full shrink-0">
               <Select
@@ -352,6 +410,24 @@ export default function ProjectHome() {
                   menuClassName="!py-0"
                 />
               </div>
+              <input
+                ref={attachmentInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(event) => void handleAttachmentChange(event)}
+              />
+              <button
+                type="button"
+                onClick={() => attachmentInputRef.current?.click()}
+                disabled={attachmentsLoading || attachments.length >= HOME_MAX_ATTACHMENTS}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-gray-50 text-gray-600 transition hover:border-gray-300 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/[0.1] dark:bg-white/[0.05] dark:text-gray-300 dark:hover:bg-white/[0.1]"
+                aria-label="添加附件"
+                title="添加附件"
+              >
+                <PlusIcon className="h-5 w-5" />
+              </button>
               <button
                 type="button"
                 onClick={() => void startProject()}
