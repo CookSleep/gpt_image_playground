@@ -14,7 +14,7 @@ describe('service worker fetch 缓存范围', () => {
       }),
     }
     const cacheStorage = {
-      match: vi.fn(() => Promise.resolve(undefined)),
+      match: vi.fn(() => Promise.resolve(new Response(null, { status: 200 }))),
       open: vi.fn(),
       keys: vi.fn(),
       delete: vi.fn(),
@@ -38,6 +38,10 @@ describe('service worker fetch 缓存范围', () => {
     const apiRespondWith = vi.fn()
     handleFetch({ request: new Request('https://img.opentk.ai/api/v1/jobs'), respondWith: apiRespondWith })
     expect(apiRespondWith).not.toHaveBeenCalled()
+
+    const projectRespondWith = vi.fn()
+    handleFetch({ request: new Request('https://img.opentk.ai/api/v1/projects'), respondWith: projectRespondWith })
+    expect(projectRespondWith).not.toHaveBeenCalled()
 
     const assetRespondWith = vi.fn()
     handleFetch({ request: new Request('https://img.opentk.ai/assets/index-abc.js'), respondWith: assetRespondWith })

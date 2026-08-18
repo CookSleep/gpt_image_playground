@@ -7,6 +7,11 @@ import { getAgentConversationProjectId } from './agentConversationScope'
 
 const LEGACY_PROJECT_UPLOAD_ID_KEY = 'gpt-image-playground:legacy-project-upload-id'
 
+function fetchOnlineProjectResource(path: string) {
+  // 时间戳同时绕过仍在控制页面的旧版 Service Worker Cache Storage。
+  return authFetch(`${path}?_=${Date.now()}`, { cache: 'no-store' })
+}
+
 export interface OnlineProjectResponse {
   id: string
   title: string
@@ -152,7 +157,7 @@ export async function uploadOnlineProject(id: string, title: string, archive: Bl
 }
 
 export async function listOnlineProjects(): Promise<OnlineProjectResponse[]> {
-  const resp = await authFetch('/api/v1/projects')
+  const resp = await fetchOnlineProjectResource('/api/v1/projects')
   if (!resp.ok) {
     const data = await resp.json().catch(() => null) as { message?: string } | null
     throw new Error(data?.message || `在线项目列表加载失败：HTTP ${resp.status}`)
@@ -167,7 +172,7 @@ export async function listOnlineProjects(): Promise<OnlineProjectResponse[]> {
 }
 
 export async function downloadOnlineProject(id: string): Promise<Uint8Array> {
-  const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(id)}`)
+  const resp = await fetchOnlineProjectResource(`/api/v1/projects/${encodeURIComponent(id)}`)
   if (!resp.ok) {
     const data = await resp.json().catch(() => null) as { message?: string } | null
     throw new Error(data?.message || `在线项目内容加载失败：HTTP ${resp.status}`)
@@ -196,7 +201,7 @@ export async function uploadOnlineProjectImage(projectId: string, taskId: string
 }
 
 export async function listOnlineProjectImages(projectId: string): Promise<OnlineProjectImageResponse[]> {
-  const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(projectId)}/images`)
+  const resp = await fetchOnlineProjectResource(`/api/v1/projects/${encodeURIComponent(projectId)}/images`)
   if (!resp.ok) {
     const data = await resp.json().catch(() => null) as { message?: string } | null
     throw new Error(data?.message || `项目图片列表加载失败：HTTP ${resp.status}`)
@@ -212,7 +217,7 @@ export async function listOnlineProjectImages(projectId: string): Promise<Online
 }
 
 export async function downloadOnlineProjectImage(projectId: string, image: OnlineProjectImageResponse): Promise<StoredImage> {
-  const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(image.image_id)}`)
+  const resp = await fetchOnlineProjectResource(`/api/v1/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(image.image_id)}`)
   if (!resp.ok) {
     const data = await resp.json().catch(() => null) as { message?: string } | null
     throw new Error(data?.message || `项目图片加载失败：HTTP ${resp.status}`)

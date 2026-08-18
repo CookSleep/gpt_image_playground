@@ -216,7 +216,7 @@ describe('onlineProjects', () => {
 
     const projects = await listOnlineProjects()
 
-    expect(authFetch).toHaveBeenCalledWith('/api/v1/projects')
+    expect(authFetch).toHaveBeenCalledWith(expect.stringMatching(/^\/api\/v1\/projects\?_=\d+$/), { cache: 'no-store' })
     expect(projects).toHaveLength(1)
     expect(projects[0]?.title).toBe('云端项目')
   })
@@ -230,7 +230,7 @@ describe('onlineProjects', () => {
     expect([...await downloadOnlineProject(id)]).toEqual([80, 75, 3, 4])
     await deleteOnlineProject(id)
 
-    expect(authFetch).toHaveBeenNthCalledWith(1, `/api/v1/projects/${id}`)
+    expect(authFetch).toHaveBeenNthCalledWith(1, expect.stringMatching(new RegExp(`^/api/v1/projects/${id}\\?_=\\d+$`)), { cache: 'no-store' })
     expect(authFetch).toHaveBeenNthCalledWith(2, `/api/v1/projects/${id}`, { method: 'DELETE' })
   })
 })
