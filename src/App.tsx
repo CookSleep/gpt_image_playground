@@ -133,41 +133,43 @@ export default function App() {
       {activeProjectId === null ? (
         <ProjectHome />
       ) : (
-        <div className={`safe-area-x mx-auto grid w-full max-w-[1600px] ${agentPanelCollapsed ? 'xl:grid-cols-1' : 'xl:grid-cols-[minmax(0,1fr)_420px] xl:gap-4'}`}>
-          <main
-            data-home-main
-            data-drag-select-surface
-            className={`${appMode === 'agent' ? 'hidden xl:block' : ''} relative min-w-0 pb-48`}
-          >
-            <div className="mt-6 mb-4 flex min-w-0 items-center gap-3">
-              <div className="min-w-0 flex-1">
-                <SearchBar className="m-0" />
-              </div>
-              <ProjectApiKeySelect />
-            </div>
-            {activeProjectId === LOCAL_PROJECT_ID && <LegacyProjectToolbar />}
-            {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
-          </main>
-          {!agentPanelCollapsed && <div className={`${appMode === 'gallery' ? 'hidden xl:block' : ''} relative min-w-0 border-gray-200 xl:border-l dark:border-white/[0.08] xl:fixed xl:right-0 xl:top-14 xl:bottom-0 xl:z-30 xl:w-[420px] xl:overflow-hidden`}>
-            <AgentWorkspace embedded onCollapse={() => setAgentPanelCollapsed(true)} />
-            {appMode === 'agent' && <InputBar hideApiKeyBalance hideModeToggle />}
-            {appMode === 'gallery' && (
-              <div className="hidden xl:block">
-                <InputBar embeddedAgent hideApiKeyBalance hideModeToggle moveModelToAttachment />
-              </div>
-            )}
-          </div>}
-          {agentPanelCollapsed && (
-            <button
-              type="button"
-              onClick={() => setAgentPanelCollapsed(false)}
-              className="fixed right-0 top-16 z-30 rounded-l-lg border border-r-0 border-gray-200 bg-white/90 p-2 text-gray-500 shadow-sm backdrop-blur transition-colors hover:bg-gray-100 hover:text-gray-800 dark:border-white/[0.08] dark:bg-gray-900/90 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
-              title="展开 Agent"
-              aria-label="展开 Agent"
+        <div data-project-workspace data-drag-select-surface className="relative min-h-[calc(100vh-4rem)] w-full">
+          <div className={`safe-area-x mx-auto grid w-full max-w-[1600px] ${agentPanelCollapsed ? 'xl:grid-cols-1' : 'xl:grid-cols-[minmax(0,1fr)_420px] xl:gap-4'}`}>
+            <main
+              data-home-main
+              data-drag-select-surface
+              className={`${appMode === 'agent' ? 'hidden xl:block' : ''} relative min-h-[calc(100vh-4rem)] min-w-0 pb-48`}
             >
-              <ChevronLeftIcon className="h-4 w-4" />
-            </button>
-          )}
+              <div className="mt-6 mb-4 flex min-w-0 items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <SearchBar className="m-0" />
+                </div>
+                <ProjectApiKeySelect />
+              </div>
+              {activeProjectId === LOCAL_PROJECT_ID && <LegacyProjectToolbar />}
+              {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
+            </main>
+            {!agentPanelCollapsed && <div data-no-drag-select className={`${appMode === 'gallery' ? 'hidden xl:block' : ''} relative min-w-0 border-gray-200 xl:border-l dark:border-white/[0.08] xl:fixed xl:right-0 xl:top-14 xl:bottom-0 xl:z-30 xl:w-[420px] xl:overflow-hidden`}>
+              <AgentWorkspace embedded onCollapse={() => setAgentPanelCollapsed(true)} />
+              {appMode === 'agent' && <InputBar hideApiKeyBalance hideModeToggle />}
+              {appMode === 'gallery' && (
+                <div className="hidden xl:block">
+                  <InputBar embeddedAgent hideApiKeyBalance hideModeToggle moveModelToAttachment />
+                </div>
+              )}
+            </div>}
+            {agentPanelCollapsed && (
+              <button
+                type="button"
+                onClick={() => setAgentPanelCollapsed(false)}
+                className="fixed right-0 top-16 z-30 rounded-l-lg border border-r-0 border-gray-200 bg-white/90 p-2 text-gray-500 shadow-sm backdrop-blur transition-colors hover:bg-gray-100 hover:text-gray-800 dark:border-white/[0.08] dark:bg-gray-900/90 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                title="展开 Agent"
+                aria-label="展开 Agent"
+              >
+                <ChevronLeftIcon className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
       )}
       {activeProjectId !== null && appMode !== 'agent' && <InputBar hideApiKeyBalance hideModeToggle moveModelToAttachment hideModeration />}

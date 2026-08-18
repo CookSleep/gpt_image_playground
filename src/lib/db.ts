@@ -88,6 +88,23 @@ export function deleteProject(id: string): Promise<undefined> {
   return dbTransaction(STORE_PROJECTS, 'readwrite', (s) => s.delete(id))
 }
 
+export function deleteProjectWithRecords(projectId: string, taskIds: string[], conversationIds: string[]): Promise<undefined> {
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE_PROJECTS, STORE_TASKS, STORE_AGENT_CONVERSATIONS], 'readwrite')
+        tx.objectStore(STORE_PROJECTS).delete(projectId)
+        const taskStore = tx.objectStore(STORE_TASKS)
+        for (const id of taskIds) taskStore.delete(id)
+        const conversationStore = tx.objectStore(STORE_AGENT_CONVERSATIONS)
+        for (const id of conversationIds) conversationStore.delete(id)
+        tx.oncomplete = () => resolve(undefined)
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      }),
+  )
+}
+
 export function clearProjects(): Promise<undefined> {
   return dbTransaction(STORE_PROJECTS, 'readwrite', (s) => s.clear())
 }

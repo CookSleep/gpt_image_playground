@@ -3,6 +3,7 @@ import { authFetch } from '../auth/api'
 import { dataUrlToBlob } from './canvasImage'
 import { blobToDataUrl } from './dataUrl'
 import { buildExportZip, readExportZip, readExportZipFileAsDataUrl } from './exportZip'
+import { getAgentConversationProjectId } from './agentConversationScope'
 
 const LEGACY_PROJECT_UPLOAD_ID_KEY = 'gpt-image-playground:legacy-project-upload-id'
 
@@ -91,11 +92,14 @@ async function buildProjectArchive(state: ProjectArchiveState, project: Project 
 export function buildOnlineProjectArchive(state: ProjectArchiveState & { projects: Project[] }, projectId: string) {
   const project = state.projects.find((item) => item.id === projectId)
   if (!project) throw new Error('找不到需要同步的项目')
+  const agentConversations = state.agentConversations
+    .filter((conversation) => getAgentConversationProjectId(conversation, state.tasks) === projectId)
+    .map((conversation) => conversation.projectId === projectId ? conversation : { ...conversation, projectId })
   return buildProjectArchive(
     state,
     project,
     state.tasks.filter((task) => task.projectId === projectId),
-    state.agentConversations.filter((conversation) => conversation.projectId === projectId),
+    agentConversations,
   )
 }
 

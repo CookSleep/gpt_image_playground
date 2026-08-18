@@ -38,6 +38,11 @@ vi.mock('./lib/db', () => {
     deleteProject: async (id: string) => {
       projects.delete(id)
     },
+    deleteProjectWithRecords: async (projectId: string, taskIds: string[], conversationIds: string[]) => {
+      projects.delete(projectId)
+      for (const id of taskIds) tasks.delete(id)
+      for (const id of conversationIds) agentConversations.delete(id)
+    },
     clearProjects: async () => {
       projects.clear()
     },
@@ -111,6 +116,26 @@ vi.mock('./lib/onlineProjects', () => ({
   buildLegacyProjectArchive: vi.fn(async () => new Blob(['archive'], { type: 'application/zip' })),
   getLegacyProjectUploadId: vi.fn(() => '86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8'),
   clearLegacyProjectUploadId: vi.fn(),
+  getTaskReferencedImageIds: vi.fn((record: TaskRecord) => [
+    ...record.inputImageIds,
+    ...(record.maskTargetImageId ? [record.maskTargetImageId] : []),
+    ...(record.maskImageId ? [record.maskImageId] : []),
+    ...record.outputImages,
+    ...(record.transparentOriginalImages ?? []),
+    ...(record.streamPartialImageIds ?? []),
+  ]),
+  getAgentConversationReferencedImageIds: vi.fn((conversation: AgentConversation) => [
+    ...conversation.rounds.flatMap((round) => [
+      ...round.inputImageIds,
+      ...(round.maskTargetImageId ? [round.maskTargetImageId] : []),
+      ...(round.maskImageId ? [round.maskImageId] : []),
+    ]),
+    ...conversation.messages.flatMap((message) => [
+      ...(message.inputImageIds ?? []),
+      ...(message.maskTargetImageId ? [message.maskTargetImageId] : []),
+      ...(message.maskImageId ? [message.maskImageId] : []),
+    ]),
+  ]),
   uploadOnlineProject: vi.fn(async () => ({
     id: '86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8',
     title: '本地数据',
@@ -237,7 +262,7 @@ import { queryImageStatuses } from './lib/imageStatusApi'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { callBackendImageApi } from './lib/backendImageApi'
 import { buildLegacyProjectArchive, clearLegacyProjectUploadId, deleteOnlineProject, downloadOnlineProject, downloadOnlineProjectImage, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
-import { cleanStaleAgentInputDrafts, clearFailedTasks, deleteAgentRoundFromConversation, deleteFavoriteCollection, editOutputs, getActiveAgentRounds, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, reuseConfig, retryTask, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
+import { LOCAL_PROJECT_ID, cleanStaleAgentInputDrafts, clearFailedTasks, deleteAgentRoundFromConversation, deleteFavoriteCollection, editOutputs, getActiveAgentRounds, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, reuseConfig, retryTask, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -429,17 +454,110 @@ describe('mask draft lifecycle in store actions', () => {
     await vi.waitFor(async () => expect((await getAllProjects()).map((project) => project.id)).toContain(projectId))
   })
 
-  it('removes a project without deleting its generation records', async () => {
+  it('removes a project and all of its generation records', async () => {
     const projectId = useStore.getState().createProject('品牌主视觉')
     await submitTask()
 
     await useStore.getState().deleteProject(projectId)
 
     expect(useStore.getState().projects).toEqual([])
-    expect(useStore.getState().tasks[0]).not.toHaveProperty('projectId')
+    expect(useStore.getState().tasks).toEqual([])
     expect(await getAllProjects()).toEqual([])
-    expect(await getAllTasks()).toHaveLength(1)
-    expect((await getAllTasks())[0]).not.toHaveProperty('projectId')
+    expect(await getAllTasks()).toEqual([])
+  })
+
+  it('removes local project records without deleting saved project records', async () => {
+    const projectId = useStore.getState().createProject('已保存项目')
+    const localTask = task({ id: 'local-task' })
+    const projectTask = task({ id: 'project-task', projectId })
+    const localConversation = agentConversation({ id: 'local-conversation' })
+    const projectConversation = agentConversation({ id: 'project-conversation', projectId })
+    useStore.setState({
+      activeProjectId: LOCAL_PROJECT_ID,
+      tasks: [localTask, projectTask],
+      agentConversations: [localConversation, projectConversation],
+      activeAgentConversationId: localConversation.id,
+      agentInputDrafts: {
+        [localConversation.id]: {
+          prompt: 'local draft',
+          inputImages: [],
+          maskDraft: null,
+          maskEditorImageId: null,
+          updatedAt: 1,
+        },
+      },
+    })
+    await Promise.all([
+      putDbTask(localTask),
+      putDbTask(projectTask),
+      putAgentConversation(localConversation),
+      putAgentConversation(projectConversation),
+    ])
+
+    await useStore.getState().deleteProject(LOCAL_PROJECT_ID)
+
+    expect(useStore.getState().projects.map((project) => project.id)).toEqual([projectId])
+    expect(useStore.getState().tasks.map((item) => item.id)).toEqual([projectTask.id])
+    expect(useStore.getState().agentConversations.map((item) => item.id)).toEqual([projectConversation.id])
+    expect(useStore.getState().agentInputDrafts).toEqual({})
+    expect(useStore.getState().activeProjectId).toBeNull()
+    expect((await getAllTasks()).map((item) => item.id)).toEqual([projectTask.id])
+    expect((await getAllAgentConversations()).map((item) => item.id)).toEqual([projectConversation.id])
+  })
+
+  it('removes project-only images but keeps shared images', async () => {
+    const projectId = useStore.getState().createProject('带图片的项目')
+    const projectTask = task({
+      id: 'project-task-with-images',
+      projectId,
+      inputImageIds: [imageB.id],
+      outputImages: [imageA.id],
+    })
+    const retainedTask = task({ id: 'retained-task-with-shared-image', outputImages: [imageB.id] })
+    useStore.setState({ tasks: [projectTask, retainedTask] })
+    await Promise.all([
+      putDbTask(projectTask),
+      putDbTask(retainedTask),
+      putImage(imageA),
+      putImage(imageB),
+    ])
+
+    await useStore.getState().deleteProject(projectId)
+
+    expect(useStore.getState().tasks.map((item) => item.id)).toEqual([retainedTask.id])
+    expect(await getImage(imageA.id)).toBeUndefined()
+    expect(await getImage(imageB.id)).toEqual(imageB)
+  })
+
+  it('deletes the project agent conversation and its draft', async () => {
+    const projectId = useStore.getState().createProject('带 Agent 的项目')
+    const conversation = agentConversation({ id: 'project-conversation', projectId })
+    const projectTask = task({ id: 'project-task', projectId })
+    useStore.setState({
+      tasks: [projectTask],
+      agentConversations: [conversation],
+      activeAgentConversationId: conversation.id,
+      agentInputDrafts: {
+        [conversation.id]: {
+          prompt: 'draft',
+          inputImages: [],
+          maskDraft: null,
+          maskEditorImageId: null,
+          updatedAt: 1,
+        },
+      },
+    })
+    await putDbTask(projectTask)
+    await putAgentConversation(conversation)
+
+    await useStore.getState().deleteProject(projectId)
+
+    expect(useStore.getState().projects).toEqual([])
+    expect(useStore.getState().tasks).toEqual([])
+    expect(useStore.getState().agentConversations).toEqual([])
+    expect(useStore.getState().agentInputDrafts).toEqual({})
+    expect(await getAllTasks()).toEqual([])
+    expect(await getAllAgentConversations()).toEqual([])
   })
 
   it('renames a project and persists the new title', async () => {
@@ -483,6 +601,18 @@ describe('mask draft lifecycle in store actions', () => {
     } finally {
       authState.accessToken = null
     }
+  })
+
+  it('creates an auto-recorded project without a cached auth token', () => {
+    const projectId = useStore.getState().createProject('home prompt', { autoRecord: true })
+    const project = useStore.getState().projects.find((item) => item.id === projectId)
+
+    expect(project).toMatchObject({
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      storage: 'online',
+      remoteId: projectId,
+      syncPending: true,
+    })
   })
 
   it('uploads generated images immediately for an online project', async () => {
@@ -747,7 +877,7 @@ describe('mask draft lifecycle in store actions', () => {
     expect(useStore.getState().projects).toEqual([])
   })
 
-  it('keeps cached records as local data when an online project no longer exists', async () => {
+  it('removes cached records when an online project no longer exists', async () => {
     const project = {
       id: 'missing-online-project',
       title: '已删除项目',
@@ -765,7 +895,7 @@ describe('mask draft lifecycle in store actions', () => {
       await initStore()
 
       expect(useStore.getState().projects).toEqual([])
-      expect(useStore.getState().tasks.find((item) => item.id === 'cached-task')).not.toHaveProperty('projectId')
+      expect(useStore.getState().tasks.find((item) => item.id === 'cached-task')).toBeUndefined()
     } finally {
       authState.accessToken = null
     }
@@ -2121,6 +2251,7 @@ describe('agent conversation creation', () => {
     useStore.setState({
       agentConversations: [],
       activeAgentConversationId: null,
+      activeProjectId: null,
       agentSidebarCollapsed: false,
       agentEditingRoundId: null,
     })
@@ -2188,8 +2319,25 @@ describe('agent conversation creation', () => {
     expect(state.activeAgentConversationId).toBe(id)
     now.mockRestore()
   })
-})
+  it('persists new and deleted conversations without losing older data', async () => {
+    await clearAgentConversations()
+    await initStore()
+    const first = agentConversation({
+      id: 'persisted-first',
+      title: 'older chat',
+      messages: [{ id: 'first-message', role: 'user', content: 'old', roundId: 'first-round', createdAt: 1 }],
+    })
+    useStore.setState({ agentConversations: [first], activeAgentConversationId: first.id })
+    await vi.waitFor(async () => expect((await getAllAgentConversations()).map((item) => item.id)).toEqual([first.id]))
 
+    const secondId = useStore.getState().createAgentConversation()
+    await vi.waitFor(async () => expect((await getAllAgentConversations()).map((item) => item.id)).toEqual([first.id, secondId]))
+
+    useStore.getState().deleteAgentConversation(first.id)
+    await vi.waitFor(async () => expect((await getAllAgentConversations()).map((item) => item.id)).toEqual([secondId]))
+    expect(useStore.getState().agentConversations.map((item) => item.id)).toEqual([secondId])
+  })
+})
 describe('agent round deletion', () => {
   it('renumbers later rounds and remaps image mentions after deleting a middle round', () => {
     const conversation = agentConversation({
@@ -2590,6 +2738,32 @@ describe('agent draft lifecycle', () => {
     expect(state.inputImages).toEqual([imageB])
   })
 
+  it('keeps embedded Agent attachments separate from gallery attachments', () => {
+    useStore.setState({
+      appMode: 'gallery',
+      prompt: 'gallery prompt',
+      inputImages: [imageB],
+      agentInputDrafts: {
+        'conversation-a': {
+          prompt: 'agent prompt',
+          inputImages: [],
+          maskDraft: null,
+          maskEditorImageId: null,
+        },
+      },
+    })
+
+    const state = useStore.getState()
+    state.addAgentInputImage('conversation-a', imageA)
+
+    expect(useStore.getState().inputImages).toEqual([imageB])
+    expect(useStore.getState().agentInputDrafts['conversation-a']?.inputImages).toEqual([imageA])
+
+    state.removeAgentInputImage('conversation-a', 0)
+
+    expect(useStore.getState().inputImages).toEqual([imageB])
+    expect(useStore.getState().agentInputDrafts['conversation-a']?.inputImages).toEqual([])
+  })
   it('persists the gallery draft while agent mode is active', () => {
     const galleryPrompt = 'gallery draft'
     useStore.setState({
@@ -2748,6 +2922,34 @@ describe('agent context for removed outputs', () => {
     })
   })
 
+  it('submits embedded Agent attachments without clearing gallery attachments', async () => {
+    useStore.setState({
+      appMode: 'gallery',
+      prompt: 'gallery prompt',
+      inputImages: [imageB],
+      agentConversations: [agentConversation({ id: 'conversation-embedded', rounds: [], messages: [] })],
+      activeAgentConversationId: 'conversation-embedded',
+      agentInputDrafts: {
+        'conversation-embedded': {
+          prompt: 'agent prompt',
+          inputImages: [imageA],
+          maskDraft: null,
+          maskEditorImageId: null,
+        },
+      },
+    })
+
+    await submitAgentMessage()
+
+    const state = useStore.getState()
+    const conversation = state.agentConversations.find((item) => item.id === 'conversation-embedded')
+    expect(conversation?.rounds[0]?.inputImageIds).toEqual([imageA.id])
+    expect(state.inputImages).toEqual([imageB])
+    expect(state.prompt).toBe('gallery prompt')
+    expect(state.agentInputDrafts['conversation-embedded']).toBeUndefined()
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
   it('forces Agent submissions to use the Responses API', async () => {
     const current = useStore.getState()
     const settings = normalizeSettings({

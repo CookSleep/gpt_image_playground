@@ -1,10 +1,10 @@
 import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { ALL_FAVORITES_COLLECTION_ID, ALL_PROJECTS_ID, LOCAL_PROJECT_ID, deleteFavoriteCollection, getTaskFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
+import { ALL_FAVORITES_COLLECTION_ID, ALL_PROJECTS_ID, LOCAL_PROJECT_ID, deleteFavoriteCollection, getTaskFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { useAuth } from '../auth/AuthContext'
 import { getOIDCIssuer } from '../auth/api'
 import { estimateModelPricing, fetchApiKeys, fetchUsage, fetchModels, extractBalance, invalidateApiKeysCache, type ModelInfo, type ApiKeyItem } from '../auth/oidcResource'
-import { DEFAULT_PARAMS, type TaskRecord } from '../types'
+import { DEFAULT_PARAMS, type InputImage, type TaskRecord } from '../types'
 import { readCachedApiKey, writeCachedApiKey } from '../lib/oidcApiKeySelection'
 import { getActiveApiProfile, getAgentImageApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
@@ -31,6 +31,7 @@ const MODEL_ICON = (
   </span>
 )
 
+const EMPTY_INPUT_IMAGES: InputImage[] = []
 
 function getMentionTagTextLength(el: Element) {
   return el.textContent?.length ?? 0
@@ -442,11 +443,51 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     }
     setGalleryPrompt(value)
   }, [activeAgentConversationId, embeddedAgent, setAgentInputPrompt, setGalleryPrompt])
-  const inputImages = useStore((s) => s.inputImages)
-  const addInputImage = useStore((s) => s.addInputImage)
-  const replaceInputImage = useStore((s) => s.replaceInputImage)
-  const removeInputImage = useStore((s) => s.removeInputImage)
-  const clearInputImages = useStore((s) => s.clearInputImages)
+  const inputImages = useStore((s) => embeddedAgent && s.activeAgentConversationId
+    ? s.agentInputDrafts[s.activeAgentConversationId]?.inputImages ?? EMPTY_INPUT_IMAGES
+    : s.inputImages)
+  const addGalleryInputImage = useStore((s) => s.addInputImage)
+  const replaceGalleryInputImage = useStore((s) => s.replaceInputImage)
+  const removeGalleryInputImage = useStore((s) => s.removeInputImage)
+  const clearGalleryInputImages = useStore((s) => s.clearInputImages)
+  const addAgentInputImage = useStore((s) => s.addAgentInputImage)
+  const replaceAgentInputImage = useStore((s) => s.replaceAgentInputImage)
+  const removeAgentInputImage = useStore((s) => s.removeAgentInputImage)
+  const clearAgentInputImages = useStore((s) => s.clearAgentInputImages)
+  const addInputImage = useCallback((img: InputImage) => {
+    if (embeddedAgent) {
+      if (activeAgentConversationId) addAgentInputImage(activeAgentConversationId, img)
+      return
+    }
+    addGalleryInputImage(img)
+  }, [activeAgentConversationId, addAgentInputImage, addGalleryInputImage, embeddedAgent])
+  const replaceInputImage = useCallback((idx: number, img: InputImage) => {
+    if (embeddedAgent) {
+      if (activeAgentConversationId) replaceAgentInputImage(activeAgentConversationId, idx, img)
+      return
+    }
+    replaceGalleryInputImage(idx, img)
+  }, [activeAgentConversationId, embeddedAgent, replaceAgentInputImage, replaceGalleryInputImage])
+  const removeInputImage = useCallback((idx: number) => {
+    if (embeddedAgent) {
+      if (activeAgentConversationId) removeAgentInputImage(activeAgentConversationId, idx)
+      return
+    }
+    removeGalleryInputImage(idx)
+  }, [activeAgentConversationId, embeddedAgent, removeAgentInputImage, removeGalleryInputImage])
+  const clearInputImages = useCallback(() => {
+    if (embeddedAgent) {
+      if (activeAgentConversationId) clearAgentInputImages(activeAgentConversationId)
+      return
+    }
+    clearGalleryInputImages()
+  }, [activeAgentConversationId, clearAgentInputImages, clearGalleryInputImages, embeddedAgent])
+  const getCurrentInputImages = useCallback(() => {
+    const state = useStore.getState()
+    if (!embeddedAgent) return state.inputImages
+    if (!activeAgentConversationId) return []
+    return state.agentInputDrafts[activeAgentConversationId]?.inputImages ?? []
+  }, [activeAgentConversationId, embeddedAgent])
   const params = useStore((s) => s.params)
   const setParams = useStore((s) => s.setParams)
   const settings = useStore((s) => s.settings)
@@ -819,9 +860,19 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     })
   }, [clearFavoriteCollectionSelection, favoriteCollections, selectedFavoriteCollectionIds, setConfirmDialog, showToast, tasks])
 
-  const maskDraft = useStore((s) => s.maskDraft)
+  const maskDraft = useStore((s) => embeddedAgent && s.activeAgentConversationId
+    ? s.agentInputDrafts[s.activeAgentConversationId]?.maskDraft ?? null
+    : s.maskDraft)
   const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
-  const moveInputImage = useStore((s) => s.moveInputImage)
+  const moveGalleryInputImage = useStore((s) => s.moveInputImage)
+  const moveAgentInputImage = useStore((s) => s.moveAgentInputImage)
+  const moveInputImage = useCallback((fromIdx: number, toIdx: number) => {
+    if (embeddedAgent) {
+      if (activeAgentConversationId) moveAgentInputImage(activeAgentConversationId, fromIdx, toIdx)
+      return
+    }
+    moveGalleryInputImage(fromIdx, toIdx)
+  }, [activeAgentConversationId, embeddedAgent, moveAgentInputImage, moveGalleryInputImage])
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -1354,7 +1405,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
 
   const handleFiles = async (files: FileList | File[]) => {
     try {
-      const currentCount = useStore.getState().inputImages.length
+      const currentCount = getCurrentInputImages().length
       if (currentCount >= API_MAX_IMAGES) {
         useStore.getState().showToast(
           `参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加`,
@@ -1369,7 +1420,8 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       const discarded = accepted.length - toAdd.length
 
       for (const file of toAdd) {
-        await addImageFromFile(file)
+        const image = await createInputImageFromFile(file)
+        if (image) addInputImage(image)
       }
 
       if (discarded > 0) {
@@ -1458,7 +1510,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
         return
       }
 
-      const currentImages = useStore.getState().inputImages
+      const currentImages = getCurrentInputImages()
       const currentIdx = currentImages.findIndex((item) => item.id === target.id)
       const targetIdx = currentIdx >= 0 ? currentIdx : target.index
       const previous = currentImages[targetIdx]
@@ -1559,6 +1611,8 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   // 粘贴图片
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
+      const bar = cardRef.current?.closest('[data-input-bar]')
+      if (!bar || !(e.target instanceof Node) || !bar.contains(e.target)) return
       const items = e.clipboardData?.items
       if (!items) return
       const imageFiles: File[] = []
@@ -1577,9 +1631,14 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     return () => document.removeEventListener('paste', handlePaste)
   }, [])
 
-  // 拖拽图片 - 监听整个页面
+  // 拖拽和粘贴只作用于当前输入栏
   useEffect(() => {
+    const isOwnBarEvent = (e: DragEvent) => {
+      const bar = cardRef.current?.closest('[data-input-bar]')
+      return Boolean(bar && e.target instanceof Node && bar.contains(e.target))
+    }
     const handleDragEnter = (e: DragEvent) => {
+      if (!isOwnBarEvent(e)) return
       e.preventDefault()
       e.stopPropagation()
       dragCounter.current++
@@ -1589,11 +1648,13 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     }
 
     const handleDragOver = (e: DragEvent) => {
+      if (!isOwnBarEvent(e)) return
       e.preventDefault()
       e.stopPropagation()
     }
 
     const handleDragLeave = (e: DragEvent) => {
+      if (!isOwnBarEvent(e)) return
       e.preventDefault()
       e.stopPropagation()
       dragCounter.current--
@@ -1603,6 +1664,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     }
 
     const handleDrop = (e: DragEvent) => {
+      if (!isOwnBarEvent(e)) return
       e.preventDefault()
       e.stopPropagation()
       dragCounter.current = 0
@@ -1896,7 +1958,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
 
   const renderImageThumb = (img: (typeof inputImages)[number], idx: number) => {
     const isMaskTarget = maskDraft?.targetImageId === img.id
-    const canEdit = !maskTargetImage || isMaskTarget
+    const canEdit = !embeddedAgent && (!maskTargetImage || isMaskTarget)
     const imageHintText = isMaskTarget ? '遮罩图必须为第一张图' : ''
     const displaySrc = isMaskTarget && maskPreviewUrl ? maskPreviewUrl : img.dataUrl
     const isImageDragging = imageDragIndex === idx
@@ -2059,7 +2121,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
           }`}
           onClick={() => {
             if (suppressImageClickRef.current) return
-            if (isMaskTarget) {
+            if (isMaskTarget && !embeddedAgent) {
               setMaskEditorImageId(img.id)
               return
             }
@@ -2223,8 +2285,8 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     ? `≈ $${priceEstimate}`
     : priceEstimateError || '预估 --'
 
-  const showFavoriteCollectionBatchBar = inCollectionOverview && selectedFavoriteCollectionIds.length > 0
-  const showTaskBatchBar = !showFavoriteCollectionBatchBar && selectedTaskIds.length > 0
+  const showFavoriteCollectionBatchBar = inputMode !== 'agent' && inCollectionOverview && selectedFavoriteCollectionIds.length > 0
+  const showTaskBatchBar = inputMode !== 'agent' && !showFavoriteCollectionBatchBar && selectedTaskIds.length > 0
 
   return (
     <>

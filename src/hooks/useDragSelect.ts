@@ -7,6 +7,7 @@ interface UseDragSelectOptions {
   onSelectionChange: (selectedIds: string[]) => void
   initialSelectedIds?: string[]
   onSuppressClick?: () => void
+  allowDraggableSelection?: boolean
 }
 
 export function useDragSelect({
@@ -16,6 +17,7 @@ export function useDragSelect({
   onSelectionChange,
   initialSelectedIds = [],
   onSuppressClick,
+  allowDraggableSelection = false,
 }: UseDragSelectOptions) {
   const [selectionBox, setSelectionBox] = useState<{ startPageX: number; startPageY: number; currentPageX: number; currentPageY: number } | null>(null)
   const isDragging = useRef(false)
@@ -145,7 +147,7 @@ export function useDragSelect({
       if (target.closest('[data-input-bar]')) return
       if (target.closest('[data-no-drag-select], [data-lightbox-root]')) return
       
-      const closestInteractive = target.closest('button, a, input, textarea, select, [draggable="true"]')
+      const closestInteractive = target.closest('button, a, input, textarea, select')
       
       // If we clicked on an interactive element (like a button or draggable thumb)
       if (closestInteractive) {
@@ -158,6 +160,9 @@ export function useDragSelect({
         // We MUST return here so the button click works!
         return
       }
+
+      if (!allowDraggableSelection && target.closest('[draggable="true"]')) return
+      if (allowDraggableSelection && target.closest('[draggable="true"]') && target.closest('img')) return
 
       const isCtrl = isMac ? e.metaKey : e.ctrlKey
       beginSelection(target as HTMLElement, e.clientX, e.clientY, isCtrl)
@@ -235,7 +240,7 @@ export function useDragSelect({
       document.removeEventListener('wheel', handleDocumentWheel, true)
       window.removeEventListener('scroll', handleDocumentScroll, true)
     }
-  }, [beginSelection, containerSelector, isMac, itemSelector, onSelectionChange, onSuppressClick, updateSelectionFromPoint])
+  }, [allowDraggableSelection, beginSelection, containerSelector, isMac, itemSelector, onSelectionChange, onSuppressClick, updateSelectionFromPoint])
 
   return { selectionBox, isDragging: isDragging.current }
 }

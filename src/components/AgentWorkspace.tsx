@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, useRef, useCallback, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import type { AgentConversation, AgentMessage, AgentRound, ResponsesOutputItem, TaskRecord } from '../types'
-import { deleteAgentRoundFromConversation, editOutputs, getActiveAgentRounds, getAgentBranchLeafId, getAgentSiblingRounds, getCachedImage, ensureImageCached, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeMultipleTasks, removeTask, reuseConfig, useStore } from '../store'
+import { ALL_PROJECTS_ID, LOCAL_PROJECT_ID, deleteAgentRoundFromConversation, editOutputs, getActiveAgentRounds, getAgentBranchLeafId, getAgentSiblingRounds, getCachedImage, ensureImageCached, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeMultipleTasks, removeTask, reuseConfig, useStore } from '../store'
 import { getPromptMentionParts } from '../lib/promptImageMentions'
+import { getAgentConversationTitle, getProjectAgentConversations } from '../lib/agentConversationScope'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { collectWebSearchCalls, getAgentRoundOutputItems, getWebSearchStatusForCalls, type AgentWebSearchStatus } from '../lib/agentWebSearch'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
@@ -274,6 +275,7 @@ function getPageScrollTop() {
 export default function AgentWorkspace({ embedded = false, onCollapse }: { embedded?: boolean; onCollapse?: () => void }) {
   const conversations = useStore((s) => s.agentConversations)
   const conversationsLoaded = useStore((s) => s.agentConversationsLoaded)
+  const activeProjectId = useStore((s) => s.activeProjectId)
   const activeConversationId = useStore((s) => s.activeAgentConversationId)
   const createConversation = useStore((s) => s.createAgentConversation)
   const setActiveConversationId = useStore((s) => s.setActiveAgentConversationId)
@@ -302,10 +304,12 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
   const showToast = useStore((s) => s.showToast)
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
   const agentGeneratingTitleIds = useStore((s) => s.agentGeneratingTitleIds)
-  const conversation = conversations.find((item) => item.id === activeConversationId) ?? null
-  const firstPrompt = conversation?.rounds[0]?.prompt.trim()
-    || conversation?.messages.find((message) => message.role === 'user')?.content.trim()
-    || ''
+  const scopedConversations = useMemo(
+    () => getProjectAgentConversations(conversations, tasks, activeProjectId, ALL_PROJECTS_ID, LOCAL_PROJECT_ID),
+    [activeProjectId, conversations, tasks],
+  )
+  const conversation = scopedConversations.find((item) => item.id === activeConversationId) ?? null
+  const conversationTitle = conversation ? getAgentConversationTitle(conversation) : '新对话'
   const [editingConversationTitle, setEditingConversationTitle] = useState('')
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -480,21 +484,19 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
     if (!embedded && appMode !== 'agent') return
     if (!conversationsLoaded) return
     
-    if (conversations.length === 0) {
+    if (scopedConversations.length === 0) {
       createConversation()
     } else if (!conversation) {
-      const latest = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)[0]
-      if (latest && latest.messages.length === 0) {
+      const latest = [...scopedConversations].sort((a, b) => b.updatedAt - a.updatedAt)[0]
+      if (latest) {
         setActiveConversationId(latest.id)
-      } else {
-        createConversation()
       }
     }
-  }, [appMode, embedded, conversationsLoaded, conversations, conversation, createConversation, setActiveConversationId])
+  }, [appMode, embedded, conversationsLoaded, scopedConversations, conversation, createConversation, setActiveConversationId])
 
   const sortedConversations = useMemo(
-    () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
-    [conversations],
+    () => [...scopedConversations].sort((a, b) => b.updatedAt - a.updatedAt),
+    [scopedConversations],
   )
 
   const filteredConversations = useMemo(() => {
@@ -529,7 +531,8 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
       ? `${lastMessage.id}:${lastMessage.createdAt}:${lastMessage.content}`
       : null
     const previous = autoScrollStateRef.current
-    const shouldScroll = appMode === 'agent' &&
+    const conversationChanged = conversationId !== null && previous.conversationId !== conversationId
+    const shouldScrollAfterSubmit = appMode === 'agent' &&
       agentScrollToBottomAfterSubmit &&
       previous.conversationId === conversationId &&
       lastMessage?.role === 'user' &&
@@ -537,13 +540,23 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
       previous.lastUserMessageSignature !== lastUserMessageSignature
 
     autoScrollStateRef.current = { conversationId, lastUserMessageSignature }
-    if (!shouldScroll) return
+    if (!conversationChanged && !shouldScrollAfterSubmit) return
 
     const frame = window.requestAnimationFrame(() => {
+      if (conversationChanged) {
+        if (embedded && scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight
+        } else {
+          const scrollingElement = document.scrollingElement ?? document.documentElement
+          window.scrollTo({ top: scrollingElement.scrollHeight, behavior: 'auto' })
+        }
+        updateIsScrolledToBottom()
+        return
+      }
       scrollToAgentBottom()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [activeMessages, agentScrollToBottomAfterSubmit, appMode, conversation?.id, scrollToAgentBottom])
+  }, [activeMessages, agentScrollToBottomAfterSubmit, appMode, conversation?.id, embedded, scrollToAgentBottom, updateIsScrolledToBottom])
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(updateIsScrolledToBottom)
@@ -572,7 +585,7 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
   }
 
   const handleDeleteConversation = (id: string) => {
-    const targetConversation = conversations.find((item) => item.id === id) ?? null
+    const targetConversation = scopedConversations.find((item) => item.id === id) ?? null
     const roundIds = new Set(targetConversation?.rounds.map((round) => round.id) ?? [])
     const roundTaskIds = targetConversation?.rounds.flatMap((round) => round.outputTaskIds) ?? []
     const relatedTasks = tasks.filter((task) =>
@@ -634,12 +647,12 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
   // Effect to sync title when editing id is set from outside (e.g. Header)
   useEffect(() => {
     if (agentEditingConversationId) {
-      const convo = conversations.find(c => c.id === agentEditingConversationId)
+      const convo = scopedConversations.find(c => c.id === agentEditingConversationId)
       if (convo) {
         setEditingConversationTitle(convo.title)
       }
     }
-  }, [agentEditingConversationId, conversations])
+  }, [agentEditingConversationId, scopedConversations])
 
   const clearConversationLongPressTimer = () => {
     if (conversationLongPressTimer.current == null) return
@@ -825,7 +838,7 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
       {embedded && (
         <div className="sticky top-0 z-20 hidden h-12 items-center justify-between border-b border-gray-200 bg-white/90 px-3 backdrop-blur xl:flex dark:border-white/[0.08] dark:bg-gray-950/90">
           <div className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-semibold text-gray-900 dark:text-white" title={firstPrompt || '新对话'}>{firstPrompt || '新对话'}</span>
+            <span className="block truncate text-sm font-semibold text-gray-900 dark:text-white" title={conversationTitle}>{conversationTitle}</span>
           </div>
           <div className="relative flex shrink-0 items-center gap-1">
             <button
@@ -850,7 +863,12 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
               <ChevronDownIcon className="h-4 w-4" />
             </button>
             {showHistoryModal && (
-              <HistoryModal onClose={() => setShowHistoryModal(false)} ignoreOutsideClickRef={historyButtonRef} align="right" />
+              <HistoryModal
+                onClose={() => setShowHistoryModal(false)}
+                ignoreOutsideClickRef={historyButtonRef}
+                align="right"
+                switchToAgent={!embedded}
+              />
             )}
             {onCollapse && (
               <button
@@ -996,7 +1014,7 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
               }}
               className="text-sm font-semibold text-gray-700 dark:text-gray-300 truncate flex-1 text-center px-2 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded transition-colors"
             >
-              {firstPrompt || '新对话'}
+              {conversationTitle}
             </button>
             <div className="relative flex items-center gap-1">
               <button
@@ -1021,7 +1039,12 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
                 <ChevronDownIcon className="w-4 h-4" />
               </button>
               {showHistoryModal && (
-                <HistoryModal onClose={() => setShowHistoryModal(false)} ignoreOutsideClickRef={mobileHistoryButtonRef} align="right" />
+                <HistoryModal
+                  onClose={() => setShowHistoryModal(false)}
+                  ignoreOutsideClickRef={mobileHistoryButtonRef}
+                  align="right"
+                  switchToAgent={!embedded}
+                />
               )}
             </div>
             {onCollapse && (

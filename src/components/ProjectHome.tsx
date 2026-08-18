@@ -8,6 +8,7 @@ import { updateProjectUrl } from '../lib/projectRoute'
 import { readCachedApiKey, writeCachedApiKey } from '../lib/oidcApiKeySelection'
 import Select from './Select'
 import { ArrowUpIcon, CloseIcon, EditIcon, KeyIcon, OpenAIIcon, PlusIcon, TrashIcon } from './icons'
+import HomePromptEditor from './HomePromptEditor'
 
 const HOME_MODEL_OPTIONS = [{
   label: 'GPT Image 2',
@@ -135,21 +136,23 @@ function ProjectCard({ project, task, isLegacy = false }: { project: Project; ta
         >
           <EditIcon className="h-4 w-4" />
         </button>}
-        {!isLegacy && <button
+        <button
           type="button"
           onClick={() => setConfirmDialog({
-            title: '移除项目',
-            message: '项目中的生成记录会保留在「全部作品」中。确定移除这个项目吗？',
-            confirmText: '移除',
+            title: isLegacy ? '删除本地项目' : '移除项目',
+            message: isLegacy
+              ? '本地项目中的生成记录和 Agent 会话将被永久删除。确定删除吗？'
+              : '项目中的生成记录会保留在「全部作品」中。确定移除这个项目吗？',
+            confirmText: isLegacy ? '删除' : '移除',
             tone: 'danger',
             action: () => void deleteProject(project.id),
           })}
           className="mt-0.5 rounded p-1.5 text-gray-400 opacity-0 transition hover:bg-gray-100 hover:text-red-500 focus:opacity-100 group-hover:opacity-100 dark:hover:bg-white/[0.06]"
-          aria-label={`移除项目：${project.title}`}
-          title="移除项目"
+          aria-label={`${isLegacy ? '删除本地项目' : '移除项目'}：${project.title}`}
+          title={isLegacy ? '删除本地项目' : '移除项目'}
         >
           <TrashIcon className="h-4 w-4" />
-        </button>}
+        </button>
       </div>
     </article>
   )
@@ -161,6 +164,10 @@ export default function ProjectHome() {
   const projectsLoaded = useStore((s) => s.projectsLoaded)
   const tasks = useStore((s) => s.tasks)
   const createProject = useStore((s) => s.createProject)
+  const sortedProjects = useMemo(
+    () => [...projects].sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt || a.id.localeCompare(b.id)),
+    [projects],
+  )
   const [prompt, setPrompt] = useState('')
   const [apiKeys, setApiKeys] = useState<string[]>([])
   const [apiKeyItems, setApiKeyItems] = useState<ApiKeyItem[]>([])
@@ -169,7 +176,6 @@ export default function ProjectHome() {
   const [apiKeysError, setApiKeysError] = useState('')
   const [model, setModel] = useState(DEFAULT_IMAGES_MODEL)
   const [submitting, setSubmitting] = useState(false)
-  const promptRef = useRef<HTMLTextAreaElement>(null)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
   const [attachments, setAttachments] = useState<InputImage[]>([])
   const [attachmentsLoading, setAttachmentsLoading] = useState(false)
@@ -312,6 +318,11 @@ export default function ProjectHome() {
     }
   }
 
+  const clearAttachments = () => {
+    const current = attachments
+    setAttachments([])
+    for (const attachment of current) void deleteImageIfUnreferenced(attachment.id)
+  }
   const startProject = async () => {
     const value = prompt.trim()
     if (!value || submitting) return
@@ -328,7 +339,7 @@ export default function ProjectHome() {
       state.setOidcApiOverride(apiOverride)
       writeCachedApiKey(user?.id, apiKey)
 
-      projectId = createProject(value)
+      projectId = createProject(value, { autoRecord: true })
       updateProjectUrl(projectId)
       const latestState = useStore.getState()
       latestState.setInputImages(attachments)
@@ -352,7 +363,7 @@ export default function ProjectHome() {
     state.clearMaskDraft()
     state.setReusedTaskApiProfile(null)
     for (const attachment of attachments) void deleteImageIfUnreferenced(attachment.id)
-    const projectId = createProject('')
+    const projectId = createProject('', { autoRecord: true })
     updateProjectUrl(projectId)
     window.scrollTo({ top: 0 })
   }
@@ -366,41 +377,46 @@ export default function ProjectHome() {
         </h1>
         <p className="mt-3 text-lg font-medium text-gray-500 dark:text-gray-400 sm:text-xl">马上开始设计</p>
         <div className="mt-8 w-full rounded-2xl border border-gray-200 bg-white p-2 text-left shadow-[0_18px_60px_rgba(0,0,0,0.08)] ring-1 ring-black/[0.03] dark:border-white/[0.1] dark:bg-gray-900 dark:shadow-[0_18px_60px_rgba(0,0,0,0.35)] dark:ring-white/[0.04] sm:rounded-3xl sm:p-3">
-          <textarea
-            ref={promptRef}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                void startProject()
-              }
-            }}
-            rows={3}
-            placeholder="描述你想生成的画面..."
-            className="block min-h-28 w-full resize-none bg-transparent px-3 py-3 text-base leading-7 text-gray-900 outline-none placeholder:text-gray-400 dark:text-gray-100 dark:placeholder:text-gray-600 sm:px-4 sm:text-lg"
-          />
           {attachments.length > 0 && (
-            <div className="flex gap-2 overflow-x-auto px-3 pb-2 sm:px-4">
-              {attachments.map((image, index) => (
-                <div key={image.id} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-gray-200 bg-gray-100 dark:border-white/[0.1] dark:bg-gray-800">
-                  <img src={image.dataUrl} alt={`附件 ${index + 1}`} className="h-full w-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAttachments((current) => current.filter((item) => item.id !== image.id))
-                      void deleteImageIfUnreferenced(image.id)
-                    }}
-                    className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
-                    aria-label={`移除附件 ${index + 1}`}
-                    title="移除附件"
-                  >
-                    <CloseIcon className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
+            <div className="mb-3 border-b border-gray-200/80 px-3 pb-3 dark:border-white/[0.08] sm:px-4">
+              <div className="grid grid-cols-[repeat(auto-fill,52px)] justify-between gap-x-2 gap-y-3">
+                {attachments.map((image, index) => (
+                  <div key={image.id} className="relative h-[52px] w-[52px] shrink-0 overflow-hidden rounded-xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04]">
+                    <img src={image.dataUrl} alt={`附件 ${index + 1}`} className="h-full w-full object-cover" />
+                    <span className="absolute bottom-1 left-1 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-black/55 text-[9px] font-semibold text-white backdrop-blur-sm">{index + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAttachments((current) => current.filter((item) => item.id !== image.id))
+                        void deleteImageIfUnreferenced(image.id)
+                      }}
+                      className="absolute right-1 top-1 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
+                      aria-label={`移除附件 ${index + 1}`}
+                      title="移除附件"
+                    >
+                      <CloseIcon className="h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={clearAttachments}
+                  className="flex h-[52px] w-[52px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border border-dashed border-gray-300 text-gray-400 transition hover:border-red-300 hover:bg-red-50/50 hover:text-red-500 dark:border-white/[0.08] dark:text-gray-500 dark:hover:bg-red-950/30"
+                  title="清空参考图"
+                >
+                  <TrashIcon className="h-4 w-4" />
+                  <span className="text-[8px] leading-none">清空</span>
+                </button>
+              </div>
             </div>
           )}
+          <HomePromptEditor
+            value={prompt}
+            images={attachments}
+            placeholder="描述你想生成的画面..."
+            onChange={setPrompt}
+            onSubmit={() => void startProject()}
+          />
           <div className="flex flex-wrap items-center gap-2 px-1 pb-1 sm:px-2">
             <div className="min-w-0 w-48 max-w-full shrink-0">
               <Select
@@ -434,11 +450,17 @@ export default function ProjectHome() {
                 type="button"
                 onClick={() => attachmentInputRef.current?.click()}
                 disabled={attachmentsLoading || attachments.length >= HOME_MAX_ATTACHMENTS}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-gray-50 text-gray-600 transition hover:border-gray-300 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/[0.1] dark:bg-white/[0.05] dark:text-gray-300 dark:hover:bg-white/[0.1]"
+                className={`p-2.5 rounded-xl transition-all shadow-sm ${
+                  attachmentsLoading || attachments.length >= HOME_MAX_ATTACHMENTS
+                    ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
+                    : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300 hover:shadow'
+                }`}
                 aria-label="添加附件"
                 title="添加附件"
               >
-                <PlusIcon className="h-5 w-5" />
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
               </button>
               <button
                 type="button"
@@ -461,7 +483,7 @@ export default function ProjectHome() {
             <h2 id="recent-projects-title" className="text-xl font-semibold text-gray-950 dark:text-white">最近项目</h2>
             <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">继续上次的创作</p>
           </div>
-          <span className="text-sm tabular-nums text-gray-400 dark:text-gray-500">{projects.length + (legacyProject ? 1 : 0)}</span>
+          <span className="text-sm tabular-nums text-gray-400 dark:text-gray-500">{sortedProjects.length + (legacyProject ? 1 : 0)}</span>
         </div>
 
         {projectsLoaded && (
@@ -481,7 +503,7 @@ export default function ProjectHome() {
               <h3 className="mt-3 text-sm font-semibold text-gray-700 dark:text-gray-300">新建项目</h3>
             </article>
             {legacyProject && <ProjectCard project={legacyProject} task={latestLegacyTask} isLegacy />}
-            {projects.map((project) => (
+            {sortedProjects.map((project) => (
               <ProjectCard key={project.id} project={project} task={latestTaskByProject.get(project.id)} />
             ))}
           </div>

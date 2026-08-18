@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react'
-import { removeMultipleTasks, useStore } from '../store'
+import { ALL_PROJECTS_ID, LOCAL_PROJECT_ID, removeMultipleTasks, useStore } from '../store'
 import type { AgentConversation } from '../types'
+import { getAgentConversationTitle, getProjectAgentConversations } from '../lib/agentConversationScope'
 import { useTooltip } from '../hooks/useTooltip'
 import { CloseIcon, EditIcon, TrashIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
@@ -88,11 +89,18 @@ type HistoryModalProps = {
   onClose: () => void
   ignoreOutsideClickRef?: RefObject<HTMLElement | null>
   align?: 'left' | 'right'
+  switchToAgent?: boolean
 }
 
-export default function HistoryModal({ onClose, ignoreOutsideClickRef, align = 'left' }: HistoryModalProps) {
+export default function HistoryModal({
+  onClose,
+  ignoreOutsideClickRef,
+  align = 'left',
+  switchToAgent = true,
+}: HistoryModalProps) {
   const conversations = useStore((s) => s.agentConversations)
   const activeConversationId = useStore((s) => s.activeAgentConversationId)
+  const activeProjectId = useStore((s) => s.activeProjectId)
   const setActiveConversationId = useStore((s) => s.setActiveAgentConversationId)
   const renameConversation = useStore((s) => s.renameAgentConversation)
   const deleteConversation = useStore((s) => s.deleteAgentConversation)
@@ -106,13 +114,16 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef, align = '
 
   const [editingTitle, setEditingTitle] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
-
+  const scopedConversations = useMemo(
+    () => getProjectAgentConversations(conversations, tasks, activeProjectId, ALL_PROJECTS_ID, LOCAL_PROJECT_ID),
+    [activeProjectId, conversations, tasks],
+  )
   useEffect(() => {
     if (editingId) {
-      const convo = conversations.find((c) => c.id === editingId)
+      const convo = scopedConversations.find((c) => c.id === editingId)
       if (convo) setEditingTitle(convo.title)
     }
-  }, [editingId, conversations])
+  }, [editingId, scopedConversations])
 
   useEffect(() => {
     return () => {
@@ -121,8 +132,8 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef, align = '
   }, [setEditingId])
 
   const sortedConversations = useMemo(
-    () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
-    [conversations],
+    () => [...scopedConversations].sort((a, b) => b.updatedAt - a.updatedAt),
+    [scopedConversations],
   )
 
   const filteredConversations = useMemo(() => {
@@ -133,7 +144,7 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef, align = '
 
   const handleSelect = (id: string) => {
     if (editingId) return
-    setAppMode('agent')
+    if (switchToAgent) setAppMode('agent')
     setActiveConversationId(id)
     onClose()
   }
@@ -164,7 +175,7 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef, align = '
 
   const handleDelete = (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    const targetConversation = conversations.find((item) => item.id === id) ?? null
+    const targetConversation = scopedConversations.find((item) => item.id === id) ?? null
     const roundIds = new Set(targetConversation?.rounds.map((round) => round.id) ?? [])
     const roundTaskIds = targetConversation?.rounds.flatMap((round) => round.outputTaskIds) ?? []
     const relatedTasks = tasks.filter((task) =>
@@ -192,7 +203,7 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef, align = '
       action: async (deleteGeneratedImages = false) => {
         deleteConversation(id)
         if (deleteGeneratedImages && relatedTaskIds.length > 0) await removeMultipleTasks(relatedTaskIds)
-        if (conversations.length <= 1) {
+        if (scopedConversations.length <= 1) {
           onClose()
         }
       },
@@ -204,10 +215,12 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef, align = '
   useEffect(() => {
     const handleInteract = (e: MouseEvent | TouchEvent) => {
       if (confirmDialogOpen) return
-      if (ignoreOutsideClickRef?.current?.contains(e.target as Node)) return
-      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
-        onClose()
-      }
+      const target = e.target
+      if (!(target instanceof Node)) return
+      if (target instanceof Element && target.closest('[data-history-modal]')) return
+      if (modalRef.current?.contains(target)) return
+      if (ignoreOutsideClickRef?.current?.contains(target)) return
+      onClose()
     }
     document.addEventListener('mousedown', handleInteract, { capture: true })
     document.addEventListener('touchstart', handleInteract, { capture: true })
@@ -228,6 +241,7 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef, align = '
   return (
     <div 
       ref={modalRef}
+      data-history-modal
       className={`absolute top-12 ${align === 'right' ? 'right-0' : 'left-0'} w-80 sm:w-96 max-w-[calc(100vw-2rem)] max-h-[70vh] bg-white dark:bg-[#1c1c1e] rounded-xl shadow-2xl overflow-hidden flex flex-col border border-gray-200 dark:border-white/10 z-50 text-gray-900 dark:text-gray-200 animate-dropdown-down`}
     >
       <div className="flex items-center justify-between p-3 border-b border-gray-200 dark:border-white/10 shrink-0">
@@ -253,13 +267,10 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef, align = '
             {items.map(c => (
               <div 
                 key={c.id} 
-                className="group flex h-14 items-center justify-between gap-2 rounded-lg px-3 hover:bg-gray-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                className={`group flex h-14 items-center justify-between gap-2 rounded-lg px-3 transition-colors cursor-pointer hover:bg-gray-100 dark:hover:bg-white/5 ${c.id === activeConversationId ? 'bg-blue-100/90 dark:bg-blue-500/25' : ''}`}
                 onClick={() => handleSelect(c.id)}
               >
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <svg className="w-4 h-4 shrink-0 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                  </svg>
+                <div className="min-w-0 flex-1">
                   {editingId === c.id ? (
                     <input
                       type="text"
@@ -274,7 +285,7 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef, align = '
                   ) : (
                     <div className="min-w-0 flex-1">
                       <div className={`text-sm truncate ${c.id === activeConversationId ? 'text-gray-900 dark:text-white font-medium' : 'text-gray-600 dark:text-gray-300'}`}>
-                        {c.title}
+                        {getAgentConversationTitle(c)}
                       </div>
                       <div className="hidden sm:block mt-0.5 text-[11px] leading-none text-gray-500">
                         {formatDetailTime(c.updatedAt)}
@@ -282,37 +293,39 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef, align = '
                     </div>
                   )}
                 </div>
-                <div className={`flex shrink-0 items-center justify-end gap-1 overflow-hidden transition-all duration-150 ${editingId === c.id ? 'w-7 opacity-100' : 'w-0 opacity-0 group-hover:w-16 group-hover:opacity-100 group-focus-within:w-16 group-focus-within:opacity-100'}`}>
-                  {editingId === c.id ? (
-                    <HistoryActionButton
-                      tooltip="确认"
-                      onClick={(e) => e.stopPropagation()}
-                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); confirmRename() }}
-                      className="p-1.5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300 transition-colors"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                    </HistoryActionButton>
-                  ) : (
-                    <>
+                <div className="flex shrink-0 items-center gap-1">
+                  <div className={`flex items-center justify-end gap-1 overflow-hidden transition-all duration-150 ${editingId === c.id ? 'w-7 opacity-100' : 'w-0 opacity-0 group-hover:w-16 group-hover:opacity-100 group-focus-within:w-16 group-focus-within:opacity-100'}`}>
+                    {editingId === c.id ? (
                       <HistoryActionButton
-                        tooltip="重命名"
-                        onClick={(e) => startRename(e, c.id, c.title)}
-                        className="p-1.5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-white disabled:text-gray-300 disabled:hover:text-gray-300 dark:disabled:text-gray-600 dark:disabled:hover:text-gray-600 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
-                        disabled={Boolean(agentGeneratingTitleIds[c.id])}
+                        tooltip="确认"
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); confirmRename() }}
+                        className="p-1.5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300 transition-colors"
                       >
-                        <EditIcon className="w-3.5 h-3.5" />
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
                       </HistoryActionButton>
-                      <HistoryActionButton
-                        tooltip="删除"
-                        onClick={(e) => handleDelete(e, c.id)}
-                        className="p-1.5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
-                      >
-                        <TrashIcon className="w-3.5 h-3.5" />
-                      </HistoryActionButton>
-                    </>
-                  )}
+                    ) : (
+                      <>
+                        <HistoryActionButton
+                          tooltip="重命名"
+                          onClick={(e) => startRename(e, c.id, c.title)}
+                          className="p-1.5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-white disabled:text-gray-300 disabled:hover:text-gray-300 dark:disabled:text-gray-600 dark:disabled:hover:text-gray-600 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+                          disabled={Boolean(agentGeneratingTitleIds[c.id])}
+                        >
+                          <EditIcon className="w-3.5 h-3.5" />
+                        </HistoryActionButton>
+                        <HistoryActionButton
+                          tooltip="删除"
+                          onClick={(e) => handleDelete(e, c.id)}
+                          className="p-1.5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                        >
+                          <TrashIcon className="w-3.5 h-3.5" />
+                        </HistoryActionButton>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}

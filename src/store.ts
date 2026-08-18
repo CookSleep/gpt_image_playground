@@ -28,7 +28,7 @@ import {
   getAllTasks,
   getAllProjects,
   putProject as dbPutProject,
-  deleteProject as dbDeleteProject,
+  deleteProjectWithRecords as dbDeleteProjectWithRecords,
   clearProjects as dbClearProjects,
   putProjectWithRecords,
   replaceProjectCache,
@@ -68,6 +68,7 @@ import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBa
 import { blobToDataUrl, fileToDataUrl } from './lib/dataUrl'
 import { formatExportFileTime } from './lib/exportFileName'
 import { buildExportZip, readExportZip, readExportZipFileAsDataUrl } from './lib/exportZip'
+import { getAgentConversationProjectId } from './lib/agentConversationScope'
 
 export const ALL_FAVORITES_COLLECTION_ID = '__all_favorites__'
 export const ALL_PROJECTS_ID = '__all_projects__'
@@ -641,10 +642,6 @@ function createProjectTitle(prompt: string) {
   return `${chars.slice(0, PROJECT_TITLE_MAX_LENGTH - 3).join('')}...`
 }
 
-function removeTaskProject(task: TaskRecord): TaskRecord {
-  const { projectId: _projectId, ...rest } = task
-  return rest
-}
 
 function createDefaultFavoriteCollection(now = Date.now()): FavoriteCollection {
   return {
@@ -863,7 +860,7 @@ interface AppState {
   projects: Project[]
   projectsLoaded: boolean
   activeProjectId: string | null
-  createProject: (prompt: string) => string
+  createProject: (prompt: string, options?: { autoRecord?: boolean }) => string
   renameProject: (id: string, title: string) => void
   setActiveProjectId: (id: string | null) => void
   deleteProject: (id: string) => Promise<void>
@@ -909,6 +906,12 @@ interface AppState {
   activeAgentConversationId: string | null
   agentInputDrafts: Record<string, AgentInputDraft>
   setAgentInputPrompt: (conversationId: string, prompt: string) => void
+  addAgentInputImage: (conversationId: string, img: InputImage) => void
+  replaceAgentInputImage: (conversationId: string, idx: number, img: InputImage) => void
+  removeAgentInputImage: (conversationId: string, idx: number) => void
+  clearAgentInputImages: (conversationId: string) => void
+  setAgentInputImages: (conversationId: string, imgs: InputImage[], options?: { equivalentImageIds?: Record<string, string> }) => void
+  moveAgentInputImage: (conversationId: string, fromIdx: number, toIdx: number) => void
   agentSidebarCollapsed: boolean
   agentAssetTab: 'references' | 'outputs'
   agentAssetPanelCollapsed: boolean
@@ -1239,9 +1242,9 @@ export const useStore = create<AppState>()(
       projectsLoaded: false,
       activeProjectId: null,
       legacyProjectSaving: false,
-      createProject: (prompt) => {
+      createProject: (prompt, options) => {
         const now = Date.now()
-        const online = isAuthEnabled() && Boolean(getAccessToken())
+        const online = isAuthEnabled() && (options?.autoRecord === true || Boolean(getAccessToken()))
         const id = online ? crypto.randomUUID() : genId()
         const project: Project = {
           id,
@@ -1258,6 +1261,9 @@ export const useStore = create<AppState>()(
           activeProjectId: project.id,
           selectedTaskIds: [],
           selectedFavoriteCollectionIds: [],
+          activeAgentConversationId: null,
+          agentEditingRoundId: null,
+          agentEditingConversationId: null,
         }))
         queueProjectSave(project)
         return project.id
@@ -1302,6 +1308,11 @@ export const useStore = create<AppState>()(
           filterStatus: 'all',
           filterFavorite: false,
           activeFavoriteCollectionId: null,
+          ...(changed ? {
+            activeAgentConversationId: null,
+            agentEditingRoundId: null,
+            agentEditingConversationId: null,
+          } : {}),
         })
         if (!changed || !isAuthEnabled() || !getAccessToken()) return
         const refresh = () => {
@@ -1311,13 +1322,14 @@ export const useStore = create<AppState>()(
         else if (initStoreInFlight) void initStoreInFlight.then(refresh)
       },
       deleteProject: async (id) => {
+        const isLocalProject = id === LOCAL_PROJECT_ID
         const project = get().projects.find((item) => item.id === id)
-        if (!project) return
+        if (!project && !isLocalProject) return
         const timer = onlineProjectSyncTimers.get(id)
         if (timer) clearTimeout(timer)
         onlineProjectSyncTimers.delete(id)
         await onlineProjectSyncQueues.get(id)?.catch(() => undefined)
-        if (project.storage === 'online' && project.remoteId) {
+        if (project?.storage === 'online' && project.remoteId) {
           try {
             await deleteOnlineProject(project.remoteId)
           } catch (err) {
@@ -1325,20 +1337,59 @@ export const useStore = create<AppState>()(
             return
           }
         }
-        const changedTasks = get().tasks
-          .filter((task) => task.projectId === id)
-          .map(removeTaskProject)
-        set((state) => ({
-          projects: state.projects.filter((project) => project.id !== id),
-          tasks: state.tasks.map((task) => task.projectId === id ? removeTaskProject(task) : task),
-          activeProjectId: state.activeProjectId === id ? null : state.activeProjectId,
-          selectedTaskIds: [],
-        }))
+        const state = get()
+        const deletedTasks = state.tasks.filter((task) => isLocalProject ? !task.projectId : task.projectId === id)
+        const deletedTaskIds = deletedTasks.map((task) => task.id)
+        const deletedConversationIds = new Set(
+          state.agentConversations
+            .filter((conversation) => {
+              const projectId = getAgentConversationProjectId(conversation, state.tasks)
+              return isLocalProject ? !projectId : projectId === id
+            })
+            .map((conversation) => conversation.id),
+        )
+        const deletedImageIds = new Set<string>()
+        for (const task of deletedTasks) {
+          for (const imageId of getTaskReferencedImageIds(task)) deletedImageIds.add(imageId)
+        }
+        for (const conversation of state.agentConversations) {
+          if (!deletedConversationIds.has(conversation.id)) continue
+          for (const imageId of getAgentConversationReferencedImageIds(conversation)) deletedImageIds.add(imageId)
+        }
+        for (const conversationId of deletedConversationIds) {
+          for (const image of state.agentInputDrafts[conversationId]?.inputImages ?? []) deletedImageIds.add(image.id)
+        }
+        const clearActiveInput = state.activeProjectId === id
+        if (clearActiveInput) {
+          for (const image of state.inputImages) deletedImageIds.add(image.id)
+          for (const image of state.galleryInputDraft?.inputImages ?? []) deletedImageIds.add(image.id)
+        }
+        set((current) => {
+          const agentInputDrafts = { ...current.agentInputDrafts }
+          for (const conversationId of deletedConversationIds) delete agentInputDrafts[conversationId]
+          const activeConversationDeleted = current.activeAgentConversationId
+            ? deletedConversationIds.has(current.activeAgentConversationId)
+            : false
+          return {
+            projects: current.projects.filter((item) => item.id !== id),
+            tasks: current.tasks.filter((task) => isLocalProject ? Boolean(task.projectId) : task.projectId !== id),
+            agentConversations: current.agentConversations.filter((conversation) => !deletedConversationIds.has(conversation.id)),
+            agentInputDrafts,
+            activeProjectId: current.activeProjectId === id ? null : current.activeProjectId,
+            activeAgentConversationId: activeConversationDeleted ? null : current.activeAgentConversationId,
+            agentEditingRoundId: activeConversationDeleted ? null : current.agentEditingRoundId,
+            agentEditingConversationId: deletedConversationIds.has(current.agentEditingConversationId ?? '') ? null : current.agentEditingConversationId,
+            agentGeneratingTitleIds: Object.fromEntries(
+              Object.entries(current.agentGeneratingTitleIds).filter(([conversationId]) => !deletedConversationIds.has(conversationId)),
+            ),
+            selectedTaskIds: [],
+            ...(clearActiveInput ? { galleryInputDraft: null, ...clearInputDraftState() } : {}),
+            ...(activeConversationDeleted && current.appMode === 'agent' ? clearInputDraftState() : {}),
+          }
+        })
         await projectPersistenceQueues.get(id)?.catch(() => undefined)
-        await Promise.all([
-          dbDeleteProject(id),
-          ...changedTasks.map((task) => putTask(task)),
-        ])
+        await dbDeleteProjectWithRecords(id, deletedTaskIds, Array.from(deletedConversationIds))
+        await deleteUnreferencedImageIds(deletedImageIds)
       },
       saveLegacyProjectOnline: async () => {
         if (get().legacyProjectSaving) return
@@ -1606,7 +1657,10 @@ export const useStore = create<AppState>()(
       createAgentConversation: () => {
         const now = Date.now()
         const projectId = getActiveTaskProjectId()
-        const latestConversation = getLatestAgentConversation(get().agentConversations)
+        const scopedConversations = get().agentConversations.filter((conversation) =>
+          getAgentConversationProjectId(conversation, get().tasks) === projectId,
+        )
+        const latestConversation = getLatestAgentConversation(scopedConversations)
         if (latestConversation && isEmptyAgentConversation(latestConversation)) {
           set((state) => {
             const agentInputDrafts = saveActiveAgentInputDrafts(state)
@@ -1678,23 +1732,128 @@ export const useStore = create<AppState>()(
           }),
         }
       }),
+      addAgentInputImage: (conversationId, img) => set((state) => {
+        const current = state.agentInputDrafts[conversationId] ?? {
+          prompt: '',
+          inputImages: [],
+          maskDraft: null,
+          maskEditorImageId: null,
+        }
+        if (current.inputImages.some((item) => item.id === img.id)) return state
+        const inputImages = [...current.inputImages, img]
+        return {
+          agentInputDrafts: setAgentInputDraft(state.agentInputDrafts, conversationId, {
+            ...current,
+            inputImages,
+            prompt: remapImageMentionsForOrder(current.prompt, current.inputImages, inputImages),
+          }),
+        }
+      }),
+      replaceAgentInputImage: (conversationId, idx, img) => set((state) => {
+        const current = state.agentInputDrafts[conversationId]
+        if (!current || idx < 0 || idx >= current.inputImages.length) return state
+        const previous = current.inputImages[idx]
+        if (!previous || previous.id === img.id || current.inputImages.some((item, itemIdx) => itemIdx !== idx && item.id === img.id)) return state
+        const inputImages = current.inputImages.map((item, itemIdx) => itemIdx === idx ? img : item)
+        const shouldClearMask = previous.id === current.maskDraft?.targetImageId
+        return {
+          agentInputDrafts: setAgentInputDraft(state.agentInputDrafts, conversationId, {
+            ...current,
+            inputImages,
+            prompt: remapImageMentionsForOrder(current.prompt, current.inputImages, inputImages, { [previous.id]: img.id }),
+            ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
+          }),
+        }
+      }),
+      removeAgentInputImage: (conversationId, idx) => set((state) => {
+        const current = state.agentInputDrafts[conversationId]
+        if (!current) return state
+        const removed = current.inputImages[idx]
+        const inputImages = current.inputImages.filter((_, itemIdx) => itemIdx !== idx)
+        const shouldClearMask = removed?.id === current.maskDraft?.targetImageId
+        return {
+          agentInputDrafts: setAgentInputDraft(state.agentInputDrafts, conversationId, {
+            ...current,
+            inputImages,
+            prompt: remapImageMentionsForOrder(current.prompt, current.inputImages, inputImages),
+            ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
+          }),
+        }
+      }),
+      clearAgentInputImages: (conversationId) => set((state) => {
+        const current = state.agentInputDrafts[conversationId]
+        if (!current) return state
+        return {
+          agentInputDrafts: setAgentInputDraft(state.agentInputDrafts, conversationId, {
+            ...current,
+            inputImages: [],
+            prompt: remapImageMentionsForOrder(current.prompt, current.inputImages, []),
+            maskDraft: null,
+            maskEditorImageId: null,
+          }),
+        }
+      }),
+      setAgentInputImages: (conversationId, imgs, options) => set((state) => {
+        const current = state.agentInputDrafts[conversationId] ?? {
+          prompt: '',
+          inputImages: [],
+          maskDraft: null,
+          maskEditorImageId: null,
+        }
+        const inputImages = orderImagesWithMaskFirst(imgs, current.maskDraft?.targetImageId)
+        const shouldClearMask = Boolean(current.maskDraft) && !inputImages.some((img) => img.id === current.maskDraft?.targetImageId)
+        return {
+          agentInputDrafts: setAgentInputDraft(state.agentInputDrafts, conversationId, {
+            ...current,
+            inputImages,
+            prompt: remapImageMentionsForOrder(current.prompt, current.inputImages, inputImages, options?.equivalentImageIds),
+            ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
+          }),
+        }
+      }),
+      moveAgentInputImage: (conversationId, fromIdx, toIdx) => set((state) => {
+        const current = state.agentInputDrafts[conversationId]
+        if (!current || fromIdx < 0 || fromIdx >= current.inputImages.length) return state
+        const images = [...current.inputImages]
+        const maskTargetImageId = current.maskDraft?.targetImageId
+        if (maskTargetImageId && images[fromIdx]?.id === maskTargetImageId) return state
+        const minTargetIdx = maskTargetImageId && images.some((img) => img.id === maskTargetImageId) ? 1 : 0
+        const targetIdx = Math.max(minTargetIdx, Math.min(images.length, toIdx))
+        const insertIdx = fromIdx < targetIdx ? targetIdx - 1 : targetIdx
+        if (insertIdx === fromIdx) return state
+        const [moved] = images.splice(fromIdx, 1)
+        images.splice(insertIdx, 0, moved)
+        return {
+          agentInputDrafts: setAgentInputDraft(state.agentInputDrafts, conversationId, {
+            ...current,
+            inputImages: images,
+            prompt: remapImageMentionsForOrder(current.prompt, current.inputImages, images),
+          }),
+        }
+      }),
       setActiveAgentRoundId: (conversationId, roundId) => set((state) => ({
         agentConversations: state.agentConversations.map((conversation) =>
           conversation.id === conversationId ? { ...conversation, activeRoundId: roundId, updatedAt: Date.now() } : conversation,
         ),
       })),
       renameAgentConversation: (id, title) => set((state) => ({ agentConversations: state.agentConversations.map((c) => (c.id === id ? { ...c, title, updatedAt: Date.now() } : c)) })),
-      deleteAgentConversation: (id) => set((state) => {
-        const agentInputDrafts = { ...state.agentInputDrafts }
-        delete agentInputDrafts[id]
-        const activeDeleted = state.activeAgentConversationId === id
-        return {
-          agentConversations: state.agentConversations.filter((c) => c.id !== id),
-          activeAgentConversationId: activeDeleted ? null : state.activeAgentConversationId,
-          agentInputDrafts,
-          ...(activeDeleted ? clearInputDraftState() : {}),
-        }
-      }),
+      deleteAgentConversation: (id) => {
+        const state = get()
+        const target = state.agentConversations.find((conversation) => conversation.id === id)
+        const affectedProjectId = target ? getAgentConversationProjectId(target, state.tasks) : undefined
+        set((current) => {
+          const agentInputDrafts = { ...current.agentInputDrafts }
+          delete agentInputDrafts[id]
+          const activeDeleted = current.activeAgentConversationId === id
+          return {
+            agentConversations: current.agentConversations.filter((conversation) => conversation.id !== id),
+            activeAgentConversationId: activeDeleted ? null : current.activeAgentConversationId,
+            agentInputDrafts,
+            ...(activeDeleted ? clearInputDraftState() : {}),
+          }
+        })
+        if (affectedProjectId) scheduleOnlineProjectSync(affectedProjectId)
+      },
       setAgentSidebarCollapsed: (agentSidebarCollapsed) => set({ agentSidebarCollapsed }),
       setAgentAssetTab: (agentAssetTab) => set({ agentAssetTab }),
       setAgentAssetPanelCollapsed: (agentAssetPanelCollapsed) => set({ agentAssetPanelCollapsed }),
@@ -1858,8 +2017,8 @@ export const useStore = create<AppState>()(
 
 let lastStoredAgentConversations = useStore.getState().agentConversations
 let agentConversationPersistRunning = false
-let agentConversationPersistQueued = false
 
+let agentConversationPersistQueued = false
 async function flushAgentConversationsToIndexedDB() {
   if (agentConversationPersistRunning) {
     agentConversationPersistQueued = true
@@ -1872,11 +2031,16 @@ async function flushAgentConversationsToIndexedDB() {
       agentConversationPersistQueued = false
       const conversations = useStore.getState().agentConversations
       await replaceStoredAgentConversations(conversations)
+      const previousConversations = lastStoredAgentConversations
       lastStoredAgentConversations = conversations
+      const currentState = useStore.getState()
+      const affectedProjectIds = new Set(
+        [...previousConversations, ...conversations]
+          .map((conversation) => getAgentConversationProjectId(conversation, currentState.tasks))
+          .filter((id): id is string => Boolean(id)),
+      )
       if (onlineProjectCacheReady) {
-        for (const projectId of new Set(conversations.map((conversation) => conversation.projectId).filter((id): id is string => Boolean(id)))) {
-          scheduleOnlineProjectSync(projectId)
-        }
+        for (const projectId of affectedProjectIds) scheduleOnlineProjectSync(projectId)
       }
     } while (agentConversationPersistQueued || useStore.getState().agentConversations !== lastStoredAgentConversations)
   } finally {
@@ -2020,7 +2184,7 @@ async function syncOnlineProjectImages(projectId: string) {
   for (const task of state.tasks.filter((item) => item.projectId === projectId)) {
     for (const imageId of getTaskReferencedImageIds(task)) taskByImageId.set(imageId, task.id)
   }
-  for (const conversation of state.agentConversations.filter((item) => item.projectId === projectId)) {
+  for (const conversation of state.agentConversations.filter((item) => getAgentConversationProjectId(item, state.tasks) === projectId)) {
     for (const imageId of getAgentConversationReferencedImageIds(conversation)) {
       if (!taskByImageId.has(imageId)) taskByImageId.set(imageId, undefined)
     }
@@ -3158,15 +3322,14 @@ async function loadOnlineProjectCache(localProjects: Project[], localTasks: Task
   const responses = await listOnlineProjects()
   const remoteIds = new Set(responses.map((response) => response.id))
   const retainedProjects = localProjects.filter((project) =>
-    project.storage !== 'online' || project.syncPending || remoteIds.has(project.remoteId ?? project.id),
+    project.storage !== 'online' || remoteIds.has(project.remoteId ?? project.id) || (project.syncPending && !project.remoteArchiveSha256),
   )
   const retainedProjectIds = new Set(retainedProjects.map((project) => project.id))
   const projects = [...retainedProjects]
-  let tasks = localTasks.map((task) => task.projectId && !retainedProjectIds.has(task.projectId) ? removeTaskProject(task) : task)
-  let agentConversations: AgentConversation[] = localConversations.map((conversation) => {
-    if (!conversation.projectId || retainedProjectIds.has(conversation.projectId)) return conversation
-    const { projectId: _projectId, ...localConversation } = conversation
-    return localConversation
+  let tasks = localTasks.filter((task) => !task.projectId || retainedProjectIds.has(task.projectId))
+  let agentConversations: AgentConversation[] = localConversations.filter((conversation) => {
+    const projectId = getAgentConversationProjectId(conversation, localTasks)
+    return !projectId || retainedProjectIds.has(projectId)
   })
   const images: StoredImage[] = []
   const thumbnails: StoredImageThumbnail[] = []
@@ -3663,7 +3826,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   }
 
   const taskId = genId()
-  const projectId = getActiveTaskProjectId()
+  const projectId = getActiveTaskProjectId() ?? useStore.getState().createProject(prompt.trim(), { autoRecord: true })
   const task: TaskRecord = {
     id: taskId,
     ...(projectId ? { projectId } : {}),
@@ -4530,10 +4693,12 @@ async function buildAgentApiInput(conversation: AgentConversation, currentRound:
 
 export async function submitAgentMessage() {
   const state = useStore.getState()
-  const { settings, inputImages, maskDraft, params, showToast } = state
   const activeAgentDraft = state.appMode !== 'agent' && state.activeAgentConversationId
     ? state.agentInputDrafts[state.activeAgentConversationId]
     : null
+  const { settings, params, showToast } = state
+  const inputImages = activeAgentDraft?.inputImages ?? state.inputImages
+  const maskDraft = activeAgentDraft?.maskDraft ?? state.maskDraft
   const prompt = activeAgentDraft?.prompt ?? state.prompt
   const projectId = getActiveTaskProjectId()
   const normalizedSettings = normalizeSettings(settings)
@@ -4673,10 +4838,14 @@ export async function submitAgentMessage() {
     }
   })
 
-  if (state.appMode !== 'agent' && conversation.id) state.setAgentInputPrompt(conversation.id, '')
-  else state.setPrompt('')
-  state.clearInputImages()
-  state.clearMaskDraft()
+  if (state.appMode !== 'agent' && conversation.id) {
+    state.setAgentInputPrompt(conversation.id, '')
+    state.clearAgentInputImages(conversation.id)
+  } else {
+    state.setPrompt('')
+    state.clearInputImages()
+    state.clearMaskDraft()
+  }
   state.setAgentEditingRoundId(null)
 
   if (fallbackTitle) {
