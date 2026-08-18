@@ -382,8 +382,9 @@ export default function ProjectHome() {
               <button
                 type="button"
                 onClick={() => {
+                  setPrompt('')
                   promptRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                  window.setTimeout(() => promptRef.current?.focus(), 300)
+                  promptRef.current?.focus()
                 }}
                 className="flex aspect-[4/3] w-full items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-400 transition hover:border-gray-400 hover:bg-gray-100 hover:text-gray-800 dark:border-white/[0.14] dark:bg-white/[0.025] dark:text-gray-600 dark:hover:border-white/[0.24] dark:hover:bg-white/[0.05] dark:hover:text-gray-200"
                 aria-label="新建项目"
