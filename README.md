@@ -568,11 +568,11 @@ DEFAULT_API_URL=https://example.com/gpt-image-config.json
 ## ⭐ Star History
 
 <div align="center">
-  <a href="https://www.star-history.com/#CookSleep/gpt_image_playground&Date">
+  <a href="https://star-history.dera.page/#CookSleep/gpt_image_playground&Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=CookSleep/gpt_image_playground&type=Date&theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=CookSleep/gpt_image_playground&type=Date" />
-      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=CookSleep/gpt_image_playground&type=Date" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=CookSleep/gpt_image_playground&type=Date&theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=CookSleep/gpt_image_playground&type=Date" />
+      <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=CookSleep/gpt_image_playground&type=Date" />
     </picture>
   </a>
 </div>
