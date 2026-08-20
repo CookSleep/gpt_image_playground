@@ -149,7 +149,7 @@ function normalizeRequestMethod(value: unknown, fallback: CustomProviderRequestM
 }
 
 function normalizeContentType(value: unknown, fallback: CustomProviderContentType = 'json'): CustomProviderContentType {
-  return value === 'multipart' ? 'multipart' : fallback
+  return value === 'multipart' || value === 'json' ? value : fallback
 }
 
 function normalizeBodyTemplate(value: unknown, fallback: Record<string, unknown>): Record<string, unknown> {
@@ -211,10 +211,21 @@ function normalizePollMapping(value: unknown, fallback?: CustomProviderPollMappi
     intervalSeconds: typeof record.intervalSeconds === 'number' && Number.isFinite(record.intervalSeconds)
       ? Math.max(1, record.intervalSeconds)
       : fallback?.intervalSeconds ?? 5,
+    maxIntervalSeconds: typeof record.maxIntervalSeconds === 'number' && Number.isFinite(record.maxIntervalSeconds)
+      ? Math.max(1, record.maxIntervalSeconds)
+      : fallback?.maxIntervalSeconds,
+    timeoutSeconds: typeof record.timeoutSeconds === 'number' && Number.isFinite(record.timeoutSeconds)
+      ? Math.max(1, record.timeoutSeconds)
+      : fallback?.timeoutSeconds,
+    maxRetries: typeof record.maxRetries === 'number' && Number.isFinite(record.maxRetries)
+      ? Math.max(0, Math.trunc(record.maxRetries))
+      : fallback?.maxRetries,
     statusPath,
     successValues: normalizeStringArray(record.successValues, fallback?.successValues ?? ['SUCCESS', 'succeeded', 'completed', 'COMPLETED']),
     failureValues: normalizeStringArray(record.failureValues, fallback?.failureValues ?? ['FAILURE', 'failed', 'error', 'FAILED', 'cancelled']),
     errorPath: typeof record.errorPath === 'string' && record.errorPath.trim() ? record.errorPath.trim() : fallback?.errorPath,
+    resultPath: typeof record.resultPath === 'string' && record.resultPath.trim() ? record.resultPath.trim() : fallback?.resultPath,
+    resultMethod: normalizeRequestMethod(record.resultMethod, fallback?.resultMethod ?? 'GET'),
     result: normalizeResultMapping(record.result, fallback?.result ?? DEFAULT_OPENAI_RESULT),
   }
 }
@@ -291,6 +302,7 @@ export function normalizeCustomProviderDefinition(input: unknown, usedIds = new 
     id,
     name: rawName,
     template,
+    editOnly: record.editOnly === true,
     submit: normalizeSubmitMapping(record.submit, {
       path: DEFAULT_CUSTOM_PROVIDER_PATHS.generationPath,
       method: 'POST',

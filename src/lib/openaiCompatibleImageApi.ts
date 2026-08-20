@@ -693,14 +693,14 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
   }
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (signal.aborted) {
+    if (signal?.aborted) {
       reject(new DOMException('Aborted', 'AbortError'))
       return
     }
     const timer = setTimeout(resolve, ms)
-    signal.addEventListener('abort', () => {
+    signal?.addEventListener('abort', () => {
       clearTimeout(timer)
       reject(new DOMException('Aborted', 'AbortError'))
     }, { once: true })
@@ -722,13 +722,55 @@ function isRecoverablePollingError(err: unknown): boolean {
 }
 
 function isRetryablePollingStatus(status: number): boolean {
-  return status === 408 || status === 429 || status >= 500
+  return status >= 500
 }
 
-function buildTaskPath(path: string, taskId: string): string {
+async function fetchCustomJson(
+  url: string,
+  init: RequestInit,
+  signal?: AbortSignal,
+  maxRetries = 3,
+): Promise<unknown> {
+  let retries = 0
+  while (true) {
+    try {
+      const response = await fetch(url, { ...init, signal })
+      if (!response.ok) {
+        if (isRetryablePollingStatus(response.status) && retries < maxRetries) {
+          retries += 1
+          await sleep(Math.min(1000 * 2 ** (retries - 1), 15000), signal)
+          continue
+        }
+        const error = new Error(await getApiErrorMessage(response))
+        ;(error as Error & { retryable?: boolean }).retryable = false
+        throw error
+      }
+      return response.json()
+    } catch (err) {
+      if (signal?.aborted) throw err
+      if (err instanceof Error && (err as Error & { retryable?: boolean }).retryable === false) throw err
+      if (retries >= maxRetries) throw err
+      retries += 1
+      await sleep(Math.min(1000 * 2 ** (retries - 1), 15000), signal)
+    }
+  }
+}
+
+function encodePathValue(value: string): string {
+  return value.split('/').map((part) => encodeURIComponent(part)).join('/')
+}
+
+function buildProviderPath(path: string, taskId: string, model: string): string {
   return path
     .replace(/\{task_id\}/g, encodeURIComponent(taskId))
     .replace(/\{taskId\}/g, encodeURIComponent(taskId))
+    .replace(/\{model\}|\{slug\}/g, encodePathValue(model.trim().replace(/^\/+|\/+$/g, '')))
+}
+
+function getCustomImageSize(size: string): { width: number; height: number } {
+  const match = size.match(/^(\d+)x(\d+)$/)
+  if (match) return { width: Number(match[1]), height: Number(match[2]) }
+  return { width: 1024, height: 1024 }
 }
 
 function resolveTemplateValue(value: unknown, context: Record<string, unknown>): unknown {
@@ -751,7 +793,10 @@ function createCustomProviderContext(opts: CallApiOptions, profile: ApiProfile) 
   return {
     profile,
     prompt: opts.prompt,
-    params: opts.params,
+    params: {
+      ...opts.params,
+      image_size: getCustomImageSize(opts.params.size),
+    },
     inputImages: {
       dataUrls: opts.inputImageDataUrls.length ? opts.inputImageDataUrls : undefined,
       count: opts.inputImageDataUrls.length,
@@ -852,7 +897,7 @@ async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: C
   const context = createCustomProviderContext(opts, profile)
   const method = mapping.method ?? 'POST'
   const contentType = mapping.contentType ?? 'json'
-  const path = appendQuery(mapping.path, renderQuery(mapping.query, context))
+  const path = appendQuery(buildProviderPath(mapping.path, '', profile.model), renderQuery(mapping.query, context))
   const headers: Record<string, string> = { ...requestHeaders }
   let body: BodyInit | undefined
 
@@ -877,16 +922,11 @@ async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: C
     }
   }
 
-  const response = await fetch(buildApiUrl(profile.baseUrl, path, proxyConfig, useApiProxy), {
-    method,
-    headers,
-    cache: 'no-store',
-    body,
-    signal: controller.signal,
-  })
-
-  if (!response.ok) throw new Error(await getApiErrorMessage(response))
-  return response.json()
+  return fetchCustomJson(
+    buildApiUrl(profile.baseUrl, path, proxyConfig, useApiProxy),
+    { method, headers, cache: 'no-store', body },
+    controller.signal,
+  )
 }
 
 async function pollCustomTaskResult(
@@ -898,36 +938,58 @@ async function pollCustomTaskResult(
 ): Promise<CallApiResult> {
   const proxyConfig = readClientDevProxyConfig()
   const requestHeaders = createRequestHeaders(profile)
+  const startedAt = Date.now()
+  const timeoutMs = (poll.timeoutSeconds ?? profile.timeout ?? 600) * 1000
+  const maxRetries = poll.maxRetries ?? 3
+  const maxIntervalMs = (poll.maxIntervalSeconds ?? poll.intervalSeconds ?? 5) * 1000
+  let intervalMs = (poll.intervalSeconds ?? 5) * 1000
   let isFirstPoll = true
 
   while (true) {
+    if (Date.now() - startedAt >= timeoutMs) throw new Error('异步任务轮询超时')
     if (isFirstPoll) {
       isFirstPoll = false
     } else if (signal) {
-      await sleep((poll.intervalSeconds ?? 5) * 1000, signal)
+      await sleep(intervalMs, signal)
     } else {
-      await new Promise((resolve) => setTimeout(resolve, (poll.intervalSeconds ?? 5) * 1000))
+      await new Promise((resolve) => setTimeout(resolve, intervalMs))
     }
 
-    const taskPath = appendQuery(buildTaskPath(poll.path, taskId), poll.query)
+    const taskPath = appendQuery(buildProviderPath(poll.path, taskId, profile.model), poll.query)
     let taskPayload: unknown
-    try {
-      const taskResponse = await fetch(buildApiUrl(profile.baseUrl, taskPath, proxyConfig, false), {
-        method: poll.method ?? 'GET',
-        headers: requestHeaders,
-        cache: 'no-store',
-        signal,
-      })
+    let retries = 0
+    while (true) {
+      try {
+        const taskResponse = await fetch(buildApiUrl(profile.baseUrl, taskPath, proxyConfig, false), {
+          method: poll.method ?? 'GET',
+          headers: requestHeaders,
+          cache: 'no-store',
+          signal,
+        })
 
-      if (!taskResponse.ok) {
-        if (isRetryablePollingStatus(taskResponse.status)) continue
-        throw new Error(await getApiErrorMessage(taskResponse))
+        if (!taskResponse.ok) {
+          if (isRetryablePollingStatus(taskResponse.status) && retries < maxRetries) {
+            retries += 1
+            await sleep(Math.min(intervalMs, maxIntervalMs), signal)
+            continue
+          }
+          const error = new Error(await getApiErrorMessage(taskResponse))
+          ;(error as Error & { retryable?: boolean }).retryable = false
+          throw error
+        }
+
+        taskPayload = await taskResponse.json()
+        break
+      } catch (err) {
+        if (signal?.aborted) throw err
+        if (err instanceof Error && (err as Error & { retryable?: boolean }).retryable === false) throw err
+        if (isRecoverablePollingError(err) && retries < maxRetries) {
+          retries += 1
+          await sleep(Math.min(intervalMs, maxIntervalMs), signal)
+          continue
+        }
+        throw err
       }
-
-      taskPayload = await taskResponse.json()
-    } catch (err) {
-      if (!signal?.aborted && isRecoverablePollingError(err)) continue
-      throw err
     }
 
     const state = getTaskState(taskPayload, poll)
@@ -937,12 +999,23 @@ async function pollCustomTaskResult(
     }
     if (state === 'success') {
       try {
-        return await extractCustomImages(taskPayload, poll.result, mime, signal)
+        const resultPayload = poll.resultPath
+          ? await fetchCustomJson(
+              buildApiUrl(profile.baseUrl, buildProviderPath(poll.resultPath!, taskId, profile.model), proxyConfig, false),
+              { method: poll.resultMethod ?? 'GET', headers: requestHeaders, cache: 'no-store' },
+              signal,
+              maxRetries,
+            )
+          : taskPayload
+        return await extractCustomImages(resultPayload, poll.result, mime, signal)
       } catch (err) {
+        if (err instanceof Error && (err as Error & { retryable?: boolean }).retryable === false) throw err
         if (!signal?.aborted && isRecoverablePollingError(err)) continue
         throw err
       }
     }
+
+    intervalMs = Math.min(intervalMs * 2, maxIntervalMs)
   }
 }
 
@@ -960,6 +1033,7 @@ export async function getCustomQueuedImageResult(
 async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile, customProvider: CustomProviderDefinition): Promise<CallApiResult> {
   const { params, inputImageDataUrls } = opts
   const isEdit = inputImageDataUrls.length > 0
+  if (customProvider.editOnly && !isEdit) throw new Error('当前 Composite 配置仅支持图生图/图片编辑，文生图接口待补充')
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const controller = new AbortController()
   let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => controller.abort(), profile.timeout * 1000)

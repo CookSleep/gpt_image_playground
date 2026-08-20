@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
 import { DEFAULT_SETTINGS } from './apiProfiles'
 import { callImageApi } from './api'
+import { COMPOSITE_IMAGE_EDIT_PROVIDER } from './compositeProvider'
 
 describe('callImageApi', () => {
   afterEach(() => {
@@ -1040,5 +1041,53 @@ describe('callImageApi', () => {
     await expect(promise).resolves.toEqual({
       images: ['data:image/png;base64,aW1hZ2U='],
     })
+  })
+
+  it('submits composite edits, polls status, then fetches the completed result', async () => {
+    const inputImage = 'data:image/png;base64,aW1hZ2U='
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ request_id: 'request-1' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        images: [{ url: inputImage }],
+      }), { status: 200 }))
+
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      baseUrl: 'https://localhost:8443/api',
+      apiKey: 'composite-key',
+      model: 'openai/gpt-image-2',
+      customProviders: [COMPOSITE_IMAGE_EDIT_PROVIDER],
+      profiles: [{
+        ...DEFAULT_SETTINGS.profiles[0],
+        id: 'profile-composite',
+        provider: 'composite',
+        baseUrl: 'https://localhost:8443/api',
+        apiKey: 'composite-key',
+        model: 'openai/gpt-image-2',
+      }],
+      activeProfileId: 'profile-composite',
+    }
+    const promise = callImageApi({
+      settings,
+      prompt: '修改图片',
+      params: { ...DEFAULT_PARAMS, size: '1024x1536' },
+      inputImageDataUrls: [inputImage],
+    })
+
+    await promise
+    const [, submitInit] = fetchMock.mock.calls[0]
+    expect(fetchMock.mock.calls[0][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/edit')
+    expect(JSON.parse(String((submitInit as RequestInit).body))).toMatchObject({
+      platform: 'composite',
+      prompt: '修改图片',
+      image_urls: [inputImage],
+      image_size: { width: 1024, height: 1536 },
+      num_images: 1,
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock.mock.calls[1][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/edit/requests/request-1/status')
+    expect(fetchMock.mock.calls[2][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/edit/requests/request-1')
   })
 })

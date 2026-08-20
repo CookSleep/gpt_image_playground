@@ -51,10 +51,15 @@ export interface CustomProviderPollMapping {
   method?: CustomProviderRequestMethod
   query?: Record<string, string>
   intervalSeconds?: number
+  maxIntervalSeconds?: number
+  timeoutSeconds?: number
+  maxRetries?: number
   statusPath: string
   successValues: string[]
   failureValues: string[]
   errorPath?: string
+  resultPath?: string
+  resultMethod?: CustomProviderRequestMethod
   result: CustomProviderResultMapping
 }
 
@@ -62,6 +67,7 @@ export interface CustomProviderDefinition {
   id: string
   name: string
   template?: CustomProviderTemplate
+  editOnly?: boolean
   submit: CustomProviderSubmitMapping
   editSubmit?: CustomProviderSubmitMapping
   poll?: CustomProviderPollMapping

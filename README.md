@@ -424,6 +424,8 @@ JSON 结构示例：
 
 第三方服务商可以参考 [自定义服务商 LLM 提示词](docs/custom-provider-llm-prompt.md)，让 LLM 根据自己的 API 文档生成可导入的完整配置。导入后只需要在设置里补充 API Key。
 
+Composite 图生图/图片编辑的配置示例见 [`docs/composite-image-edit-settings.json`](docs/composite-image-edit-settings.json)。导入后填写 Composite API Key；`baseUrl` 默认对应文档中的 `https://localhost:8443/api`，可按实际网关地址调整。该配置提交任务后会轮询 `IN_QUEUE`/`IN_PROGRESS`，在 `COMPLETED` 后再请求最终结果接口并读取 `images[*].url`。文生图提交配置暂待对应接口文档补充。
+
 ---
 
 ## 💻 技术栈
