@@ -33,10 +33,6 @@ export function collectAgentRoundOutputImageSlots(round: AgentRound, tasks: Task
   return slots
 }
 
-export function collectAgentRoundOutputImages(round: AgentRound, tasks: TaskRecord[]) {
-  return collectAgentRoundOutputImageSlots(round, tasks).filter((imageId): imageId is string => Boolean(imageId))
-}
-
 export function extractAgentReferenceIds(text: string) {
   return Array.from(text.matchAll(AGENT_REF_TAG_RE), (match) => match[2]).filter((id): id is string => Boolean(id))
 }

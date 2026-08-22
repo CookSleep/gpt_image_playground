@@ -4,21 +4,26 @@ import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devP
 import {
   assertImageInputPayloadSize,
   assertMaskEditFileSize,
+  appendStreamingFormatHint,
+  maybeAppendStreamingHint,
   type CallApiOptions,
   type CallApiResult,
   fetchImageUrlAsDataUrl,
   getApiErrorMessage,
   getDataUrlDecodedByteSize,
   getDataUrlEncodedByteSize,
+  getResponsesImageResultBase64,
   isDataUrl,
   isHttpUrl,
   mergeActualParams,
+  maybeAppendTransparentBackgroundHint,
   MIME_MAP,
   normalizeBase64Image,
   pickActualParams,
+  PROMPT_REWRITE_GUARD_PREFIX,
 } from './imageApiShared'
-
-const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
+import { isEventStreamResponse, readJsonServerSentEvents } from './serverSentEvents'
+import { prependCodexCliSizePrompt } from './size'
 
 function getStreamPartialImages(profile: ApiProfile): number {
   return profile.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES
@@ -31,7 +36,7 @@ function appendQuery(path: string, query?: Record<string, string>): string {
   return `${path}${path.includes('?') ? '&' : '?'}${params.toString()}`
 }
 
-function createOpenAICompatiblePaths(customProvider?: CustomProviderDefinition | null) {
+function createOpenAICompatiblePaths() {
   return {
     generationPath: 'images/generations',
     editPath: 'images/edits',
@@ -86,10 +91,6 @@ function createRequestHeaders(profile: ApiProfile): Record<string, string> {
   }
 }
 
-function isEventStreamResponse(response: Response): boolean {
-  return response.headers.get('Content-Type')?.toLowerCase().includes('text/event-stream') ?? false
-}
-
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -97,6 +98,10 @@ function isRecordValue(value: unknown): value is Record<string, unknown> {
 function getStringValue(source: Record<string, unknown>, key: string): string | undefined {
   const value = source[key]
   return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
 function getNumberValue(source: Record<string, unknown>, key: string): number | undefined {
@@ -119,75 +124,22 @@ function getStreamEventErrorMessage(event: Record<string, unknown>): string | nu
   return null
 }
 
-function parseServerSentEventBlock(block: string): string | null {
-  const dataLines: string[] = []
-  for (const line of block.split(/\r?\n/)) {
-    if (!line || line.startsWith(':')) continue
-    if (!line.startsWith('data:')) continue
-    dataLines.push(line.slice(5).replace(/^ /, ''))
-  }
-
-  const data = dataLines.join('\n').trim()
-  if (!data || data === '[DONE]') return null
-  return data
-}
-
-async function readJsonServerSentEvents(response: Response, onEvent: (event: Record<string, unknown>) => void | Promise<void>): Promise<void> {
-  if (!response.body) throw new Error('接口未返回可读取的流式响应')
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-
-  const processBlock = async (block: string) => {
-    const data = parseServerSentEventBlock(block)
-    if (!data) return
-
-    let event: unknown
-    try {
-      event = JSON.parse(data)
-    } catch {
-      throw new Error('流式响应包含无法解析的 JSON 事件')
-    }
-    if (!isRecordValue(event)) return
-
-    const errorMessage = getStreamEventErrorMessage(event)
-    if (errorMessage) throw new Error(errorMessage)
-
-    await onEvent(event)
-  }
-
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-
-    let separatorIndex = buffer.search(/\r?\n\r?\n/)
-    while (separatorIndex >= 0) {
-      const block = buffer.slice(0, separatorIndex)
-      const separator = buffer.match(/\r?\n\r?\n/)?.[0] ?? '\n\n'
-      buffer = buffer.slice(separatorIndex + separator.length)
-      await processBlock(block)
-      separatorIndex = buffer.search(/\r?\n\r?\n/)
-    }
-  }
-
-  buffer += decoder.decode()
-  if (buffer.trim()) await processBlock(buffer)
-}
-
 function createResponsesImageTool(
   params: TaskParams,
   isEdit: boolean,
   profile: ApiProfile,
   maskDataUrl?: string,
+  nativeTransparentBackground?: boolean,
 ): Record<string, unknown> {
   const tool: Record<string, unknown> = {
     type: 'image_generation',
     action: isEdit ? 'edit' : 'generate',
-    size: params.size,
     output_format: params.output_format,
     moderation: params.moderation,
+  }
+
+  if (!profile.codexCli) {
+    tool.size = params.size
   }
 
   if (profile.streamImages) {
@@ -202,6 +154,10 @@ function createResponsesImageTool(
     tool.output_compression = params.output_compression
   }
 
+  if (nativeTransparentBackground) {
+    tool.background = 'transparent'
+  }
+
   if (maskDataUrl) {
     tool.input_image_mask = {
       image_url: maskDataUrl,
@@ -211,8 +167,8 @@ function createResponsesImageTool(
   return tool
 }
 
-function createResponsesInput(prompt: string, inputImageDataUrls: string[]): unknown {
-  const text = `${PROMPT_REWRITE_GUARD_PREFIX}\n${prompt}`
+function createResponsesInput(prompt: string, inputImageDataUrls: string[], allowPromptRewrite: boolean): unknown {
+  const text = allowPromptRewrite ? prompt : `${PROMPT_REWRITE_GUARD_PREFIX}\n${prompt}`
   if (!inputImageDataUrls.length) return text
 
   return [
@@ -263,24 +219,6 @@ function parseResponsesImageResults(payload: ResponsesApiResponse, fallbackMime:
   }
 
   return results
-}
-
-function getResponsesImageResultBase64(result: ResponsesOutputItem['result']): string | undefined {
-  const b64 = typeof result === 'string'
-    ? result
-    : result && typeof result === 'object'
-    ? typeof result.b64_json === 'string'
-      ? result.b64_json
-      : typeof result.base64 === 'string'
-      ? result.base64
-      : typeof result.image === 'string'
-      ? result.image
-      : typeof result.data === 'string'
-      ? result.data
-      : ''
-    : ''
-
-  return b64.trim() ? b64 : undefined
 }
 
 async function parseImagesApiResponse(payload: ImageApiResponse, mime: string, signal?: AbortSignal): Promise<CallApiResult> {
@@ -336,6 +274,7 @@ async function parseImagesApiResponse(payload: ImageApiResponse, mime: string, s
 function eventToImageResponseItem(event: Record<string, unknown>): ImageResponseItem {
   return {
     b64_json: getStringValue(event, 'b64_json'),
+    url: getStringValue(event, 'url'),
     revised_prompt: getStringValue(event, 'revised_prompt'),
     size: getStringValue(event, 'size'),
     quality: getStringValue(event, 'quality'),
@@ -349,6 +288,7 @@ async function parseImagesApiStreamResponse(
   response: Response,
   mime: string,
   onPartialImage?: CallApiOptions['onPartialImage'],
+  signal?: AbortSignal,
 ): Promise<CallApiResult> {
   const completedItems: ImageResponseItem[] = []
   let resultPayload: ImageApiResponse | null = null
@@ -375,6 +315,10 @@ async function parseImagesApiStreamResponse(
     if (type === 'image_generation.completed' || type === 'image_edit.completed') {
       completedItems.push(eventToImageResponseItem(event))
     }
+  }, {
+    signals: [signal],
+    formatErrorMessage: appendStreamingFormatHint,
+    getEventErrorMessage: getStreamEventErrorMessage,
   })
 
   if (resultPayload) {
@@ -385,10 +329,24 @@ async function parseImagesApiStreamResponse(
     throw new Error('流式接口未返回最终图片数据')
   }
 
-  const images = completedItems
-    .map((item) => item.b64_json)
-    .filter((b64): b64 is string => Boolean(b64))
-    .map((b64) => normalizeBase64Image(b64, mime))
+  const images: string[] = []
+  const rawImageUrls = completedItems.map((item) => item.url).filter(isHttpUrl)
+  try {
+    for (const item of completedItems) {
+      if (item.b64_json) {
+        images.push(normalizeBase64Image(item.b64_json, mime))
+        continue
+      }
+      if (isHttpUrl(item.url) || isDataUrl(item.url)) {
+        images.push(await fetchImageUrlAsDataUrl(item.url, mime, signal))
+      }
+    }
+  } catch (err) {
+    if (rawImageUrls.length > 0 && err instanceof Error) {
+      (err as any).rawImageUrls = rawImageUrls
+    }
+    throw err
+  }
   if (!images.length) throw new Error('流式接口未返回可用图片数据')
 
   const actualParamsList = completedItems.map((item) => mergeActualParams(pickActualParams(item)))
@@ -401,6 +359,7 @@ async function parseImagesApiStreamResponse(
     actualParams,
     actualParamsList,
     revisedPrompts: completedItems.map((item) => item.revised_prompt),
+    ...(rawImageUrls.length ? { rawImageUrls } : {}),
   }
 }
 
@@ -446,6 +405,9 @@ async function parseResponsesApiStreamResponse(
     }
 
     completedPayload = payload
+  }, {
+    formatErrorMessage: appendStreamingFormatHint,
+    getEventErrorMessage: getStreamEventErrorMessage,
   })
 
   const payload = completedPayload ?? (outputItems.length ? { output: outputItems } : null)
@@ -470,6 +432,12 @@ async function parseResponsesApiStreamResponse(
 
 export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile: ApiProfile, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
   if (customProvider) {
+    const n = opts.params.n > 0 ? opts.params.n : 1
+    const submitMapping = opts.inputImageDataUrls.length > 0 && customProvider.editSubmit
+      ? customProvider.editSubmit
+      : customProvider.submit
+    const isAsync = Boolean(submitMapping.taskIdPath)
+    if (profile.codexCli && n > 1 && !isAsync) return callCustomHttpImageApiConcurrent(opts, profile, customProvider, n)
     return callCustomHttpImageApi(opts, profile, customProvider)
   }
 
@@ -478,16 +446,16 @@ export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile
     : callImagesApi(opts, profile)
 }
 
-async function callImagesApi(opts: CallApiOptions, profile: ApiProfile, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
+async function callImagesApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const n = opts.params.n > 0 ? opts.params.n : 1
   if ((profile.codexCli || (profile.streamImages && n > 1)) && n > 1) {
-    return callImagesApiConcurrent(opts, profile, n, customProvider)
+    return callImagesApiConcurrent(opts, profile, n)
   }
 
-  return callImagesApiSingle(opts, profile, customProvider)
+  return callImagesApiSingle(opts, profile)
 }
 
-async function callImagesApiConcurrent(opts: CallApiOptions, profile: ApiProfile, n: number, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
+async function callImagesApiConcurrent(opts: CallApiOptions, profile: ApiProfile, n: number): Promise<CallApiResult> {
   const singleOpts = {
     ...opts,
     params: {
@@ -502,46 +470,26 @@ async function callImagesApiConcurrent(opts: CallApiOptions, profile: ApiProfile
       onPartialImage: opts.onPartialImage
         ? (partial) => opts.onPartialImage?.({ ...partial, requestIndex })
         : undefined,
-    }, profile, customProvider)),
+    }, profile)),
   )
 
-  const successfulResults = results
-    .filter((r): r is PromiseFulfilledResult<CallApiResult> => r.status === 'fulfilled')
-    .map((r) => r.value)
-
-  if (successfulResults.length === 0) {
-    const firstError = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
-    if (firstError) throw firstError.reason
-    throw new Error('所有并发请求均失败')
-  }
-
-  const images = successfulResults.flatMap((r) => r.images)
-  const actualParamsList = successfulResults.flatMap((r) =>
-    r.actualParamsList?.length ? r.actualParamsList : r.images.map(() => r.actualParams),
-  )
-  const revisedPrompts = successfulResults.flatMap((r) =>
-    r.revisedPrompts?.length ? r.revisedPrompts : r.images.map(() => undefined),
-  )
-  const rawImageUrls = successfulResults.flatMap((r) => r.rawImageUrls ?? [])
-  const actualParams = mergeActualParams(
-    successfulResults[0]?.actualParams ?? {},
-    { n: images.length },
-  )
-
-  return { images, actualParams, actualParamsList, revisedPrompts, ...(rawImageUrls.length ? { rawImageUrls } : {}) }
+  return mergeConcurrentApiResults(results)
 }
 
-async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
+async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const { prompt: originalPrompt, params, inputImageDataUrls } = opts
-  const prompt = profile.codexCli
-    ? `${PROMPT_REWRITE_GUARD_PREFIX}\n${originalPrompt}`
+  const sizePrompt = profile.codexCli && !opts.skipCodexCliSizePrompt
+    ? prependCodexCliSizePrompt(originalPrompt, params.size)
     : originalPrompt
+  const prompt = profile.codexCli && !opts.settings.allowPromptRewrite
+    ? `${PROMPT_REWRITE_GUARD_PREFIX}\n${sizePrompt}`
+    : sizePrompt
   const isEdit = inputImageDataUrls.length > 0
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
   const requestHeaders = createRequestHeaders(profile)
-  const paths = createOpenAICompatiblePaths(customProvider)
+  const paths = createOpenAICompatiblePaths()
 
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
@@ -553,9 +501,14 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
       const formData = new FormData()
       formData.append('model', profile.model)
       formData.append('prompt', prompt)
-      formData.append('size', params.size)
+      if (!profile.codexCli) {
+        formData.append('size', params.size)
+      }
       formData.append('output_format', params.output_format)
       formData.append('moderation', params.moderation)
+      if (opts.nativeTransparentBackground) {
+        formData.append('background', 'transparent')
+      }
 
       if (!profile.codexCli) {
         formData.append('quality', params.quality)
@@ -614,9 +567,16 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
       const body: Record<string, unknown> = {
         model: profile.model,
         prompt,
-        size: params.size,
         output_format: params.output_format,
         moderation: params.moderation,
+      }
+
+      if (opts.nativeTransparentBackground) {
+        body.background = 'transparent'
+      }
+
+      if (!profile.codexCli) {
+        body.size = params.size
       }
 
       if (!profile.codexCli) {
@@ -650,11 +610,12 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
     }
 
     if (!response.ok) {
-      throw new Error(await getApiErrorMessage(response))
+      const errorMessage = await getApiErrorMessage(response)
+      throw new Error(maybeAppendStreamingHint(errorMessage, response.status, profile.streamImages))
     }
 
     if (profile.streamImages && isEventStreamResponse(response)) {
-      return parseImagesApiStreamResponse(response, mime, opts.onPartialImage)
+      return parseImagesApiStreamResponse(response, mime, opts.onPartialImage, controller.signal)
     }
 
     return parseImagesApiResponse(await response.json() as ImageApiResponse, mime, controller.signal)
@@ -718,10 +679,22 @@ function resolveTemplateValue(value: unknown, context: Record<string, unknown>):
 }
 
 function createCustomProviderContext(opts: CallApiOptions, profile: ApiProfile) {
+  const sizePrompt = profile.codexCli && !opts.skipCodexCliSizePrompt
+    ? prependCodexCliSizePrompt(opts.prompt, opts.params.size)
+    : opts.prompt
+  const prompt = profile.codexCli && !opts.settings.allowPromptRewrite
+    ? `${PROMPT_REWRITE_GUARD_PREFIX}\n${sizePrompt}`
+    : sizePrompt
+  const params = {
+    ...opts.params,
+    ...(profile.codexCli ? { size: undefined, quality: undefined } : {}),
+    ...(opts.nativeTransparentBackground ? { background: 'transparent' } : {}),
+  }
+
   return {
     profile,
-    prompt: opts.prompt,
-    params: opts.params,
+    prompt,
+    params,
     inputImages: {
       dataUrls: opts.inputImageDataUrls.length ? opts.inputImageDataUrls : undefined,
       count: opts.inputImageDataUrls.length,
@@ -817,8 +790,7 @@ async function extractCustomImages(payload: unknown, result: CustomProviderResul
   return { images, ...(rawImageUrls.length ? { rawImageUrls } : {}) }
 }
 
-async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: CallApiOptions, profile: ApiProfile, controller: AbortController): Promise<unknown> {
-  const proxyConfig = readClientDevProxyConfig()
+async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: CallApiOptions, profile: ApiProfile, controller: AbortController, proxyConfig: ReturnType<typeof readClientDevProxyConfig>, useApiProxy: boolean): Promise<unknown> {
   const requestHeaders = createRequestHeaders(profile)
   const context = createCustomProviderContext(opts, profile)
   const method = mapping.method ?? 'POST'
@@ -848,7 +820,7 @@ async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: C
     }
   }
 
-  const response = await fetch(buildApiUrl(profile.baseUrl, path, proxyConfig, false), {
+  const response = await fetch(buildApiUrl(profile.baseUrl, path, proxyConfig, useApiProxy), {
     method,
     headers,
     cache: 'no-store',
@@ -856,7 +828,10 @@ async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: C
     signal: controller.signal,
   })
 
-  if (!response.ok) throw new Error(await getApiErrorMessage(response))
+  if (!response.ok) {
+    const errorMessage = await getApiErrorMessage(response)
+    throw new Error(maybeAppendStreamingHint(errorMessage, response.status, profile.streamImages))
+  }
   return response.json()
 }
 
@@ -904,7 +879,8 @@ async function pollCustomTaskResult(
     const state = getTaskState(taskPayload, poll)
     if (state === 'failure') {
       const message = getByPath(taskPayload, poll.errorPath) || getByPath(taskPayload, 'message') || getByPath(taskPayload, 'data.fail_reason') || getByPath(taskPayload, 'error.message')
-      throw new Error(typeof message === 'string' && message.trim() ? message : '异步任务失败')
+      const errorMessage = typeof message === 'string' && message.trim() ? message : '异步任务失败'
+      throw new Error(maybeAppendTransparentBackgroundHint(errorMessage))
     }
     if (state === 'success') {
       try {
@@ -936,8 +912,16 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
   let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => controller.abort(), profile.timeout * 1000)
 
   try {
+    const proxyConfig = readClientDevProxyConfig()
+    const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
     const submitMapping = isEdit && customProvider.editSubmit ? customProvider.editSubmit : customProvider.submit
-    const submitPayload = await submitCustomRequest(submitMapping, opts, profile, controller)
+    if (useApiProxy && (submitMapping.method ?? 'POST') !== 'POST') {
+      throw new Error('API 代理暂不支持使用 GET 提交的自定义服务商。请关闭 API 代理，或改用 POST 提交的自定义服务商配置。')
+    }
+    if (useApiProxy && (submitMapping.taskIdPath || customProvider.poll)) {
+      throw new Error('API 代理暂不支持使用异步任务的自定义服务商。请关闭 API 代理，或改用同步返回图片的自定义服务商配置。')
+    }
+    const submitPayload = await submitCustomRequest(submitMapping, opts, profile, controller, proxyConfig, useApiProxy)
     const taskIdValue = submitMapping.taskIdPath ? getByPath(submitPayload, submitMapping.taskIdPath) : undefined
     const taskId = typeof taskIdValue === 'string' ? taskIdValue.trim() : String(taskIdValue ?? '').trim()
     if (submitMapping.taskIdPath && !taskId) {
@@ -958,6 +942,50 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
   }
 }
 
+function mergeConcurrentApiResults(results: PromiseSettledResult<CallApiResult>[]): CallApiResult {
+  const successfulResults = results
+    .filter((result): result is PromiseFulfilledResult<CallApiResult> => result.status === 'fulfilled')
+    .map((result) => result.value)
+  if (!successfulResults.length) {
+    const firstError = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')!
+    throw firstError.reason
+  }
+
+  const images = successfulResults.flatMap((result) => result.images)
+  const actualParamsList = successfulResults.flatMap((result) =>
+    result.actualParamsList?.length ? result.actualParamsList : result.images.map(() => result.actualParams),
+  )
+  const revisedPrompts = successfulResults.flatMap((result) =>
+    result.revisedPrompts?.length ? result.revisedPrompts : result.images.map(() => undefined),
+  )
+  const rawImageUrls = successfulResults.flatMap((result) => result.rawImageUrls ?? [])
+  const failedRequests = results.flatMap((result, requestIndex) =>
+    result.status === 'rejected' ? [{ requestIndex, error: getErrorMessage(result.reason) }] : [],
+  )
+
+  return {
+    images,
+    actualParams: mergeActualParams(successfulResults[0].actualParams ?? {}, { n: images.length }),
+    actualParamsList,
+    revisedPrompts,
+    ...(rawImageUrls.length ? { rawImageUrls } : {}),
+    ...(failedRequests.length ? { failedRequests } : {}),
+  }
+}
+
+async function callCustomHttpImageApiConcurrent(
+  opts: CallApiOptions,
+  profile: ApiProfile,
+  customProvider: CustomProviderDefinition,
+  n: number,
+): Promise<CallApiResult> {
+  const results = await Promise.allSettled(Array.from({ length: n }).map(() => callCustomHttpImageApi({
+    ...opts,
+    params: { ...opts.params, n: 1 },
+  }, profile, customProvider)))
+  return mergeConcurrentApiResults(results)
+}
+
 async function callResponsesImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const n = opts.params.n > 0 ? opts.params.n : 1
   if (n === 1) {
@@ -971,35 +999,14 @@ async function callResponsesImageApi(opts: CallApiOptions, profile: ApiProfile):
       : undefined,
   }, profile))
   const results = await Promise.allSettled(promises)
-  
-  const successfulResults = results
-    .filter((r): r is PromiseFulfilledResult<CallApiResult> => r.status === 'fulfilled')
-    .map((r) => r.value)
-
-  if (successfulResults.length === 0) {
-    const firstError = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
-    if (firstError) throw firstError.reason
-    throw new Error('所有并发请求均失败')
-  }
-
-  const images = successfulResults.flatMap((r) => r.images)
-  const actualParamsList = successfulResults.flatMap((r) =>
-    r.actualParamsList?.length ? r.actualParamsList : r.images.map(() => r.actualParams),
-  )
-  const revisedPrompts = successfulResults.flatMap((r) =>
-    r.revisedPrompts?.length ? r.revisedPrompts : r.images.map(() => undefined),
-  )
-  const rawImageUrls = successfulResults.flatMap((r) => r.rawImageUrls ?? [])
-  const actualParams = mergeActualParams(
-    successfulResults[0]?.actualParams ?? {},
-    images.length === opts.params.n ? { n: opts.params.n } : { n: images.length },
-  )
-
-  return { images, actualParams, actualParamsList, revisedPrompts, ...(rawImageUrls.length ? { rawImageUrls } : {}) }
+  return mergeConcurrentApiResults(results)
 }
 
 async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const { prompt, params, inputImageDataUrls } = opts
+  const requestPrompt = profile.codexCli && !opts.skipCodexCliSizePrompt
+    ? prependCodexCliSizePrompt(prompt, params.size)
+    : prompt
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
@@ -1019,10 +1026,11 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
 
     const body: Record<string, unknown> = {
       model: profile.model,
-      input: createResponsesInput(prompt, inputImageDataUrls),
-      tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, profile, opts.maskDataUrl)],
+      input: createResponsesInput(requestPrompt, inputImageDataUrls, opts.settings.allowPromptRewrite),
+      tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, profile, opts.maskDataUrl, opts.nativeTransparentBackground)],
       tool_choice: 'required',
     }
+    if (profile.reasoningEffort) body.reasoning = { effort: profile.reasoningEffort }
     if (profile.streamImages) {
       body.stream = true
     }
@@ -1039,7 +1047,8 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
     })
 
     if (!response.ok) {
-      throw new Error(await getApiErrorMessage(response))
+      const errorMessage = await getApiErrorMessage(response)
+      throw new Error(maybeAppendStreamingHint(errorMessage, response.status, profile.streamImages))
     }
 
     if (profile.streamImages && isEventStreamResponse(response)) {

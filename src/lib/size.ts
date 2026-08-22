@@ -5,8 +5,10 @@ const MAX_EDGE = 3840
 const MAX_ASPECT_RATIO = 3
 const MIN_PIXELS = 655_360
 const MAX_PIXELS = 8_294_400
+const MAX_1K_PIXELS = 1_572_864
 
 export type SizeTier = '1K' | '2K' | '4K'
+type PresetRatio = '1:1' | '3:2' | '2:3' | '16:9' | '9:16' | '4:3' | '3:4' | '21:9'
 
 function roundToMultiple(value: number, multiple: number) {
   return Math.max(multiple, Math.round(value / multiple) * multiple)
@@ -64,6 +66,39 @@ export function normalizeImageSize(size: string) {
 
   const { width, height } = normalizeDimensions(Number(match[1]), Number(match[2]))
   return `${width}x${height}`
+}
+
+export function normalizeCodexCliImageSize(size: string) {
+  const trimmed = size.trim()
+  const match = trimmed.match(SIZE_PATTERN)
+  if (!match) return trimmed
+
+  const originalWidth = Number(match[1])
+  const originalHeight = Number(match[2])
+  const normalized = normalizeDimensions(originalWidth, originalHeight)
+  if (normalized.width * normalized.height > MAX_1K_PIXELS) {
+    return calculateImageSize('1K', `${normalized.width}:${normalized.height}`) ?? `${normalized.width}x${normalized.height}`
+  }
+
+  const { width, height } = normalized
+  return `${width}x${height}`
+}
+
+export function prependCodexCliSizePrompt(prompt: string, size: string) {
+  if (size === 'auto') return prompt
+  const trimmed = prompt.trimStart()
+  const hint = `Generate at ${size} resolution.`
+  if (trimmed.startsWith(hint)) return trimmed
+  return `${hint} ${trimmed}`
+}
+
+export function stripInjectedCodexCliSizePrompt(prompt: string, originalPrompt: string, size: string) {
+  if (size === 'auto') return prompt
+  const prefix = `Generate at ${size} resolution.`
+  if (originalPrompt.trimStart().startsWith(prefix)) return prompt
+  const trimmed = prompt.trimStart()
+  if (!trimmed.startsWith(prefix)) return prompt
+  return trimmed.slice(prefix.length).trimStart()
 }
 
 export function parseRatio(ratio: string) {
@@ -154,9 +189,56 @@ export function formatImageRatio(width: number, height: number) {
  * 在该预算内、满足所有 OpenAI 约束的前提下，选取总像素最大的候选尺寸。
  */
 const TIER_PIXEL_BUDGET: Record<SizeTier, number> = {
-  '1K': 1_572_864,   // 1024 × 1536
+  '1K': MAX_1K_PIXELS, // 1024 × 1536
   '2K': 4_194_304,   // 2048 × 2048
   '4K': MAX_PIXELS,  // 8_294_400
+}
+
+/**
+ * 常用比例优先使用官方示例或通用显示标准，避免按像素预算计算出不常见尺寸。
+ * 其中 21:9 的常见显示器尺寸会按 16 倍数约束做轻微规整。
+ */
+const COMMON_SIZE_PRESETS: Record<SizeTier, Record<PresetRatio, string>> = {
+  '1K': {
+    '1:1': '1024x1024',
+    '3:2': '1536x1024',
+    '2:3': '1024x1536',
+    '16:9': '1280x720',
+    '9:16': '720x1280',
+    '4:3': '1024x768',
+    '3:4': '768x1024',
+    '21:9': '1280x544',
+  },
+  '2K': {
+    '1:1': '2048x2048',
+    '3:2': '2160x1440',
+    '2:3': '1440x2160',
+    '16:9': '2560x1440',
+    '9:16': '1440x2560',
+    '4:3': '2048x1536',
+    '3:4': '1536x2048',
+    '21:9': '2560x1088',
+  },
+  '4K': {
+    '1:1': '2880x2880',
+    '3:2': '3456x2304',
+    '2:3': '2304x3456',
+    '16:9': '3840x2160',
+    '9:16': '2160x3840',
+    '4:3': '3200x2400',
+    '3:4': '2400x3200',
+    '21:9': '3840x1600',
+  },
+}
+
+function getPresetRatioKey(ratioWidth: number, ratioHeight: number): PresetRatio | null {
+  if (!Number.isInteger(ratioWidth) || !Number.isInteger(ratioHeight)) return null
+
+  const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b)
+  const divisor = gcd(ratioWidth, ratioHeight)
+  const key = `${ratioWidth / divisor}:${ratioHeight / divisor}`
+
+  return key in COMMON_SIZE_PRESETS['1K'] ? key as PresetRatio : null
 }
 
 const MAX_RATIO_ERROR = 0.01
@@ -166,6 +248,9 @@ export function calculateImageSize(tier: SizeTier, ratio: string) {
   if (!parsed) return null
 
   const { width: ratioWidth, height: ratioHeight } = parsed
+  const presetRatioKey = getPresetRatioKey(ratioWidth, ratioHeight)
+  if (presetRatioKey) return COMMON_SIZE_PRESETS[tier][presetRatioKey]
+
   const targetRatio = ratioWidth / ratioHeight
   const pixelBudget = TIER_PIXEL_BUDGET[tier]
 

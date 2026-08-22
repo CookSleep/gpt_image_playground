@@ -83,20 +83,6 @@ export function getParamDisplay(task: TaskRecord, paramKey: ParamKey, actualPara
   }
 }
 
-export function ParamValue({ task, paramKey, className = '', actualParams }: ParamValueProps) {
-  const { displayValue, isMismatch } = getParamDisplay(task, paramKey, actualParams)
-
-  if (isMismatch) {
-    return <ActualValueBadge value={displayValue} className={className} />
-  }
-
-  return (
-    <span className={`${className} bg-gray-100 text-gray-500 dark:bg-white/[0.04] dark:text-gray-400`}>
-      {displayValue}
-    </span>
-  )
-}
-
 export function DetailParamValue({ task, paramKey, className = '', actualParams }: ParamValueProps) {
   const { displayValue, isMismatch, requestedValue, isAutoResolved } = getParamDisplay(task, paramKey, actualParams)
 

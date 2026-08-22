@@ -1,0 +1,14 @@
+{
+  "customProviders": [],
+  "profiles": [
+    {
+      "id": "example-openai",
+      "name": "示例配置",
+      "provider": "openai",
+      "baseUrl": "https://api.example.com/v1",
+      "model": "gpt-image-2",
+      "apiMode": "images",
+      "isDefault": true
+    }
+  ]
+}

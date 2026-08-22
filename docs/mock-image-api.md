@@ -42,6 +42,19 @@ $env:MOCK_IMAGE_API_PORT="8788"; npm run mock:api
 - `http://127.0.0.1:8787/invalid-json`：API 返回非法 JSON。
 - `http://127.0.0.1:8787/slow`：API 延迟返回，可把配置里的超时时间调低来测试超时。
 - `http://127.0.0.1:8787/api-no-cors`：API 本身不返回 CORS 头，浏览器应在 API 请求阶段失败。
+- `http://127.0.0.1:8787/alternating-http-error`：每隔一次请求返回 HTTP 500，可配合多图并发测试“部分失败”。
+
+流式传输相关模式需要在配置里开启“流式传输”：
+
+- `http://127.0.0.1:8787/stream-unsupported`：流式请求返回 HTTP 400 文本错误，应提示关闭流式传输。
+- `http://127.0.0.1:8787/stream-invalid-json`：SSE `data:` 事件不是合法 JSON，应提示流式数据格式无法解析。
+- `http://127.0.0.1:8787/stream-no-data`：返回 `text/event-stream`，但没有有效 `data:` 事件。
+- `http://127.0.0.1:8787/stream-failed-event`：SSE 返回 `*.failed` 事件。
+- `http://127.0.0.1:8787/stream-error-object`：SSE 返回 `{ "error": { "message": ... } }`。
+- `http://127.0.0.1:8787/stream-no-final`：SSE 只返回中间图，不返回最终图片。
+- `http://127.0.0.1:8787/stream-no-usable`：SSE 返回完成事件，但没有可用图片数据。
+
+如果使用 `Responses API` 模式，同样可以使用上面的路径。`empty`、`no-recognizable`、`wrong-shape` 会返回无法提取图片的 Responses 结构。
 
 ## 自定义服务商配置
 
@@ -86,3 +99,56 @@ $env:MOCK_IMAGE_API_PORT="8788"; npm run mock:api
 - `mock:url-ok`：自定义服务商能提取 `data.url`，图片可下载，应该生成成功。
 - `mock:no-recognizable`：响应没有可提取图片，应显示“查看原始响应内容”。
 - `mock:http-error`：接口直接返回服务端错误。
+
+## 自定义异步服务商配置
+
+可以导入下面的自定义服务商，用于模拟提交后轮询的任务接口：
+
+```json
+{
+  "id": "mock-async-failure-api",
+  "name": "本地异步故障模拟",
+  "template": "http-image",
+  "submit": {
+    "path": "custom/async-submit",
+    "method": "POST",
+    "contentType": "json",
+    "body": {
+      "model": "$profile.model",
+      "prompt": "$prompt",
+      "size": "$params.size",
+      "quality": "$params.quality",
+      "n": "$params.n"
+    },
+    "taskIdPath": "data"
+  },
+  "poll": {
+    "path": "custom/tasks/{task_id}",
+    "method": "GET",
+    "intervalSeconds": 1,
+    "statusPath": "data.status",
+    "successValues": ["SUCCESS"],
+    "failureValues": ["FAILURE"],
+    "errorPath": "data.fail_reason",
+    "result": {
+      "imageUrlPaths": ["data.data.data.*.url"],
+      "b64JsonPaths": ["data.data.data.*.b64_json"]
+    }
+  }
+}
+```
+
+导入后创建 API 配置：
+
+- 服务商类型：`本地异步故障模拟`
+- API 地址：`http://127.0.0.1:8787`
+- API Key：任意非空字符串，例如 `mock`
+- 模型：可填 `mock:url-cors-block`、`mock:url-ok`、`mock:b64`、`mock:async-failure`、`mock:async-no-task-id` 或 `mock:async-empty`
+
+测试重点：
+
+- `mock:url-ok`：提交返回任务 ID，轮询成功并返回可下载图片。
+- `mock:b64`：提交返回任务 ID，轮询成功并返回 `b64_json`。
+- `mock:async-failure`：轮询返回失败状态，并从 `data.fail_reason` 取错误消息。
+- `mock:async-no-task-id`：提交成功但缺少任务 ID，应显示原始响应内容。
+- `mock:async-empty`：轮询成功但没有可提取图片，应显示原始响应内容。

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { ensureImageCached, useStore } from '../store'
+import { useStore } from '../store'
 import { canvasToBlob, loadImage } from '../lib/canvasImage'
+import { blobToDataUrl } from '../lib/dataUrl'
 import { storeImage } from '../lib/db'
+import { ensureImageCached } from '../lib/imageCache'
 import { prepareMaskTargetDataUrl, replaceMaskTargetImage } from '../lib/maskPreprocess'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
@@ -89,15 +91,6 @@ function drawMaskImageToCanvas(maskImage: HTMLImageElement, maskCanvas: HTMLCanv
   maskCtx.imageSmoothingEnabled = true
   maskCtx.imageSmoothingQuality = 'high'
   maskCtx.drawImage(maskImage, 0, 0, maskCanvas.width, maskCanvas.height)
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error ?? new Error('图片导出失败'))
-    reader.readAsDataURL(blob)
-  })
 }
 
 export default function MaskEditorModal() {
@@ -844,13 +837,13 @@ export default function MaskEditorModal() {
     <>
       <div data-no-drag-select className="fixed inset-0 z-[80] flex flex-col bg-gray-50 dark:bg-gray-900 animate-modal-in">
       {/* Header */}
-      <div className="flex-none flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950 z-20">
+      <div className="flex-none flex items-center justify-between px-4 py-3 sm:px-6 sm:py-3.5 border-b border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950 z-20">
         <div className="flex items-center gap-3">
-          <button onClick={close} disabled={isSaving} className="p-2 -ml-2 text-gray-500 hover:bg-gray-100 rounded-lg dark:text-gray-400 dark:hover:bg-gray-800 transition" title="取消">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
+          <button onClick={close} disabled={isSaving} className="p-2 sm:p-2.5 -ml-2 text-gray-500 hover:bg-gray-100 rounded-lg sm:rounded-xl dark:text-gray-400 dark:hover:bg-gray-800 transition" title="取消">
+            <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
-          <div className="relative flex items-center gap-1.5">
-            <h2 className="text-sm font-medium text-gray-700 dark:text-gray-200" id="mask-editor-title">编辑遮罩</h2>
+          <div className="relative flex items-center gap-1.5 sm:gap-2">
+            <h2 className="text-sm sm:text-base font-semibold text-gray-800 dark:text-gray-200" id="mask-editor-title">编辑遮罩</h2>
             <button
               type="button"
               onClick={showMaskInfoPopover}
@@ -859,15 +852,15 @@ export default function MaskEditorModal() {
               onTouchStart={startMaskInfoTouch}
               onTouchEnd={clearMaskInfoTimer}
               onTouchCancel={hideMaskInfoPopover}
-              className="flex h-6 w-6 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+              className="flex h-6 w-6 sm:h-7 sm:w-7 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-gray-300"
               aria-label="遮罩编辑说明"
             >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="h-4 w-4 sm:h-[18px] sm:w-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </button>
             {showMaskInfo && (
-              <div className="absolute left-0 top-full mt-2 w-64 rounded-xl border border-gray-200/80 bg-white px-3 py-2 text-xs leading-5 text-gray-600 shadow-lg dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-300">
+              <div className="absolute left-0 top-full mt-2 w-64 sm:w-72 rounded-xl border border-gray-200/80 bg-white px-3.5 py-2.5 text-xs sm:text-sm leading-5 sm:leading-6 text-gray-600 shadow-lg dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-300">
                 <div className="absolute -top-1.5 left-16 h-3 w-3 rotate-45 border-l border-t border-gray-200/80 bg-white dark:border-white/[0.08] dark:bg-gray-900" />
                 <p>根据官方文档说明，此功能仅基于提示词，无法完全控制模型编辑区域。</p>
                 <p className="mt-2">建议附加类似“只编辑遮罩区域”的提示词以提升模型指令遵循程度。</p>
@@ -875,13 +868,13 @@ export default function MaskEditorModal() {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 sm:gap-3">
           {maskDraft?.targetImageId === imageId && (
-            <button onClick={handleRemoveMask} className="flex h-8 items-center gap-1.5 px-4 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg transition">
+            <button onClick={handleRemoveMask} className="flex h-8 sm:h-[38px] items-center gap-1.5 px-3.5 sm:px-4 text-xs sm:text-sm font-medium rounded-xl bg-gray-100 dark:bg-white/[0.08] text-gray-700 dark:text-gray-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/20 dark:hover:text-red-400 transition">
               移除遮罩
             </button>
           )}
-          <button onClick={handleSave} disabled={!isReady || isSaving} className="flex h-8 items-center gap-1.5 px-4 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-lg disabled:opacity-50 transition">
+          <button onClick={handleSave} disabled={!isReady || isSaving} className="flex h-8 sm:h-[38px] items-center gap-1.5 px-4 sm:px-5 text-xs sm:text-sm font-medium rounded-xl text-white bg-blue-500 hover:bg-blue-600 active:bg-blue-700 shadow-sm transition disabled:opacity-50">
             {isSaving ? '保存中...' : '保存'}
           </button>
         </div>
@@ -964,7 +957,7 @@ export default function MaskEditorModal() {
                 <button
                   ref={brushSizeButtonRef}
                   onClick={toggleBrushControls}
-                  className={`flex items-center justify-center w-10 h-10 sm:w-[46px] sm:h-[46px] rounded-xl sm:rounded-[14px] transition-all border ${showBrushControls ? 'bg-blue-50 border-blue-200 text-blue-600 dark:bg-[#323338] dark:border-gray-600 dark:text-blue-400' : 'bg-white border-gray-200/80 text-gray-700 hover:bg-gray-50 dark:bg-transparent dark:border-[#323338] dark:text-[#e0e0e0] dark:hover:border-gray-500'}`}
+                  className={`flex items-center justify-center w-10 h-10 sm:w-[46px] sm:h-[46px] rounded-xl sm:rounded-[14px] transition-all border ${showBrushControls ? 'bg-blue-50 border-blue-200 text-blue-600 dark:bg-[#323338] dark:border-[#323338] dark:text-blue-400' : 'bg-white border-gray-200/80 text-gray-700 hover:bg-gray-50 dark:bg-transparent dark:border-[#323338] dark:text-[#e0e0e0] dark:hover:bg-white/[0.04] dark:hover:border-[#3a3b40]'}`}
                   disabled={!isReady || isSaving}
                   title="调节笔刷大小"
                 >
@@ -1009,8 +1002,30 @@ export default function MaskEditorModal() {
       {showBrushControls && sliderAnchor && createPortal(
         <div
           ref={brushSizePanelRef}
-          className="fixed z-[100] h-44 w-14 -translate-x-1/2 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700"
-          style={{ left: sliderAnchor.left, bottom: sliderAnchor.bottom }}
+          className="fixed z-[100] h-44 w-12 -translate-x-1/2 bg-white/95 dark:bg-[#28292d]/95 backdrop-blur-md rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-200/80 dark:border-white/[0.08] flex items-center justify-center pointer-events-auto select-none touch-none"
+          style={{ left: sliderAnchor.left, bottom: sliderAnchor.bottom + 8, touchAction: 'none' }}
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId)
+            const rect = e.currentTarget.getBoundingClientRect()
+            const py = 16
+            const usableHeight = rect.height - py * 2
+            const offsetY = e.clientY - rect.top - py
+            const ratio = Math.max(0, Math.min(1, 1 - offsetY / usableHeight))
+            const nextSize = Math.round(8 + ratio * (220 - 8))
+            setBrushSize(nextSize)
+            if (!isPointerOverCanvas && size) updateCursor(getViewportCenterCanvasPoint())
+          }}
+          onPointerMove={(e) => {
+            if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+            const rect = e.currentTarget.getBoundingClientRect()
+            const py = 16
+            const usableHeight = rect.height - py * 2
+            const offsetY = e.clientY - rect.top - py
+            const ratio = Math.max(0, Math.min(1, 1 - offsetY / usableHeight))
+            const nextSize = Math.round(8 + ratio * (220 - 8))
+            setBrushSize(nextSize)
+            if (!isPointerOverCanvas && size) updateCursor(getViewportCenterCanvasPoint())
+          }}
         >
           <input
             type="range"
@@ -1022,7 +1037,7 @@ export default function MaskEditorModal() {
               setBrushSize(nextSize)
               if (!isPointerOverCanvas && size) updateCursor(getViewportCenterCanvasPoint())
             }}
-            className="absolute left-1/2 top-1/2 h-5 w-32 -translate-x-1/2 -translate-y-1/2 -rotate-90 accent-blue-500 cursor-ns-resize"
+            className="w-32 h-1.5 -rotate-90 bg-gray-200 dark:bg-black/30 rounded-full appearance-none outline-none cursor-ns-resize pointer-events-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:shadow-md"
             disabled={!isReady || isSaving}
           />
         </div>,

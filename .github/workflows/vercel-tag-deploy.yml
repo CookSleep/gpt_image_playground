@@ -1,24 +1,55 @@
-name: Trigger Vercel Deploy Hook
+name: Trigger Vercel Release Deploy
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+    paths:
+      - package.json
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
     steps:
-      - name: Call Vercel Deploy Hook
-        if: ${{ env.VERCEL_DEPLOY_HOOK != '' }}
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check release version
+        id: release
         env:
-          VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+          BEFORE_SHA: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          version=$(jq -r .version package.json)
+          previous_version=$(git show "$BEFORE_SHA:package.json" 2>/dev/null | jq -r .version || true)
+          if [[ -n "$previous_version" && "$version" == "$previous_version" ]]; then
+            echo "Package version did not change. Skipping Vercel deployment."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if gh api --silent "repos/CookSleep/gpt_image_playground/releases/tags/v$version"; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Upstream release v$version does not exist. Skipping Vercel deployment."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Call Vercel Deploy Hook
+        if: ${{ steps.release.outputs.deploy == 'true' && env.VERCEL_DEPLOY_HOOK != '' }}
         run: |
           curl -X POST "$VERCEL_DEPLOY_HOOK"
           echo "Vercel deploy hook triggered."
       - name: Skip if Hook URL is missing
-        if: ${{ env.VERCEL_DEPLOY_HOOK == '' }}
-        env:
-          VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        if: ${{ steps.release.outputs.deploy == 'true' && env.VERCEL_DEPLOY_HOOK == '' }}
         run: |
           echo "VERCEL_DEPLOY_HOOK secret is not set. Skipping Vercel deployment."

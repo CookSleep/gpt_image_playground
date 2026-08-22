@@ -1,0 +1,61 @@
+name: 功能建议
+description: 提出新功能、改进或体验优化建议
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **警告：** 删除以下内容会导致 Issue 被直接关闭。
+
+        感谢你的建议。请尽量描述使用场景、预期效果和可能的替代方案，以便评估是否适合纳入本项目。
+
+        > **注意：** 如果你的建议本质上是要求兼容反代或中转项目的非标准响应格式，请先向对应项目反馈并要求其遵循官方 API 格式。你也可以参考对应项目的 API 文档，尝试生成自定义服务商配置，具体操作方式见 README。本项目没有义务为各种非标准格式做无尽的兼容兜底。
+
+        > **关于响应时间：** 项目维护者精力有限，不能保证始终按预期效率修复问题或完成优化，敬请理解。
+
+        > **关于第三方服务商配置：** 本项目暂无计划在项目内内置第三方服务商配置。建议第三方服务商自行生成自定义服务商配置 URL，并放在 New API 聊天系统、文档等处供用户一键导入。你也可以自行部署并修改默认配置，或 Fork 本项目进行修改，请遵循 MIT 协议。
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issue，确认没有重复建议。
+          required: true
+        - label: 我确认这是本项目范围内的功能建议，而非要求兼容非官方 API 的异常格式。
+          required: true
+        - label: 我理解项目维护者精力有限，不能保证始终按预期效率完成优化。
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景 / 想解决的问题
+      description: 这个功能想解决什么问题？请描述具体的使用场景。
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: 期望的解决方案
+      description: 你希望项目如何实现或呈现这个功能？
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 替代方案
+      description: 你是否尝试过其他方案？为什么现有方案不够好？
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 可以补充截图、参考链接、相关项目或其他说明。
+    validations:
+      required: false

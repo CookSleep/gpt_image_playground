@@ -1,11 +1,12 @@
 import { useEffect, useState, useRef, type ReactNode } from 'react'
 import type { TaskRecord } from '../types'
-import { useStore, ensureImageThumbnailCached, subscribeImageThumbnail, updateTaskInStore, retryTask } from '../store'
+import { useStore, retryTask } from '../store'
+import { ensureImageThumbnailCached, subscribeImageThumbnail } from '../lib/imageCache'
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
-import { CodeIcon } from './icons'
+import { CodeIcon, TransparentBgIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 
 interface Props {
@@ -77,6 +78,7 @@ export default function TaskCard({
   const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
   const toggleTaskSelection = useStore((s) => s.toggleTaskSelection)
   const settings = useStore((s) => s.settings)
+  const openFavoritePicker = useStore((s) => s.openFavoritePicker)
   const streamPreviewSrc = useStore((s) => s.streamPreviews[task.id] || '')
   const touchStartRef = useRef<{ x: number; y: number } | null>(null)
   const swipeResetTimerRef = useRef<number | null>(null)
@@ -310,11 +312,16 @@ export default function TaskCard({
 
   const formatDisplay = getParamDisplay(task, 'output_format')
   const showFormat = task.params.output_format !== 'png' || formatDisplay.isMismatch
+  const showTransparentOutput = task.transparentOutput || task.params.transparent_output
 
   const nDisplay = getParamDisplay(task, 'n')
   const isAgentTask = task.sourceMode === 'agent' || Boolean(task.agentConversationId || task.agentRoundId)
   const showPendingPrompt = isAgentTaskPromptPending(task)
   const showN = !isAgentTask && (task.params.n > 1 || nDisplay.isMismatch)
+  const outputErrorCount = task.outputErrors?.length ?? 0
+  const outputSuccessCount = task.outputImages?.length ?? 0
+  const requestedOutputCount = Math.max(task.params.n, outputSuccessCount + outputErrorCount)
+  const hasPartialOutputFailure = task.status === 'done' && outputErrorCount > 0
 
   const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : DEFAULT_IMAGES_MODEL
   const showModel = task.apiModel && task.apiModel !== defaultModelForProvider
@@ -485,9 +492,9 @@ export default function TaskCard({
                 loading="lazy"
                 alt=""
               />
-              {task.outputImages.length > 1 && (
+              {(hasPartialOutputFailure || task.outputImages.length > 1) && (
                 <span className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1.5 py-0.5 rounded">
-                  {task.outputImages.length}
+                  {hasPartialOutputFailure ? <>{requestedOutputCount} | <span className="font-semibold text-yellow-300">{outputSuccessCount}</span></> : task.outputImages.length}
                 </span>
               )}
             </>
@@ -588,6 +595,13 @@ export default function TaskCard({
                   局部重绘
                 </span>
               )}
+              {/* Transparent background */}
+              {showTransparentOutput && (
+                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs flex-shrink-0">
+                  <TransparentBgIcon className="w-3 h-3 flex-shrink-0" />
+                  透明背景
+                </span>
+              )}
               {/* Params: only show if not default or mismatch */}
               {showQuality && (
                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
@@ -636,10 +650,8 @@ export default function TaskCard({
                 </TaskActionButton>
               )}
               <TaskActionButton
-                tooltip={task.isFavorite ? '取消收藏' : '收藏记录'}
-                onClick={() =>
-                  updateTaskInStore(task.id, { isFavorite: !task.isFavorite })
-                }
+                tooltip={task.isFavorite ? '编辑收藏夹' : '收藏任务'}
+                onClick={() => openFavoritePicker([task.id])}
                 className={`p-1.5 rounded-md transition ${
                   task.isFavorite
                     ? 'text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-500/10'
@@ -700,7 +712,7 @@ export default function TaskCard({
                 </svg>
               </TaskActionButton>
               <TaskActionButton
-                tooltip="删除记录"
+                tooltip="删除任务"
                 onClick={onDelete}
                 className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-950/30 text-gray-400 hover:text-red-500 transition"
               >

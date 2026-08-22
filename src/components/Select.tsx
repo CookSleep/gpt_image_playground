@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
+import { DEFAULT_DROPDOWN_MAX_HEIGHT } from '../lib/dropdown'
 import { ChevronDownIcon, EditIcon, PlusIcon, TrashIcon, DragHandleIcon } from './icons'
+import ViewportTooltip from './ViewportTooltip'
+import { useTooltip } from '../hooks/useTooltip'
 
 interface Option {
   label: string
@@ -22,9 +24,11 @@ interface SelectProps {
   options: Option[]
   disabled?: boolean
   className?: string
+  onOpenChange?: (isOpen: boolean) => void
+  showValueTooltips?: boolean
 }
 
-export default function Select({ value, onChange, onReorder, options, disabled, className }: SelectProps) {
+export default function Select({ value, onChange, onReorder, options, disabled, className, onOpenChange, showValueTooltips = false }: SelectProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [menuMaxHeight, setMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [placement, setPlacement] = useState<'bottom' | 'top'>('bottom')
@@ -45,13 +49,35 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
   const containerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLDivElement>(null)
 
+  const triggerTooltip = useTooltip()
+  const [hoveredOptionTooltip, setHoveredOptionTooltip] = useState<string | number | null>(null)
+  const optionTooltipTimerRef = useRef<number | null>(null)
+  const optionLongPressTriggeredRef = useRef(false)
+
+  const clearOptionTooltipTimer = () => {
+    if (optionTooltipTimerRef.current) {
+      window.clearTimeout(optionTooltipTimerRef.current)
+      optionTooltipTimerRef.current = null
+    }
+  }
+
   const selectedOption = options.find((o) => o.value === value)
 
   useEffect(() => {
     return () => {
       if (dragScrollIntervalRef.current) clearInterval(dragScrollIntervalRef.current)
+      clearOptionTooltipTimer()
     }
   }, [])
+
+  useEffect(() => {
+    onOpenChange?.(isOpen)
+    if (!isOpen) {
+      clearOptionTooltipTimer()
+      setHoveredOptionTooltip(null)
+      optionLongPressTriggeredRef.current = false
+    }
+  }, [isOpen, onOpenChange])
 
   useEffect(() => {
     if (!touchDragPreview) return
@@ -144,6 +170,8 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
     setDraggedValue(null)
     setDragOverValue(null)
     setDragDropPosition(null)
+    clearOptionTooltipTimer()
+    optionLongPressTriggeredRef.current = false
     if (dragScrollIntervalRef.current) {
       clearInterval(dragScrollIntervalRef.current)
       dragScrollIntervalRef.current = null
@@ -154,13 +182,23 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
     <div ref={containerRef} className="relative w-full">
       <div
         ref={triggerRef}
-        onClick={handleToggle}
+        {...(showValueTooltips ? triggerTooltip.handlers : {})}
+        onClick={(e) => {
+          if (showValueTooltips) triggerTooltip.handlers.onClick?.()
+          handleToggle(e)
+          triggerTooltip.dismiss()
+        }}
         className={`flex items-center justify-between gap-1 w-full cursor-pointer select-none ${className ?? ''} ${
           disabled ? '!opacity-50 !cursor-not-allowed !bg-gray-100/50 dark:!bg-white/[0.05]' : ''
         }`}
       >
         <span className="truncate">{selectedOption?.label ?? value}</span>
         <ChevronDownIcon className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        {showValueTooltips && (
+          <ViewportTooltip visible={triggerTooltip.visible} className="max-w-[300px] break-words whitespace-pre-wrap">
+            {selectedOption?.label ?? value}
+          </ViewportTooltip>
+        )}
       </div>
 
       {isOpen && (
@@ -227,9 +265,27 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
                 }
               }}
               onTouchStart={(e) => {
-                if (!option.draggable) return
+                if (!option.draggable) {
+                  if (!showValueTooltips) return
+                  clearOptionTooltipTimer()
+                  optionLongPressTriggeredRef.current = false
+                  optionTooltipTimerRef.current = window.setTimeout(() => {
+                    optionLongPressTriggeredRef.current = true
+                    setHoveredOptionTooltip(option.value)
+                  }, 500)
+                  return
+                }
                 const target = e.target as HTMLElement
-                if (!target.closest('[data-drag-handle]')) return
+                if (!target.closest('[data-drag-handle]')) {
+                  if (!showValueTooltips) return
+                  clearOptionTooltipTimer()
+                  optionLongPressTriggeredRef.current = false
+                  optionTooltipTimerRef.current = window.setTimeout(() => {
+                    optionLongPressTriggeredRef.current = true
+                    setHoveredOptionTooltip(option.value)
+                  }, 500)
+                  return
+                }
 
                 const touch = e.touches[0]
                 const rect = e.currentTarget.getBoundingClientRect()
@@ -249,6 +305,7 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
                 })
               }}
               onTouchMove={(e) => {
+                clearOptionTooltipTimer()
                 const drag = touchDragRef.current
                 if (!drag || !option.draggable) return
                 const touch = e.touches[0]
@@ -307,6 +364,11 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
                 }
               }}
               onTouchEnd={(e) => {
+                clearOptionTooltipTimer()
+                if (optionLongPressTriggeredRef.current) {
+                  if (e.cancelable) e.preventDefault()
+                }
+                optionLongPressTriggeredRef.current = false
                 const drag = touchDragRef.current
                 if (!drag || !drag.moved) {
                   clearTouchDrag()
@@ -327,6 +389,18 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
                 e.preventDefault()
                 onChange(option.value)
                 setIsOpen(false)
+                clearOptionTooltipTimer()
+                setHoveredOptionTooltip(null)
+              }}
+              onMouseEnter={() => showValueTooltips && setHoveredOptionTooltip(option.value)}
+              onMouseLeave={() => {
+                clearOptionTooltipTimer()
+                setHoveredOptionTooltip(null)
+              }}
+              onFocus={() => showValueTooltips && setHoveredOptionTooltip(option.value)}
+              onBlur={() => {
+                clearOptionTooltipTimer()
+                setHoveredOptionTooltip(null)
               }}
               className={`relative flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-xs transition-colors ${
                 draggedValue === option.value
@@ -345,6 +419,11 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
               )}
               {dragOverValue === option.value && dragDropPosition === 'after' && draggedValue !== option.value && (
                 <div className="absolute -bottom-[1px] left-0 right-0 h-[2px] bg-blue-500 rounded-full z-40 shadow-sm pointer-events-none" />
+              )}
+              {showValueTooltips && hoveredOptionTooltip === option.value && (
+                <ViewportTooltip visible={true} className="max-w-[300px] break-words whitespace-pre-wrap">
+                  {option.label}
+                </ViewportTooltip>
               )}
               <div className="flex min-w-0 flex-1 items-center gap-2 pr-2">
                 {option.draggable && (

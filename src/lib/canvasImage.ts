@@ -1,10 +1,5 @@
 import { assertUsableMaskCoverage, classifyMaskAlpha, type MaskCoverage } from './mask'
 
-export interface ImageDimensions {
-  width: number
-  height: number
-}
-
 export async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image()
@@ -12,11 +7,6 @@ export async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
     image.onerror = () => reject(new Error('图片加载失败'))
     image.src = dataUrl
   })
-}
-
-export async function getImageDimensions(dataUrl: string): Promise<ImageDimensions> {
-  const image = await loadImage(dataUrl)
-  return { width: image.naturalWidth, height: image.naturalHeight }
 }
 
 export async function dataUrlToBlob(dataUrl: string, fallbackType = 'image/png'): Promise<Blob> {

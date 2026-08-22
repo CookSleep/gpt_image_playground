@@ -1,6 +1,8 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
-import { readFileSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
+import { resolve } from 'path'
+import { fileURLToPath } from 'url'
 import { normalizeDevProxyConfig } from './src/lib/devProxy'
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
@@ -17,7 +19,32 @@ function loadDevProxyConfig() {
   }
 }
 
-export default defineConfig(({ command }) => {
+async function embedDefaultConfig(value: string) {
+  const source = value.trim()
+  if (!source) return source
+
+  if (/^https?:\/\//i.test(source)) {
+    const url = new URL(source)
+    if (!url.pathname.toLowerCase().endsWith('.json')) return source
+
+    const response = await fetch(source)
+    if (!response.ok) throw new Error(`预置配置请求失败：HTTP ${response.status}`)
+    return `embedded-config:${Buffer.from(await response.text()).toString('base64')}`
+  }
+
+  const fileUrl = source.startsWith('file://')
+  const path = fileUrl ? fileURLToPath(source) : resolve(source)
+  if (!existsSync(path)) {
+    if (fileUrl || source.toLowerCase().endsWith('.json')) throw new Error(`预置配置文件不存在：${path}`)
+    return source
+  }
+  return `embedded-config:${Buffer.from(readFileSync(path)).toString('base64')}`
+}
+
+export default defineConfig(async ({ command, mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const defaultApiUrl = await embedDefaultConfig(process.env.VITE_DEFAULT_API_URL ?? env.VITE_DEFAULT_API_URL ?? '')
+  if (defaultApiUrl.startsWith('embedded-config:')) process.env.VITE_DEFAULT_API_URL = defaultApiUrl
   const devProxyConfig = command === 'serve' ? loadDevProxyConfig() : null
 
   return {

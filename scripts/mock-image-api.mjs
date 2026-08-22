@@ -9,18 +9,28 @@ const tinyPng = Buffer.from(tinyPngBase64, 'base64')
 
 const pathModes = new Set([
   'api-no-cors',
+  'alternating-http-error',
   'b64',
   'empty',
   'http-error',
   'invalid-json',
   'no-recognizable',
   'slow',
+  'stream-error-object',
+  'stream-failed-event',
+  'stream-invalid-json',
+  'stream-no-data',
+  'stream-no-final',
+  'stream-no-usable',
+  'stream-unsupported',
   'url-404',
   'url-cors-block',
   'url-ok',
   'url-redirect-cors-block',
   'wrong-shape',
 ])
+
+const alternatingModeCounters = new Map()
 
 function appendCors(headers, enabled = true) {
   if (!enabled) return headers
@@ -55,6 +65,14 @@ async function sendSse(res, events, options = {}) {
   }
   res.write('data: [DONE]\n\n')
   res.end()
+}
+
+function sendRawSse(res, body, options = {}) {
+  send(res, 200, appendCors({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store',
+    Connection: 'keep-alive',
+  }, options.cors !== false), body)
 }
 
 function readBody(req) {
@@ -99,6 +117,13 @@ function getRequestedN(url, body) {
   const raw = url.searchParams.get('n') ?? (body && typeof body === 'object' ? body.n : undefined)
   const n = Number(raw)
   return Number.isFinite(n) ? Math.max(1, Math.min(10, Math.floor(n))) : 1
+}
+
+function shouldFailAlternating(mode, pathname) {
+  if (mode !== 'alternating-http-error') return false
+  const next = (alternatingModeCounters.get(pathname) || 0) + 1
+  alternatingModeCounters.set(pathname, next)
+  return next % 2 === 0
 }
 
 function getBaseUrl(req) {
@@ -163,6 +188,14 @@ function isCustomPath(pathname) {
   return pathname === '/custom/random-image' || pathname === '/custom/generate'
 }
 
+function isCustomAsyncSubmitPath(pathname) {
+  return pathname === '/custom/async-submit'
+}
+
+function isCustomAsyncPollPath(pathname) {
+  return pathname.startsWith('/custom/tasks/')
+}
+
 function createImagesStreamEvents(req, mode, n, isEdit) {
   const created = Math.floor(Date.now() / 1000)
   const prefix = isEdit ? 'image_edit' : 'image_generation'
@@ -184,7 +217,51 @@ function createImagesStreamEvents(req, mode, n, isEdit) {
     quality: 'auto',
     size: '1024x1024',
   }))
+  if (mode === 'stream-no-final') return partials
+  if (mode === 'stream-no-usable') {
+    return [{
+      type: `${prefix}.completed`,
+      created_at: created,
+      output_format: 'png',
+      quality: 'auto',
+      size: '1024x1024',
+    }]
+  }
   return [...partials, ...completed]
+}
+
+function createResponsesPayload(mode) {
+  if (mode === 'empty') return { output: [] }
+  if (mode === 'no-recognizable' || mode === 'wrong-shape') {
+    return {
+      output: [{
+        type: 'message',
+        status: 'completed',
+        content: [{ type: 'output_text', text: 'mock response without image data' }],
+      }],
+    }
+  }
+  if (mode === 'stream-no-usable') {
+    return {
+      output: [{
+        type: 'image_generation_call',
+        status: 'completed',
+        result: '',
+      }],
+    }
+  }
+
+  return {
+    output: [{
+      type: 'image_generation_call',
+      status: 'completed',
+      revised_prompt: `mock ${mode} response image`,
+      result: tinyPngBase64,
+      output_format: 'png',
+      quality: 'auto',
+      size: '1024x1024',
+    }],
+  }
 }
 
 function createResponsesStreamEvents(mode) {
@@ -198,23 +275,39 @@ function createResponsesStreamEvents(mode) {
         partial_image_b64: tinyPngBase64,
       }))
 
+  if (mode === 'stream-no-final') return partials
+
   return [
     ...partials,
     {
       type: 'response.completed',
-      response: {
-        output: mode === 'empty' ? [] : [{
-          type: 'image_generation_call',
-          status: 'completed',
-          revised_prompt: `mock ${mode} response image`,
-          result: tinyPngBase64,
-          output_format: 'png',
-          quality: 'auto',
-          size: '1024x1024',
-        }],
-      },
+      response: createResponsesPayload(mode),
     },
   ]
+}
+
+async function maybeSendStreamFailure(res, mode, prefix = 'image_generation') {
+  if (mode === 'stream-unsupported') {
+    send(res, 400, appendCors({ 'Content-Type': 'text/plain; charset=utf-8' }), 'invalid character \':\' looking for beginning of value')
+    return true
+  }
+  if (mode === 'stream-invalid-json') {
+    sendRawSse(res, 'data: invalid character \':\' looking for beginning of value\n\n')
+    return true
+  }
+  if (mode === 'stream-no-data') {
+    sendRawSse(res, 'invalid character \':\' looking for beginning of value\n\n')
+    return true
+  }
+  if (mode === 'stream-failed-event') {
+    await sendSse(res, [{ type: `${prefix}.failed`, message: 'Mock streaming failure event' }])
+    return true
+  }
+  if (mode === 'stream-error-object') {
+    await sendSse(res, [{ error: { message: 'Mock streaming error object' } }])
+    return true
+  }
+  return false
 }
 
 async function handleApi(req, res, url) {
@@ -232,6 +325,11 @@ async function handleApi(req, res, url) {
     return
   }
 
+  if (shouldFailAlternating(mode, url.pathname)) {
+    sendJson(res, 500, { error: { message: 'Mock alternating HTTP failure' } })
+    return
+  }
+
   if (mode === 'http-error') {
     sendJson(res, 500, { error: { message: 'Mock HTTP failure from local test API' } })
     return
@@ -245,6 +343,8 @@ async function handleApi(req, res, url) {
   const wantsStream = (body.json && typeof body.json === 'object' && body.json.stream === true) ||
     /name="stream"[\s\S]*?\r?\n\r?\ntrue/.test(body.text)
   if (wantsStream) {
+    const streamPrefix = url.pathname.endsWith('/v1/images/edits') ? 'image_edit' : 'image_generation'
+    if (await maybeSendStreamFailure(res, mode, streamPrefix)) return
     await sendSse(res, createImagesStreamEvents(req, mode, n, url.pathname.endsWith('/v1/images/edits')))
     return
   }
@@ -256,14 +356,23 @@ async function handleResponses(req, res, url) {
   const body = req.method === 'GET' ? { json: null } : await readBody(req)
   const mode = getMode(url, body.json)
 
+  if (shouldFailAlternating(mode, url.pathname)) {
+    sendJson(res, 500, { error: { message: 'Mock alternating HTTP failure' } })
+    return
+  }
+
+  if (mode === 'http-error') {
+    sendJson(res, 500, { error: { message: 'Mock Responses API failure' } })
+    return
+  }
+
   if (body.json && typeof body.json === 'object' && body.json.stream === true) {
+    if (await maybeSendStreamFailure(res, mode, 'response')) return
     await sendSse(res, createResponsesStreamEvents(mode))
     return
   }
 
-  sendJson(res, 200, {
-    output: createResponsesStreamEvents(mode).at(-1)?.response?.output ?? [],
-  })
+  sendJson(res, 200, createResponsesPayload(mode))
 }
 
 async function handleCustom(req, res, url) {
@@ -273,6 +382,11 @@ async function handleCustom(req, res, url) {
 
   if (mode === 'http-error') {
     sendJson(res, 500, { error: { message: 'Mock custom provider failure' } })
+    return
+  }
+
+  if (shouldFailAlternating(mode, url.pathname)) {
+    sendJson(res, 500, { error: { message: 'Mock alternating custom provider failure' } })
     return
   }
 
@@ -292,6 +406,48 @@ async function handleCustom(req, res, url) {
   }
 
   sendJson(res, 200, createRandomShape(req, mode === 'url-ok' || mode === 'b64'))
+}
+
+async function handleCustomAsyncSubmit(req, res, url) {
+  const body = req.method === 'GET' ? { json: null } : await readBody(req)
+  const mode = getMode(url, body.json)
+
+  if (mode === 'http-error') {
+    sendJson(res, 500, { error: { message: 'Mock async submit failure' } })
+    return
+  }
+
+  if (mode === 'async-no-task-id') {
+    sendJson(res, 200, { status: 'success', data: { message: 'task id intentionally omitted' } })
+    return
+  }
+
+  sendJson(res, 200, { data: `mock:${mode}:${Date.now()}` })
+}
+
+function getModeFromCustomTaskPath(pathname) {
+  const taskId = decodeURIComponent(pathname.split('/').filter(Boolean).at(-1) || '')
+  const match = taskId.match(/^mock:(.+):\d+$/)
+  return match ? match[1] : defaultMode
+}
+
+function handleCustomAsyncPoll(req, res, url) {
+  const mode = getModeFromCustomTaskPath(url.pathname)
+
+  if (mode === 'async-failure') {
+    sendJson(res, 200, { data: { status: 'FAILURE', fail_reason: 'Mock async task failure' } })
+    return
+  }
+
+  if (mode === 'async-empty' || mode === 'async-no-recognizable' || mode === 'no-recognizable') {
+    sendJson(res, 200, { data: { status: 'SUCCESS', data: { data: [{ id: 42, name: 'example.jpg', mime: 'image/png' }] } } })
+    return
+  }
+
+  const image = mode === 'b64'
+    ? { b64_json: tinyPngBase64 }
+    : { url: getImageUrl(req, mode === 'url-ok', 0) }
+  sendJson(res, 200, { data: { status: 'SUCCESS', data: { data: [image] } } })
 }
 
 function handleImage(req, res, url) {
@@ -331,6 +487,7 @@ function handleIndex(req, res) {
       `${getBaseUrl(req)}/api-no-cors`,
     ],
     customEndpoint: `${getBaseUrl(req)}/custom/random-image`,
+    customAsyncEndpoint: `${getBaseUrl(req)}/custom/async-submit`,
     modes: [...pathModes].sort(),
   }, { pretty: true })
 }
@@ -361,6 +518,16 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
+    if (isCustomAsyncSubmitPath(url.pathname)) {
+      await handleCustomAsyncSubmit(req, res, url)
+      return
+    }
+
+    if (isCustomAsyncPollPath(url.pathname)) {
+      handleCustomAsyncPoll(req, res, url)
+      return
+    }
+
     if (url.pathname.startsWith('/images/')) {
       handleImage(req, res, url)
       return
@@ -376,4 +543,5 @@ server.listen(port, host, () => {
   console.log(`Mock image API listening at http://${host}:${port}`)
   console.log(`OpenAI-compatible CORS image failure: http://${host}:${port}/url-cors-block`)
   console.log(`Custom non-OpenAI JSON endpoint: http://${host}:${port}/custom/random-image`)
+  console.log(`Custom async JSON endpoint: http://${host}:${port}/custom/async-submit`)
 })

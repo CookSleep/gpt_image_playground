@@ -6,6 +6,7 @@ import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 
 interface HelpModalProps {
   appMode: AppMode
+  isFavoriteCollectionOverview?: boolean
   onClose: () => void
 }
 
@@ -19,7 +20,7 @@ function useIsMobile() {
   return isMobile
 }
 
-export default function HelpModal({ appMode, onClose }: HelpModalProps) {
+export default function HelpModal({ appMode, isFavoriteCollectionOverview = false, onClose }: HelpModalProps) {
   const isMobile = useIsMobile()
   const modalRef = useRef<HTMLDivElement>(null)
   const isAgentMode = appMode === 'agent'
@@ -70,22 +71,31 @@ export default function HelpModal({ appMode, onClose }: HelpModalProps) {
                     <li>如需 Agent 搜索互联网或读取 URL 内容，可在设置的 Agent 配置中开启“网络搜索”。</li>
                     <li>输入 <strong className="text-blue-500 dark:text-blue-400 font-medium">@</strong> 可引用参考图或前面轮次生成的图片；Agent 也会自行参考上下文中的图片。</li>
                     <li>编辑某轮消息重新发送，或重新生成某轮消息，会产生可切换的分支。</li>
-                    <li>生成的图片会同步到画廊；删除对话默认不会删除画廊中的记录。</li>
+                    <li>生成的图片会同步到画廊；删除对话默认不会删除画廊中的任务。</li>
                   </ul>
                 </div>
               </section>
             </>
-          ) : isMobile ? (
+          ) : isFavoriteCollectionOverview ? (
             <>
               <section>
                 <h4 className="mb-4 text-sm font-medium text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
                   <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
                   </svg>
-                  多选记录
+                  多选收藏夹
                 </h4>
                 <div className="space-y-4">
-                  <p>在历史记录卡片上<strong className="text-blue-500 dark:text-blue-400 font-medium">左右滑动</strong>即可选中或取消选中该卡片。</p>
+                  {isMobile ? (
+                    <p>在收藏夹卡片上<strong className="text-blue-500 dark:text-blue-400 font-medium">左右滑动</strong>即可选中或取消选中该卡片。</p>
+                  ) : (
+                    <ul className="list-disc pl-4 space-y-2">
+                      <li>使用鼠标在空白处<strong className="text-blue-500 dark:text-blue-400 font-medium">拖拽框选</strong>收藏夹卡片。</li>
+                      <li>按住 <kbd className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-xs font-sans">Ctrl</kbd> 或 <kbd className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-xs font-sans">⌘</kbd> 并点击卡片，可添加或移除单项。</li>
+                      <li>再次框选已选中的卡片会将其取消选中。</li>
+                      <li>点击卡片外任意空白处可取消所有选择。</li>
+                    </ul>
+                  )}
                 </div>
               </section>
               <section>
@@ -96,7 +106,32 @@ export default function HelpModal({ appMode, onClose }: HelpModalProps) {
                   批量操作
                 </h4>
                 <div className="space-y-4">
-                  <p>选中一条或多条记录后，页面底部会出现操作栏，支持<strong className="text-gray-500 dark:text-gray-400 font-medium">取消选择</strong>、<strong className="text-blue-500 dark:text-blue-400 font-medium">全选当前可见记录</strong>、<strong className="text-yellow-500 dark:text-yellow-400 font-medium">批量收藏</strong>、<strong className="text-green-500 dark:text-green-400 font-medium">批量下载</strong>，和<strong className="text-red-500 dark:text-red-400 font-medium">批量删除</strong>。</p>
+                  <p>选中一个或多个收藏夹后，页面底部会出现操作栏，支持<strong className="text-gray-500 dark:text-gray-400 font-medium">取消选择</strong>、<strong className="text-blue-500 dark:text-blue-400 font-medium">全选收藏夹</strong>、<strong className="text-purple-500 dark:text-purple-400 font-medium">反选收藏夹</strong>、<strong className="text-green-500 dark:text-green-400 font-medium">下载选中</strong>，和<strong className="text-red-500 dark:text-red-400 font-medium">删除选中</strong>。</p>
+                </div>
+              </section>
+            </>
+          ) : isMobile ? (
+            <>
+              <section>
+                <h4 className="mb-4 text-sm font-medium text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+                  <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+                  </svg>
+                  多选任务
+                </h4>
+                <div className="space-y-4">
+                  <p>在历史任务卡片上<strong className="text-blue-500 dark:text-blue-400 font-medium">左右滑动</strong>即可选中或取消选中该卡片。</p>
+                </div>
+              </section>
+              <section>
+                <h4 className="mb-4 text-sm font-medium text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+                  <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  批量操作
+                </h4>
+                <div className="space-y-4">
+                  <p>选中一个或多个任务后，页面底部会出现操作栏，支持<strong className="text-gray-500 dark:text-gray-400 font-medium">取消选择</strong>、<strong className="text-blue-500 dark:text-blue-400 font-medium">全选任务</strong>、<strong className="text-purple-500 dark:text-purple-400 font-medium">反选任务</strong>、<strong className="text-yellow-500 dark:text-yellow-400 font-medium">编辑收藏夹</strong>、<strong className="text-green-500 dark:text-green-400 font-medium">下载选中</strong>，和<strong className="text-red-500 dark:text-red-400 font-medium">删除选中</strong>。</p>
                 </div>
               </section>
             </>
@@ -107,7 +142,7 @@ export default function HelpModal({ appMode, onClose }: HelpModalProps) {
                   <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
                   </svg>
-                  多选记录
+                  多选任务
                 </h4>
                 <div className="space-y-4">
                   <ul className="list-disc pl-4 space-y-2">
@@ -126,7 +161,7 @@ export default function HelpModal({ appMode, onClose }: HelpModalProps) {
                   批量操作
                 </h4>
                 <div className="space-y-4">
-                  <p>选中一条或多条记录后，页面底部会出现操作栏，支持<strong className="text-gray-500 dark:text-gray-400 font-medium">取消选择</strong>、<strong className="text-blue-500 dark:text-blue-400 font-medium">全选当前可见记录</strong>、<strong className="text-yellow-500 dark:text-yellow-400 font-medium">批量收藏</strong>、<strong className="text-green-500 dark:text-green-400 font-medium">批量下载</strong>，和<strong className="text-red-500 dark:text-red-400 font-medium">批量删除</strong>。</p>
+                  <p>选中一个或多个任务后，页面底部会出现操作栏，支持<strong className="text-gray-500 dark:text-gray-400 font-medium">取消选择</strong>、<strong className="text-blue-500 dark:text-blue-400 font-medium">全选任务</strong>、<strong className="text-purple-500 dark:text-purple-400 font-medium">反选任务</strong>、<strong className="text-yellow-500 dark:text-yellow-400 font-medium">编辑收藏夹</strong>、<strong className="text-green-500 dark:text-green-400 font-medium">下载选中</strong>，和<strong className="text-red-500 dark:text-red-400 font-medium">删除选中</strong>。</p>
                 </div>
               </section>
             </>

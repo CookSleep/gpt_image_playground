@@ -1,0 +1,137 @@
+name: Bug 反馈
+description: 报告本项目自身可复现的 Bug
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **警告：** 删除以下内容会导致 Issue 被直接关闭。
+
+        感谢你的反馈。在提交之前，请先确认问题确实由本项目引起，而非以下已知的上游或第三方问题：
+
+        ---
+
+        **以下情况不属于本项目的支持范围，请向对应项目或服务商反馈：**
+
+        1. [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) 的 Image API 存在跨域限制问题，请直接向该项目反馈。如果仍需在本项目中使用，也可以参考 README，部署 Docker 版并配置代理，或使用本地版配置代理来绕过跨域限制。
+        2. 如果你使用的是 [basketikun/chatgpt2api](https://github.com/basketikun/chatgpt2api) 等反代或中转项目，遇到响应格式不兼容等问题，请向原始项目反馈并要求其遵循官方 API 格式。你也可以参考对应项目的 API 文档，尝试生成自定义服务商配置，具体操作方式见 README。本项目没有义务为各种非标准格式做无尽的兼容兜底。
+        3. 如果你希望使用 Codex 的 API，建议使用 [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)。
+        4. 如果你使用某些服务商的 API，遇到返回的图片是图床 URL 且限制跨域、或无法返回 Base64 URL 等问题，这属于服务商自身的限制，本项目无法解决，请向该服务商反馈。
+
+        > **提示：** 如果页面长时间无响应，可以按 F12 打开浏览器控制台查看报错信息，并切换到「网络（Network）」面板查看请求的响应体。本项目已做了一定程度的跨域限制提示和 URL 捕获处理，但没有精力也没有义务覆盖所有第三方异常场景的报错显示。
+
+        > **关于响应时间：** 项目维护者精力有限，不能保证始终按预期效率修复问题或完成优化，敬请理解。
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已确认该问题不属于上述上游项目、反代或中转项目、服务商 API 的已知限制。
+          required: true
+        - label: 我已搜索现有 Issue，确认没有重复反馈。
+          required: true
+        - label: 我已尝试使用官方兼容的 API 格式复现该问题。
+          required: false
+        - label: 我理解项目维护者精力有限，不能保证始终按预期效率修复问题。
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 请简要描述你遇到的问题。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请提供可稳定复现问题的操作步骤。
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+      description: 你期望项目应该如何表现？
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 实际发生了什么？如有报错请粘贴完整错误信息。
+    validations:
+      required: true
+
+  - type: dropdown
+    id: version
+    attributes:
+      label: 部署方式
+      description: 请选择你使用的部署方式。
+      options:
+        - Vercel
+        - Cloudflare Workers
+        - Docker
+        - 本地部署
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: deployment_detail
+    attributes:
+      label: 部署方式补充
+      description: 如果上面选择的是「其他」，请在此填写具体的部署方式。
+    validations:
+      required: false
+
+  - type: input
+    id: browser
+    attributes:
+      label: 浏览器与操作系统
+    validations:
+      required: true
+
+  - type: dropdown
+    id: api
+    attributes:
+      label: API 来源
+      description: 请选择你使用的 API 来源类型。
+      options:
+        - OpenAI 官方 API
+        - 第三方服务商提供的兼容 API
+        - 反代 / 中转项目
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: api_detail
+    attributes:
+      label: API 来源补充
+      description: 如果上面选择的不是「OpenAI 官方 API」，请在此填写具体的服务商名称或反代 / 中转项目（请勿填写密钥）。
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 错误信息 / 截图
+      description: 如果已确认问题属于本项目，请提供与本项目相关的控制台错误、页面截图或复现录屏。请勿粘贴密钥。
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 其他有助于定位问题的信息。
+    validations:
+      required: false

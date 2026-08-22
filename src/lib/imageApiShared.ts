@@ -1,4 +1,5 @@
-import type { AppSettings, TaskParams } from '../types'
+import type { AppSettings, ResponsesOutputItem, TaskParams } from '../types'
+import { blobToDataUrl } from './dataUrl'
 
 export const MIME_MAP: Record<string, string> = {
   png: 'image/png',
@@ -8,14 +9,17 @@ export const MIME_MAP: Record<string, string> = {
 
 export const MAX_MASK_EDIT_FILE_BYTES = 50 * 1024 * 1024
 export const MAX_IMAGE_INPUT_PAYLOAD_BYTES = 512 * 1024 * 1024
+export const PROMPT_REWRITE_GUARD_PREFIX = 'Treat everything after this line as one complete image-generation prompt, including the resolution instruction. Follow it exactly without rewriting or omitting anything:'
 
 export interface CallApiOptions {
   settings: AppSettings
   prompt: string
   params: TaskParams
+  nativeTransparentBackground?: boolean
   /** 输入图片的 data URL 列表 */
   inputImageDataUrls: string[]
   maskDataUrl?: string
+  skipCodexCliSizePrompt?: boolean
   onFalRequestEnqueued?: (request: { requestId: string; endpoint: string }) => void
   onCustomTaskEnqueued?: (task: { taskId: string }) => void
   onPartialImage?: (partial: { image: string; partialImageIndex?: number; requestIndex?: number }) => void
@@ -32,6 +36,8 @@ export interface CallApiResult {
   revisedPrompts?: Array<string | undefined>
   /** API 返回的原始图片 HTTP URL（非 base64 时记录） */
   rawImageUrls?: string[]
+  /** 并发多图请求中失败的单张请求 */
+  failedRequests?: Array<{ requestIndex: number; error: string }>
 }
 
 export function isHttpUrl(value: unknown): value is string {
@@ -44,6 +50,24 @@ export function isDataUrl(value: unknown): value is string {
 
 export function normalizeBase64Image(value: string, fallbackMime: string): string {
   return value.startsWith('data:') ? value : `data:${fallbackMime};base64,${value}`
+}
+
+export function getResponsesImageResultBase64(result: ResponsesOutputItem['result']): string | undefined {
+  const b64 = typeof result === 'string'
+    ? result
+    : result && typeof result === 'object'
+    ? typeof result.b64_json === 'string'
+      ? result.b64_json
+      : typeof result.base64 === 'string'
+      ? result.base64
+      : typeof result.image === 'string'
+      ? result.image
+      : typeof result.data === 'string'
+      ? result.data
+      : ''
+    : ''
+
+  return b64.trim() ? b64 : undefined
 }
 
 function formatMiB(bytes: number): string {
@@ -81,19 +105,34 @@ export function assertMaskEditFileSize(label: string, bytes: number) {
   assertMaxBytes(label, bytes, MAX_MASK_EDIT_FILE_BYTES)
 }
 
-async function blobToDataUrl(blob: Blob, fallbackMime: string): Promise<string> {
-  const bytes = new Uint8Array(await blob.arrayBuffer())
-  let binary = ''
+export const IMAGE_FETCH_CORS_HINT = ' 可点链接按钮复制结果链接，或尝试开启「返回 Base64 图片数据」避免此问题。'
+export const STREAMING_UNSUPPORTED_HINT = '提示：当前使用的 API 可能不支持流式传输，请尝试关闭「流式传输」功能。'
+export const STREAMING_FORMAT_HINT = '提示：API 返回了无法解析的流式数据格式，请尝试关闭「流式传输」功能。'
+export const TRANSPARENT_BACKGROUND_UNSUPPORTED_HINT = '提示：当前使用的 API 不支持为该模型使用原生透明背景，请将「透明背景实现方式」切换为「本地后处理」。'
 
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    const chunk = bytes.subarray(i, i + 0x8000)
-    binary += String.fromCharCode(...chunk)
-  }
-
-  return `data:${blob.type || fallbackMime};base64,${btoa(binary)}`
+export function appendStreamingUnsupportedHint(message: string): string {
+  return message ? `${message}\n${STREAMING_UNSUPPORTED_HINT}` : STREAMING_UNSUPPORTED_HINT
 }
 
-export const IMAGE_FETCH_CORS_HINT = ' 可点链接按钮复制结果链接，或尝试开启「返回 Base64 图片数据」避免此问题。'
+export function appendStreamingFormatHint(message: string): string {
+  return message ? `${message}\n${STREAMING_FORMAT_HINT}` : STREAMING_FORMAT_HINT
+}
+
+export function maybeAppendTransparentBackgroundHint(message: string): string {
+  if (!/transparent background is not supported for this model\.?/i.test(message)) return message
+  return `${message}\n${TRANSPARENT_BACKGROUND_UNSUPPORTED_HINT}`
+}
+
+/** 排除明确与流式无关的状态码后追加提示 */
+export function maybeAppendStreamingHint(message: string, status: number, streamImages?: boolean): string {
+  const transparentMessage = maybeAppendTransparentBackgroundHint(message)
+  if (transparentMessage !== message) return transparentMessage
+  if (!streamImages) return message
+  if (status === 401 || status === 403 || status === 404 || status === 408 || status === 429 || status >= 500) {
+    return message
+  }
+  return appendStreamingUnsupportedHint(message)
+}
 
 async function probeNoCorsReachability(url: string, timeoutMs = 8000): Promise<'opaque' | 'reachable' | 'failed'> {
   const controller = new AbortController()
@@ -146,6 +185,7 @@ export async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, 
 
 export async function getApiErrorMessage(response: Response): Promise<string> {
   let errorMsg = `HTTP ${response.status}`
+  const textResponse = response.clone()
   try {
     const errJson = await response.json()
     if (errJson.error?.message) errorMsg = errJson.error.message
@@ -155,7 +195,7 @@ export async function getApiErrorMessage(response: Response): Promise<string> {
     else if (errJson.message) errorMsg = errJson.message
   } catch {
     try {
-      errorMsg = await response.text()
+      errorMsg = await textResponse.text()
     } catch {
       /* ignore */
     }

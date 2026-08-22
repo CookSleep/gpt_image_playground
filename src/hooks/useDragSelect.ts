@@ -6,6 +6,7 @@ interface UseDragSelectOptions {
   getItemId: (element: Element) => string | null
   onSelectionChange: (selectedIds: string[]) => void
   initialSelectedIds?: string[]
+  onSuppressClick?: () => void
 }
 
 export function useDragSelect({
@@ -14,6 +15,7 @@ export function useDragSelect({
   getItemId,
   onSelectionChange,
   initialSelectedIds = [],
+  onSuppressClick,
 }: UseDragSelectOptions) {
   const [selectionBox, setSelectionBox] = useState<{ startPageX: number; startPageY: number; currentPageX: number; currentPageY: number } | null>(null)
   const isDragging = useRef(false)
@@ -122,7 +124,7 @@ export function useDragSelect({
       if (isDragging.current && clearEmptySurfaceClick && !hasDragged.current && !startedOnItem.current && !startedWithCtrl.current) {
         onSelectionChange([])
       }
-      // Note: TaskGrid had suppressClick logic here. The caller should manage it if needed.
+      if (suppressClick && hasDragged.current) onSuppressClick?.()
       stopDragScroll()
       isDragging.current = false
       dragStart.current = null
@@ -233,7 +235,7 @@ export function useDragSelect({
       document.removeEventListener('wheel', handleDocumentWheel, true)
       window.removeEventListener('scroll', handleDocumentScroll, true)
     }
-  }, [beginSelection, containerSelector, isMac, itemSelector, onSelectionChange, updateSelectionFromPoint])
+  }, [beginSelection, containerSelector, isMac, itemSelector, onSelectionChange, onSuppressClick, updateSelectionFromPoint])
 
   return { selectionBox, isDragging: isDragging.current }
 }

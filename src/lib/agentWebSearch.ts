@@ -1,4 +1,5 @@
 import type { AgentRound, ResponsesApiResponse, ResponsesOutputItem, TaskRecord } from '../types'
+import { normalizeResponsesOutputItems } from './responsesOutputState'
 
 export interface AgentWebSearchCallSummary {
   id?: string
@@ -62,7 +63,8 @@ export function getAgentRoundOutputItems(round: AgentRound | null, tasks: TaskRe
     if (!task?.rawResponsePayload) continue
     try {
       const payload = JSON.parse(task.rawResponsePayload) as ResponsesApiResponse
-      if (payload.output?.length) return payload.output
+      const output = normalizeResponsesOutputItems(payload.output)
+      if (output.length) return output
     } catch {
       continue
     }

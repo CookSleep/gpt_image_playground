@@ -49,6 +49,7 @@ export default function ConfirmDialog() {
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const [canConfirm, setCanConfirm] = useState(true)
   const [checkboxChecked, setCheckboxChecked] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
     const delay = confirmDialog?.minConfirmDelayMs ?? 0
@@ -67,7 +68,7 @@ export default function ConfirmDialog() {
   }, [confirmDialog])
 
   const handleClose = () => {
-    if (!canConfirm) return
+    if (!canConfirm || isSubmitting) return
     setConfirmDialog(null)
   }
 
@@ -135,7 +136,7 @@ export default function ConfirmDialog() {
                   setConfirmDialog(null)
                 }}
                 disabled={!canConfirm}
-                className={`flex-1 py-2 rounded-lg text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${getActionButtonClass(button.tone)}`}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${getActionButtonClass(button.tone)}`}
               >
                 {button.label}
               </button>
@@ -146,19 +147,32 @@ export default function ConfirmDialog() {
             {confirmDialog.showCancel !== false && (
               <button
                 onClick={handleCancel}
-                className="flex-1 py-2 rounded-lg border border-gray-200 dark:border-white/[0.08] text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.06] transition"
+                disabled={isSubmitting}
+                className="flex-1 py-2 rounded-xl border border-gray-200 dark:border-white/[0.08] text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.06] transition disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {cancelText}
               </button>
             )}
             <button
               onClick={() => {
-                if (!canConfirm) return
-                confirmDialog.action?.(checkboxChecked)
-                setConfirmDialog(null)
+                if (!canConfirm || isSubmitting) return
+                if (!confirmDialog.awaitAction) {
+                  confirmDialog.action?.(checkboxChecked)
+                  setConfirmDialog(null)
+                  return
+                }
+                setIsSubmitting(true)
+                void (async () => {
+                  try {
+                    const shouldClose = await confirmDialog.action?.(checkboxChecked)
+                    if (shouldClose !== false) setConfirmDialog(null)
+                  } finally {
+                    setIsSubmitting(false)
+                  }
+                })()
               }}
-              disabled={!canConfirm}
-              className={`flex-1 py-2 rounded-lg text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${confirmClassName}`}
+              disabled={!canConfirm || isSubmitting}
+              className={`flex-1 py-2 rounded-xl text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${confirmClassName}`}
             >
               {confirmText}
             </button>

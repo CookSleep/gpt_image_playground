@@ -13,12 +13,13 @@ import { onDismissTooltips } from '../lib/tooltipDismiss'
  *   <button {...tooltip.handlers} onClick={() => { tooltip.dismiss(); openModal() }}>
  *   <ViewportTooltip visible={tooltip.visible}>...</ViewportTooltip>
  */
-export function useTooltip() {
+export function useTooltip(delay = 500) {
   const [visible, setVisible] = useState(false)
   const timerRef = useRef<number | null>(null)
   // When dismissed (e.g. a modal opens), suppress any pending onClick timer
   // from re-showing the tooltip.  Reset on the next mouse/focus cycle.
   const suppressedRef = useRef(false)
+  const longPressTriggeredRef = useRef(false)
 
   const clearTimer = useCallback(() => {
     if (timerRef.current != null) {
@@ -32,6 +33,7 @@ export function useTooltip() {
   const dismiss = useCallback(() => {
     clearTimer()
     suppressedRef.current = true
+    longPressTriggeredRef.current = false
     setVisible(false)
   }, [clearTimer])
 
@@ -58,16 +60,31 @@ export function useTooltip() {
     onMouseLeave: hide,
     onFocus: show,
     onBlur: hide,
-    onClick: () => {
+    onTouchStart: () => {
       clearTimer()
+      longPressTriggeredRef.current = false
       timerRef.current = window.setTimeout(() => {
+        longPressTriggeredRef.current = true
         if (!suppressedRef.current) setVisible(true)
         timerRef.current = null
-      }, 300)
+      }, delay)
     },
-    onTouchEnd: clearTimer,
-    onTouchCancel: clearTimer,
+    onTouchMove: clearTimer,
+    onClick: () => {
+      clearTimer()
+    },
+    onTouchEnd: (e: React.TouchEvent | TouchEvent) => {
+      clearTimer()
+      if (longPressTriggeredRef.current) {
+        if (e.cancelable) e.preventDefault()
+      }
+      longPressTriggeredRef.current = false
+    },
+    onTouchCancel: () => {
+      clearTimer()
+      longPressTriggeredRef.current = false
+    },
   }
 
-  return { visible, handlers, dismiss }
+  return { visible, handlers, show, dismiss }
 }

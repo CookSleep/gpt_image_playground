@@ -33,6 +33,15 @@ export default function ViewportTooltip({ visible, children, className = '' }: V
 
   const effectiveVisible = visible && !suppressed
 
+  // 检查锚点中心是否仍在最上层可命中（未被弹窗等遮挡）
+  const isAnchorExposed = (anchor: HTMLElement, rect: DOMRect) => {
+    const x = rect.left + rect.width / 2
+    const y = rect.top + rect.height / 2
+    if (x < 0 || x > window.innerWidth || y < 0 || y > window.innerHeight) return false
+    const el = document.elementFromPoint(x, y)
+    return !!el && anchor.contains(el)
+  }
+
   useEffect(() => {
     if (!effectiveVisible) return
 
@@ -67,6 +76,10 @@ export default function ViewportTooltip({ visible, children, className = '' }: V
       const gap = 8
       const anchorRect = anchor.getBoundingClientRect()
       if (!anchor.getClientRects().length || (anchorRect.width === 0 && anchorRect.height === 0)) {
+        setPosition(null)
+        return
+      }
+      if (!isAnchorExposed(anchor, anchorRect)) {
         setPosition(null)
         return
       }

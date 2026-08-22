@@ -1,9 +1,13 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { useStore, getCachedImage, ensureImageCached } from '../store'
+import { createInputImageFromFile, deleteImageIfUnreferenced, useStore } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
+import { useHintTooltip } from '../hooks/useHintTooltip'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { suppressGlobalClicks } from '../lib/clickSuppression'
+import { ensureImageCached, getCachedImage } from '../lib/imageCache'
+import ButtonTooltip from './input/buttonTooltip'
+import { EditIcon, RefreshIcon } from './icons'
 
 const MIN_SCALE = 1
 const MAX_SCALE = 10
@@ -24,6 +28,12 @@ export default function Lightbox() {
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const maskDraft = useStore((s) => s.maskDraft)
   const tasks = useStore((s) => s.tasks)
+  const inputImages = useStore((s) => s.inputImages)
+  const replaceInputImage = useStore((s) => s.replaceInputImage)
+  const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
+  const showToast = useStore((s) => s.showToast)
+  const replaceFileInputRef = useRef<HTMLInputElement>(null)
+  const replaceImageTargetRef = useRef<string | null>(null)
 
   const [src, setSrc] = useState('')
   const [maskImageSrc, setMaskImageSrc] = useState('')
@@ -130,6 +140,60 @@ export default function Lightbox() {
   const goPrev = useCallback(() => { if (showNav) goTo(currentIndex - 1) }, [showNav, currentIndex, goTo])
   const goNext = useCallback(() => { if (showNav) goTo(currentIndex + 1) }, [showNav, currentIndex, goTo])
 
+  const isInputImage = Boolean(lightboxImageId && inputImages.some((image) => image.id === lightboxImageId))
+
+  const openReplaceFilePicker = useCallback(() => {
+    if (!lightboxImageId || !isInputImage) return
+    replaceImageTargetRef.current = lightboxImageId
+    replaceFileInputRef.current?.click()
+  }, [isInputImage, lightboxImageId])
+
+  const handleReplaceFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    const targetId = replaceImageTargetRef.current
+    replaceImageTargetRef.current = null
+    if (!file || !targetId) return
+
+    try {
+      const image = await createInputImageFromFile(file)
+      if (!image) {
+        showToast('请选择有效图片', 'error')
+        return
+      }
+
+      const currentImages = useStore.getState().inputImages
+      const targetIdx = currentImages.findIndex((item) => item.id === targetId)
+      if (targetIdx < 0) {
+        void deleteImageIfUnreferenced(image.id)
+        showToast('原参考图已不存在', 'error')
+        return
+      }
+      if (targetId === image.id) {
+        showToast('参考图未变化', 'info')
+        return
+      }
+      if (currentImages.some((item, idx) => idx !== targetIdx && item.id === image.id)) {
+        showToast('这张图片已在参考图中', 'info')
+        return
+      }
+
+      replaceInputImage(targetIdx, image)
+      const nextList = lightboxImageList.map((id) => id === targetId ? image.id : id)
+      setLightboxImageId(image.id, nextList)
+      showToast('参考图已替换', 'success')
+    } catch (err) {
+      showToast(`参考图替换失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+    }
+  }, [lightboxImageList, replaceInputImage, setLightboxImageId, showToast])
+
+  const editInputImage = useCallback(() => {
+    if (!lightboxImageId || !isInputImage) return
+    const imageId = lightboxImageId
+    close()
+    setMaskEditorImageId(imageId)
+  }, [close, isInputImage, lightboxImageId, setMaskEditorImageId])
+
   // 键盘左右切换
   useEffect(() => {
     if (!lightboxImageId || !showNav) return
@@ -144,17 +208,30 @@ export default function Lightbox() {
   if (!lightboxImageId || !src) return null
 
   return (
-    <LightboxInner
-      src={src}
-      imageId={lightboxImageId}
-      maskPreviewSrc={maskPreviewSrc}
-      onClose={close}
-      showNav={showNav}
-      currentIndex={currentIndex}
-      total={total}
-      onPrev={goPrev}
-      onNext={goNext}
-    />
+    <>
+      <LightboxInner
+        src={src}
+        imageId={lightboxImageId}
+        maskPreviewSrc={maskPreviewSrc}
+        onClose={close}
+        showNav={showNav}
+        currentIndex={currentIndex}
+        total={total}
+        onPrev={goPrev}
+        onNext={goNext}
+        showInputActions={isInputImage}
+        editDisabled={Boolean(maskDraft && maskDraft.targetImageId !== lightboxImageId)}
+        onReplace={openReplaceFilePicker}
+        onEdit={editInputImage}
+      />
+      <input
+        ref={replaceFileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleReplaceFileUpload}
+      />
+    </>
   )
 }
 
@@ -168,12 +245,17 @@ interface LightboxInnerProps {
   total: number
   onPrev: () => void
   onNext: () => void
+  showInputActions: boolean
+  editDisabled: boolean
+  onReplace: () => void
+  onEdit: () => void
 }
 
 /** 内部组件：保证挂载时 DOM 已经存在，所有 ref / effect 都可靠 */
-function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, currentIndex, total, onPrev, onNext }: LightboxInnerProps) {
+function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, currentIndex, total, onPrev, onNext, showInputActions, editDisabled, onReplace, onEdit }: LightboxInnerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const openedAtRef = useRef(Date.now())
+  const editHint = useHintTooltip({ enabled: () => editDisabled })
 
   // 用 ref 追踪最新变换，避免闭包过期
   const scaleRef = useRef(1)
@@ -602,7 +684,7 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
   const zoomPercent = Math.round(s * 100)
 
   const navBtnClass =
-    'absolute top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-all z-10 backdrop-blur-sm'
+    'absolute top-1/2 -translate-y-1/2 p-2 rounded-full bg-white/80 text-gray-800 hover:bg-white dark:bg-black/40 dark:text-white dark:hover:bg-black/60 transition-all z-10 backdrop-blur-sm shadow-md border border-gray-200/50 dark:border-transparent'
 
   return (
     <div
@@ -613,7 +695,7 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
       onClick={onClick}
       onDoubleClick={onDoubleClick}
     >
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-md animate-fade-in" />
+      <div className="absolute inset-0 bg-black/35 dark:bg-black/70 backdrop-blur-md animate-fade-in" />
       <div className="relative animate-zoom-in">
         <div
           className="relative flex items-center justify-center"
@@ -626,7 +708,7 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
           <img
             src={src}
             data-image-id={imageId}
-            className="saveable-image max-w-[85vw] max-h-[85vh] object-contain rounded-lg shadow-2xl"
+            className="saveable-image max-w-[90vw] max-h-[70vh] sm:max-w-[85vw] sm:max-h-[75vh] object-contain rounded-lg shadow-2xl"
             onDragStart={(e) => e.preventDefault()}
             alt=""
           />
@@ -662,17 +744,50 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
         </>
       )}
 
-      {/* 底部指示器 */}
+      {/* 参考图操作 */}
+      {showInputActions && !isZoomed && (
+        <div className="absolute bottom-8 left-1/2 z-10 flex w-max -translate-x-1/2 items-center gap-2 rounded-2xl bg-white/90 dark:bg-black/60 p-2 backdrop-blur-xl border border-gray-200/80 dark:border-white/15 shadow-2xl transition-colors" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className="flex items-center justify-center gap-2 whitespace-nowrap rounded-xl px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-white/90 dark:hover:bg-white/15 transition active:scale-95"
+            onClick={onReplace}
+          >
+            <RefreshIcon className="w-4 h-4" />
+            <span>替换图片</span>
+          </button>
+          <div
+            className="relative flex items-center"
+            onMouseEnter={editHint.show}
+            onMouseLeave={editHint.hide}
+            onTouchStart={editHint.startTouch}
+            onTouchEnd={editHint.clearTimer}
+            onTouchCancel={editHint.hide}
+          >
+            <ButtonTooltip visible={editDisabled && editHint.visible} text="只能有一张遮罩图" />
+            <button
+              type="button"
+              disabled={editDisabled}
+              className={`flex items-center justify-center gap-2 whitespace-nowrap rounded-xl px-5 py-2.5 text-sm font-medium shadow-md transition active:scale-95 ${editDisabled ? 'cursor-not-allowed bg-gray-100 text-gray-400 dark:bg-white/10 dark:text-white/40 shadow-none' : 'bg-blue-500 text-white hover:bg-blue-600 hover:shadow-blue-500/25'}`}
+              onClick={onEdit}
+            >
+              <EditIcon className="w-4 h-4" />
+              <span>编辑图片</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 指示器 */}
       {showZoomBadge && isZoomed && zoomPercent !== 100 && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-none">
-          <span className="px-3 py-1.5 bg-black/50 text-white/80 text-xs rounded-full backdrop-blur-sm transition-opacity duration-500">
+          <span className="px-3 py-1.5 bg-white/90 dark:bg-black/50 text-gray-800 dark:text-white/80 text-xs rounded-full backdrop-blur-sm transition-opacity duration-500 border border-gray-200/80 dark:border-transparent">
             {zoomPercent}%
           </span>
         </div>
       )}
       {showNav && !isZoomed && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-none">
-          <span className="px-3 py-1.5 bg-black/50 text-white/80 text-xs rounded-full backdrop-blur-sm">
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 pointer-events-none z-10">
+          <span className="px-3 py-1 bg-white/90 dark:bg-black/60 text-gray-800 dark:text-white/90 text-sm font-medium rounded-full backdrop-blur-md shadow-lg border border-gray-200/80 dark:border-white/15">
             {currentIndex + 1} / {total}
           </span>
         </div>

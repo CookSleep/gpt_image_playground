@@ -1,0 +1,137 @@
+{
+  "customProviders": [
+    {
+      "id": "custom-9527-code",
+      "name": "9527 CODE",
+      "template": "http-image",
+      "submit": {
+        "path": "api/image-tasks",
+        "method": "POST",
+        "contentType": "json",
+        "body": {
+          "model": "$profile.model",
+          "prompt": "$prompt",
+          "response_format": "url",
+          "async": true,
+          "size": "$params.size",
+          "quality": "$params.quality",
+          "output_format": "$params.output_format",
+          "output_compression": "$params.output_compression",
+          "moderation": "$params.moderation",
+          "n": "$params.n",
+          "images": "$inputImages.dataUrls",
+          "maskDataUrl": "$mask.dataUrl"
+        },
+        "taskIdPath": "task_id"
+      },
+      "poll": {
+        "path": "api/image-tasks/{task_id}",
+        "method": "GET",
+        "intervalSeconds": 2,
+        "statusPath": "status",
+        "successValues": ["succeeded"],
+        "failureValues": ["failed", "cancelled"],
+        "errorPath": "error.message",
+        "result": {
+          "imageUrlPaths": ["data.*.url"],
+          "b64JsonPaths": []
+        }
+      }
+    }
+  ],
+  "profiles": [
+    {
+      "id": "gpt_image_playground-default-openai",
+      "name": "默认",
+      "provider": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "model": "gpt-image-2",
+      "apiMode": "images",
+      "isDefault": true
+    },
+    {
+      "id": "moyuu-ai",
+      "name": "摸鱼 AI",
+      "description": "[摸鱼 AI](https://moyuu.cc/register?aff=z95r)，让 AI API 接入更简单。明码标价，充值 1:1，支持 GPT、Claude、Gemini 等主流模型，重新定义「便宜 · 稳定 · 高速」",
+      "provider": "openai",
+      "baseUrl": "https://long.moyuu.cc/v1",
+      "model": "gpt-image-2",
+      "apiMode": "images"
+    },
+    {
+      "id": "marucode",
+      "name": "MaruCode",
+      "description": "[MaruCode](https://api.muteki.site/register?aff=CookSleep&promo=CookSleep) 是一家偶尔做做慈善的小破站 API，自营号池，主要提供 Codex、Claude Code、GPT Image 等主流模型，支持 Websocket 协议，明码标价(Codex 0.25x, CC 1.5x)，透明汇率(1:1)，[新用户注册送 2 刀](https://api.muteki.site/register?aff=CookSleep&promo=CookSleep)。[生图工作台](https://images-2.muteki.site)",
+      "provider": "openai",
+      "baseUrl": "https://api.muteki.site",
+      "model": "gpt-image-2",
+      "apiMode": "images"
+    },
+    {
+      "id": "jucodex",
+      "name": "JuCodex",
+      "description": "[JuCodex](https://jucodex.com/register?aff=3JDW) 为企业级用户打造的高可用、低延迟、极致性价比的中转站，提供 Codex、Claude Code、Grok 等主流大模型中转服务，新用户注册送 3 元（QQ 邮箱），永久承诺 0 水 0 替、模型 100% 保真。[生图工作台](https://image.jucodex.com)",
+      "provider": "openai",
+      "baseUrl": "https://api.sz-link.com/v1",
+      "model": "gpt-image-2",
+      "apiMode": "images"
+    },
+    {
+      "id": "9527-code",
+      "name": "9527 CODE",
+      "description": "[9527 CODE](https://9527.codes) 是企业级满血 AI 中转服务平台，专注提供 Claude Code、Codex 等主流模型的高稳定中转能力，为企业级 AI 使用提供稳定、合规、高效的一站式解决方案。",
+      "provider": "custom-9527-code",
+      "baseUrl": "https://tu.9527.codes/",
+      "model": "gpt-image-2",
+      "apiMode": "images",
+      "apiProxy": false
+    },
+    {
+      "id": "qiuqiutoken",
+      "name": "球球Token",
+      "description": "[球球Token](https://qiuqiutoken.com) 是一家高速稳定务实的 AI 中转服务站，支持 gpt-image-2、Codex、Claude Code 等主流模型，100% 缓存命中、文档齐备、k8s 高可用集群、多个 CN2 GIA 接入点、售后极速响应、企业开票。",
+      "provider": "openai",
+      "baseUrl": "https://api.qiuqiutoken.net/v1",
+      "model": "gpt-image-2",
+      "apiMode": "images"
+    },
+    {
+      "id": "sui-xiang",
+      "name": "随想AI中转站",
+      "description": "[随想AI中转站](https://sui-xiang.com) 是一家可靠高效的 API 中转服务提供商，提供 Claude、Codex、Gemini 等的中继服务。注重隐私的中转站·无数据倒卖·无模型掺水，极速售后，99.9% 可用性。新账户注册每日签到就送 0.5 元测试额度，充值 1:1。",
+      "provider": "openai",
+      "baseUrl": "https://sui-xiang.com/v1",
+      "model": "gpt-image-2",
+      "apiMode": "images",
+      "codexCli": true
+    },
+    {
+      "id": "hezu-bus",
+      "name": "合租巴士",
+      "description": "[合租巴士](https://hezu.ink/sign-up?aff=jCQK) 是一家可靠高效 AI 中转服务平台，主要提供 Claude Code、Codex 等主流模型的高稳定中转能力，充值比例透明（1:1），Codex 倍率补贴低至 0.15。[进群送 3 刀体验金](https://hezu.ink/sign-up?aff=jCQK)",
+      "provider": "openai",
+      "baseUrl": "https://img.hezubus.cc/v1",
+      "model": "gpt-image-2",
+      "apiMode": "images"
+    },
+    {
+      "id": "sublyx",
+      "name": "Sublyx",
+      "description": "[Sublyx](https://api.sublyx.org/register?aff=U62PAZERCHEA) 是一家稳定高效的 AI API 聚合网关，支持 OpenAI、Claude、Grok、Codex、gpt-image-2 等主流模型，兼容 OpenAI SDK、Claude Code、Codex、Cherry Studio 等常用工具。通过[链接注册](https://api.sublyx.org/register?aff=U62PAZERCHEA)并使用优惠码 `IMG2`，可额外领取 10 刀额度。[生图工作台](https://img2.icedit.ai)",
+      "provider": "sb2api-async",
+      "baseUrl": "https://api.sublyx.org/v1",
+      "model": "gpt-image-2",
+      "apiMode": "images"
+    },
+    {
+      "id": "buzzai",
+      "name": "BuzzAI",
+      "description": "[BuzzAI](https://buzzai.cc/register?aff=gptimageplayground) 默认不保存聊天记录，不替换用户选择的模型。所有调用链路均自主建设与维护——不让你的数据流经任何我们无法负责的环节，也不让你的请求在你看不见的地方被一次次转发。",
+      "provider": "openai",
+      "baseUrl": "https://buzzai.cc/v1",
+      "model": "gpt-image-2",
+      "apiMode": "images",
+      "codexCli": true
+    }
+  ]
+}

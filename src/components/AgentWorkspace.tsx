@@ -1,57 +1,18 @@
-import { useEffect, useMemo, useState, useRef, useCallback, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import type { AgentConversation, AgentMessage, AgentRound, ResponsesOutputItem, TaskRecord } from '../types'
-import { deleteAgentRoundFromConversation, editOutputs, getActiveAgentRounds, getAgentBranchLeafId, getAgentSiblingRounds, getCachedImage, ensureImageCached, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeMultipleTasks, removeTask, reuseConfig, updateTaskInStore, useStore } from '../store'
+import { useEffect, useMemo, useState, useRef, useCallback, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import type { AgentMessage, AgentRound, TaskRecord } from '../types'
+import { editOutputs, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, reuseConfig, useStore } from '../store'
+import { getActiveAgentRounds, getAgentBranchLeafId, getConversationSearchText, getAgentRoundTaskIds, getAgentSiblingRounds } from '../lib/agentConversationState'
+import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { getPromptMentionParts } from '../lib/promptImageMentions'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
-import { collectWebSearchCalls, getAgentRoundOutputItems, getWebSearchStatusForCalls, type AgentWebSearchStatus } from '../lib/agentWebSearch'
+import type { AgentWebSearchStatus } from '../lib/agentWebSearch'
+import { getAgentAssistantBlocks, getAgentAssistantCopyContent, getRoundTaskSlots } from '../lib/agentAssistantBlocks'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
-import { downloadImageIds } from '../lib/downloadImages'
+import { downloadImageEntriesAsZip, downloadImageIds, getImageZipEntries } from '../lib/downloadImages'
 import TaskCard from './TaskCard'
-import ViewportTooltip from './ViewportTooltip'
 import MarkdownRenderer from './MarkdownRenderer'
+import { TooltipButton as AgentActionButton } from './TooltipButton'
 import { TrashIcon, DownloadIcon, EditIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, SidebarLeftIcon, FavoriteIcon, CloseIcon, CopyIcon, RefreshIcon, ArrowDownIcon } from './icons'
-
-function AgentActionButton({
-  tooltip,
-  className,
-  disabled = false,
-  onClick,
-  onMouseDown,
-  children,
-}: {
-  tooltip: string
-  className: string
-  disabled?: boolean
-  onClick?: (e: ReactMouseEvent<HTMLButtonElement>) => void
-  onMouseDown?: (e: ReactMouseEvent<HTMLButtonElement>) => void
-  children: ReactNode
-}) {
-  const [tooltipVisible, setTooltipVisible] = useState(false)
-
-  return (
-    <span
-      className="relative inline-flex"
-      onMouseEnter={() => setTooltipVisible(true)}
-      onMouseLeave={() => setTooltipVisible(false)}
-      onFocus={() => setTooltipVisible(true)}
-      onBlur={() => setTooltipVisible(false)}
-    >
-      <button
-        type="button"
-        className={className}
-        disabled={disabled}
-        aria-label={tooltip}
-        onClick={onClick}
-        onMouseDown={onMouseDown}
-      >
-        {children}
-      </button>
-      <ViewportTooltip visible={tooltipVisible} className="whitespace-nowrap">
-        {tooltip}
-      </ViewportTooltip>
-    </span>
-  )
-}
 
 function ChatImageThumb({ imageId, imageIndex, maskImageId }: { imageId: string; imageIndex: number; maskImageId?: string | null }) {
   const [src, setSrc] = useState<string>(() => getCachedImage(imageId) || '')
@@ -115,8 +76,6 @@ function AgentStreamingCursor() {
   )
 }
 
-const AGENT_STOPPED_MESSAGE = '已停止生成。'
-
 function formatTime(value: number) {
   return new Date(value).toLocaleString()
 }
@@ -142,163 +101,6 @@ function AgentWebSearchStatusLines({ statuses }: { statuses: AgentWebSearchStatu
   )
 }
 
-type AgentAssistantBlock =
-  | { type: 'web-search'; status: AgentWebSearchStatus; key: string }
-  | { type: 'batch-params'; status: AgentWebSearchStatus; key: string }
-  | { type: 'image-task'; task: TaskRecord; key: string }
-  | { type: 'deleted-image-task'; taskId: string; key: string }
-  | { type: 'text'; key: string; content?: string }
-
-interface AgentRoundTaskSlot {
-  taskId: string
-  task: TaskRecord | null
-}
-
-function isAgentRoundInterrupted(round: AgentRound | null) {
-  return round?.status === 'error' && round.error === AGENT_STOPPED_MESSAGE
-}
-
-function markToolStatusStopped(status: AgentWebSearchStatus): AgentWebSearchStatus {
-  if (status.completed) return status
-  return { text: status.text.replace(/^正在/, '已停止'), completed: true }
-}
-
-function getImageTaskForOutputItem(item: ResponsesOutputItem, tasksForRound: TaskRecord[]) {
-  if (item.type !== 'image_generation_call') return null
-  return tasksForRound.find((task) => task.agentToolCallId && task.agentToolCallId === item.id) ?? null
-}
-
-function getBatchImageTasksForOutputItem(item: ResponsesOutputItem, tasksForRound: TaskRecord[]) {
-  if (item.type !== 'function_call' || item.name !== 'generate_image_batch' || !item.call_id) return []
-  return tasksForRound.filter((task) => task.agentBatchCallId === item.call_id)
-}
-
-function getTextFromOutputItem(item: ResponsesOutputItem) {
-  if (item.type !== 'message') return ''
-  return (item.content ?? [])
-    .map((part) => typeof part.text === 'string' ? part.text : '')
-    .filter(Boolean)
-    .join('\n')
-    .trim()
-}
-
-function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: AgentRoundTaskSlot[], allTasks: TaskRecord[], hasText: boolean): AgentAssistantBlock[] {
-  const outputItems = getAgentRoundOutputItems(round, allTasks)
-  const tasksForRound = taskSlots.map((slot) => slot.task).filter(Boolean) as TaskRecord[]
-  const roundInterrupted = isAgentRoundInterrupted(round)
-  if (outputItems.length === 0) {
-    return [
-      ...(hasText ? [{ type: 'text' as const, key: 'text:fallback' }] : []),
-      ...taskSlots.map((slot) => slot.task
-        ? ({ type: 'image-task' as const, task: slot.task, key: `image:${slot.task.id}` })
-        : ({ type: 'deleted-image-task' as const, taskId: slot.taskId, key: `deleted-image:${slot.taskId}` }),
-      ),
-    ]
-  }
-
-  const blocks: AgentAssistantBlock[] = []
-  const renderedTaskIds = new Set<string>()
-  let renderedTextBlocks = 0
-  let webSearchGroup: ResponsesOutputItem[] = []
-
-  const flushWebSearchGroup = () => {
-    if (webSearchGroup.length === 0) return
-    const status = getWebSearchStatusForCalls(collectWebSearchCalls(webSearchGroup))
-    if (status) blocks.push({ type: 'web-search', status: roundInterrupted ? markToolStatusStopped(status) : status, key: `web-search:${blocks.length}:${webSearchGroup.map((item) => item.id).join(':')}` })
-    webSearchGroup = []
-  }
-
-  for (const item of outputItems) {
-    if (item.type === 'web_search_call') {
-      webSearchGroup.push(item)
-      continue
-    }
-
-    flushWebSearchGroup()
-
-    const imageTask = getImageTaskForOutputItem(item, tasksForRound)
-    if (imageTask && !renderedTaskIds.has(imageTask.id)) {
-      renderedTaskIds.add(imageTask.id)
-      blocks.push({ type: 'image-task', task: imageTask, key: `image:${imageTask.id}` })
-      continue
-    }
-
-    const batchImageTasks = getBatchImageTasksForOutputItem(item, tasksForRound)
-    if (batchImageTasks.length > 0) {
-      for (const task of batchImageTasks) {
-        if (renderedTaskIds.has(task.id)) continue
-        renderedTaskIds.add(task.id)
-        blocks.push({ type: 'image-task', task, key: `image:${task.id}` })
-      }
-      continue
-    }
-
-    if ((round?.status === 'running' || roundInterrupted) && item.type === 'function_call' && item.name === 'generate_image_batch') {
-      blocks.push({
-        type: 'batch-params',
-        status: roundInterrupted
-          ? markToolStatusStopped({ text: '正在填写并发图像生成参数', completed: false })
-          : { text: '正在填写并发图像生成参数', completed: false },
-        key: `batch-params:${item.call_id ?? item.id ?? blocks.length}`,
-      })
-      continue
-    }
-
-    if (item.type === 'message') {
-      const content = getTextFromOutputItem(item)
-      if (content) {
-        renderedTextBlocks += 1
-        blocks.push({ type: 'text', key: `text:${item.id ?? blocks.length}`, content })
-      }
-    }
-  }
-
-  flushWebSearchGroup()
-
-  if (hasText && renderedTextBlocks === 0) blocks.push({ type: 'text', key: 'text:fallback' })
-  for (const slot of taskSlots) {
-    if (slot.task) {
-      if (!renderedTaskIds.has(slot.task.id)) blocks.push({ type: 'image-task', task: slot.task, key: `image:${slot.task.id}` })
-    } else {
-      blocks.push({ type: 'deleted-image-task', taskId: slot.taskId, key: `deleted-image:${slot.taskId}` })
-    }
-  }
-  return blocks
-}
-
-function getAgentAssistantCopyContent(fallbackContent: string, blocks: AgentAssistantBlock[]) {
-  if (!blocks.some((block) => block.type !== 'text')) return fallbackContent
-
-  const parts = blocks
-    .filter((block): block is Extract<AgentAssistantBlock, { type: 'text' }> => block.type === 'text')
-    .map((block) => block.content ?? '')
-    .map((content) => content.trim())
-    .filter(Boolean)
-
-  return parts.length > 0 ? parts.join('\n\n') : fallbackContent
-}
-
-function getConversationSearchText(conversation: AgentConversation) {
-  return [
-    conversation.title,
-    ...conversation.messages.map((message) => message.content),
-    ...conversation.rounds.map((round) => round.prompt),
-  ].join('\n').toLocaleLowerCase()
-}
-
-function getRoundTasks(round: AgentRound | null, tasks: TaskRecord[]) {
-  if (!round) return []
-  return round.outputTaskIds.map((taskId) => tasks.find((task) => task.id === taskId) ?? null)
-}
-
-function getRoundTaskSlots(round: AgentRound | null, tasks: TaskRecord[]): AgentRoundTaskSlot[] {
-  if (!round) return []
-  return round.outputTaskIds.map((taskId) => ({
-    taskId,
-    task: tasks.find((task) => task.id === taskId) ?? null,
-  }))
-}
-
 const MOBILE_HEADER_PULL_THRESHOLD = 24
 const MOBILE_HEADER_PULL_MAX_OFFSET = 48
 const MOBILE_HEADER_EDGE_GUARD = 24
@@ -315,6 +117,8 @@ export default function AgentWorkspace() {
   const setActiveConversationId = useStore((s) => s.setActiveAgentConversationId)
   const renameConversation = useStore((s) => s.renameAgentConversation)
   const deleteConversation = useStore((s) => s.deleteAgentConversation)
+  const deleteAgentRound = useStore((s) => s.deleteAgentRound)
+  const deleteAgentAssistantMessage = useStore((s) => s.deleteAgentAssistantMessage)
   const sidebarCollapsed = useStore((s) => s.agentSidebarCollapsed)
   const setSidebarCollapsed = useStore((s) => s.setAgentSidebarCollapsed)
   const agentMobileHeaderVisible = useStore((s) => s.agentMobileHeaderVisible)
@@ -335,9 +139,9 @@ export default function AgentWorkspace() {
   const setAgentEditingRoundId = useStore((s) => s.setAgentEditingRoundId)
   const setActiveAgentRoundId = useStore((s) => s.setActiveAgentRoundId)
   const showToast = useStore((s) => s.showToast)
+  const openFavoritePicker = useStore((s) => s.openFavoritePicker)
   const agentGeneratingTitleIds = useStore((s) => s.agentGeneratingTitleIds)
   const conversation = conversations.find((item) => item.id === activeConversationId) ?? null
-  const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null)
   const [editingConversationTitle, setEditingConversationTitle] = useState('')
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -692,61 +496,38 @@ export default function AgentWorkspace() {
 
   const handleDeleteMessage = (message: AgentMessage, round: AgentRound) => {
     const isUserMessage = message.role === 'user'
+    const conversationId = conversation?.id
     setConfirmDialog({
       title: isUserMessage ? '删除轮次' : '删除消息',
       message: isUserMessage
-        ? '确定要删除这轮记录吗？这会删除这条消息和它的输出，后续消息会被保留。'
-        : '确定要删除这条消息吗？关联的图片任务不会从画廊中删除。',
+        ? '确定要删除这轮任务吗？这会删除这条消息和它的输出，后续消息会被保留。'
+        : '确定要删除这条消息吗？这会同时删除这条回复生成的图片。',
+      awaitAction: true,
       action: async () => {
-        if (isUserMessage) {
-          if (round.outputTaskIds.length > 0) await removeMultipleTasks(round.outputTaskIds)
-
-          useStore.setState((state) => {
-            const targetConversationId = conversation?.id
-            let oldActivePath: AgentRound[] = []
-            let newActivePath: AgentRound[] = []
-            const agentConversations = state.agentConversations.map((item) => {
-              if (item.id !== targetConversationId) return item
-              oldActivePath = getActiveAgentRounds(item)
-              const nextConversation = deleteAgentRoundFromConversation(item, round.id)
-              newActivePath = getActiveAgentRounds(nextConversation)
-              return nextConversation
-            })
-            const draft = targetConversationId ? state.agentInputDrafts[targetConversationId] : null
-            const remappedDraft = draft
-              ? { ...draft, prompt: remapAgentRoundMentionsForPathChange(draft.prompt, oldActivePath, newActivePath) }
-              : null
-            const agentInputDrafts = targetConversationId && remappedDraft
-              ? { ...state.agentInputDrafts, [targetConversationId]: remappedDraft }
-              : state.agentInputDrafts
-            const shouldRemapVisibleInput = targetConversationId && state.activeAgentConversationId === targetConversationId && state.appMode === 'agent'
-            return {
-              agentConversations,
-              agentInputDrafts,
-              ...(shouldRemapVisibleInput ? { prompt: remapAgentRoundMentionsForPathChange(state.prompt, oldActivePath, newActivePath) } : {}),
-              agentEditingRoundId: state.agentEditingRoundId === round.id ? null : state.agentEditingRoundId,
-            }
-          })
-          return
+        if (!conversationId) return true
+        try {
+          const result = isUserMessage
+            ? await deleteAgentRound(conversationId, round.id)
+            : await deleteAgentAssistantMessage(conversationId, message.id)
+          if (result === 'running') {
+            showToast('该轮次仍在生成，请先停止生成后再删除', 'info')
+            return true
+          }
+          if (result === 'not-found') {
+            showToast(isUserMessage ? '该轮次已不存在' : '该消息已不存在', 'info')
+            return true
+          }
+          if (result === 'deleted-with-warning') {
+            showToast('已删除，但本地存储或图片清理未完成', 'error')
+            return true
+          }
+          showToast(isUserMessage ? '已删除轮次' : '已删除消息', 'success')
+          return true
+        } catch (err) {
+          console.error(err)
+          showToast(isUserMessage ? '删除轮次失败' : '删除消息失败', 'error')
+          return false
         }
-
-        useStore.setState((state) => ({
-          agentConversations: state.agentConversations.map((item) =>
-            item.id === conversation?.id
-              ? {
-                  ...item,
-                  updatedAt: Date.now(),
-                  rounds: item.rounds.map((candidate) =>
-                    candidate.id === round.id && candidate.assistantMessageId === message.id
-                      ? { ...candidate, assistantMessageId: undefined }
-                      : candidate,
-                  ),
-                  messages: item.messages.filter((candidate) => candidate.id !== message.id),
-                }
-              : item,
-          ),
-          agentEditingRoundId: state.agentEditingRoundId,
-        }))
       },
     })
   }
@@ -872,7 +653,7 @@ export default function AgentWorkspace() {
               <div
                 key={item.id}
                 data-agent-conversation-item
-                className="group flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-gray-100 dark:hover:bg-white/[0.04]"
+                className="group flex h-14 items-center gap-2 rounded-lg px-2 hover:bg-gray-100 dark:hover:bg-white/[0.04]"
                 onPointerDown={(e) => handleConversationPointerDown(item.id, e)}
                 onPointerUp={clearConversationLongPressTimer}
                 onPointerCancel={clearConversationLongPressTimer}
@@ -885,7 +666,7 @@ export default function AgentWorkspace() {
                   <div className="min-w-0 flex-1 flex flex-col justify-center h-[38px]">
                     <input
                       type="text"
-                      className="flex-1 bg-white dark:bg-black/20 border border-blue-400/50 dark:border-white/20 rounded px-1.5 py-0.5 text-sm outline-none text-gray-900 dark:text-white focus:border-blue-500 dark:focus:border-white/40 shadow-sm min-w-0"
+                      className="h-7 flex-1 bg-white dark:bg-black/20 border border-blue-400/50 dark:border-white/20 rounded px-1.5 py-0 text-sm leading-7 outline-none text-gray-900 dark:text-white focus:border-blue-500 dark:focus:border-white/40 shadow-sm min-w-0"
                       value={editingConversationTitle}
                       onChange={(e) => setEditingConversationTitle(e.target.value)}
                       onKeyDown={handleRenameKeyDown}
@@ -904,6 +685,7 @@ export default function AgentWorkspace() {
                   {agentEditingConversationId === item.id ? (
                     <AgentActionButton
                       tooltip="确认"
+                      onClick={(e) => e.stopPropagation()}
                       onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); confirmRenameConversation() }}
                       className="p-1.5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md text-green-500 hover:text-green-600 transition-colors"
                     >
@@ -993,6 +775,7 @@ export default function AgentWorkspace() {
                 const hasBranches = siblingRounds.length > 1
                 const taskSlotsForRound = isAssistant ? getRoundTaskSlots(round ?? null, tasks) : []
                 const tasksForRound = taskSlotsForRound.map((slot) => slot.task).filter(Boolean) as TaskRecord[]
+                const hasRoundTasks = tasksForRound.length > 0
                 const favoriteTasksForRound = tasksForRound.filter((task) => (task.outputImages?.length ?? 0) > 0)
                 const hasRoundFavoriteTasks = favoriteTasksForRound.length > 0
                 const allRoundTasksFavorited = hasRoundFavoriteTasks && favoriteTasksForRound.every((task) => task.isFavorite)
@@ -1016,9 +799,9 @@ export default function AgentWorkspace() {
                       }`}
                       >
                     <div className="mb-2 flex items-center justify-between gap-4 text-sm text-gray-500 dark:text-gray-400">
-                      <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedRoundId(message.roundId); }} className="hover:text-gray-800 dark:hover:text-gray-200 transition-colors font-medium">
+                      <span className="font-medium">
                          <span className={isAssistant ? 'text-blue-600 dark:text-blue-400 font-semibold' : 'text-gray-700 dark:text-gray-200 font-semibold'}>{isAssistant ? 'Agent' : '用户'}</span> <span className="opacity-60 font-normal ml-1">· 第 {round?.index ?? '?'} 轮</span>
-                      </button>
+                      </span>
                     </div>
                     
                     {message.role === 'user' && round && round.inputImageIds.length > 0 && (
@@ -1094,7 +877,7 @@ export default function AgentWorkspace() {
                                     onClick={() => setDetailTaskId(block.task.id)}
                                     onReuse={() => handleReuse(block.task)}
                                     onEditOutputs={() => editOutputs(block.task)}
-                                    onDelete={() => setConfirmDialog({ title: '删除记录', message: '确定要删除这条记录吗？', action: () => removeTask(block.task) })}
+                                    onDelete={() => setConfirmDialog({ title: '删除任务', message: '确定要删除这个任务吗？', action: () => removeTask(block.task) })}
                                   />
                                 </div>
                               )
@@ -1159,20 +942,22 @@ export default function AgentWorkspace() {
                             }}>
                               <RefreshIcon className="w-4 h-4" />
                             </AgentActionButton>
-                            <AgentActionButton tooltip={allRoundTasksFavorited ? '取消收藏所有图片' : '收藏所有图片'} className={`p-1.5 rounded-md transition-colors ${hasRoundFavoriteTasks ? (allRoundTasksFavorited ? 'text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-500/10' : 'text-gray-400 hover:text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-500/10') : 'text-gray-300 dark:text-gray-600 opacity-50 cursor-not-allowed'}`} disabled={!hasRoundFavoriteTasks} onClick={() => {
+                            <AgentActionButton tooltip={allRoundTasksFavorited ? '编辑收藏夹' : '收藏所有图片'} className={`p-1.5 rounded-md transition-colors ${hasRoundFavoriteTasks ? (allRoundTasksFavorited ? 'text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-500/10' : 'text-gray-400 hover:text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-500/10') : 'text-gray-300 dark:text-gray-600 opacity-50 cursor-not-allowed'}`} disabled={!hasRoundFavoriteTasks} onClick={() => {
                               if (!hasRoundFavoriteTasks) return;
-                              const nextFavorite = !allRoundTasksFavorited;
-                              favoriteTasksForRound.forEach(t => updateTaskInStore(t.id, { isFavorite: nextFavorite }));
-                              useStore.getState().showToast(nextFavorite ? `已收藏 ${favoriteTasksForRound.length} 个任务的图片` : `已取消收藏 ${favoriteTasksForRound.length} 个任务的图片`, 'success');
+                              openFavoritePicker(favoriteTasksForRound.map((task) => task.id));
                             }}>
                               <FavoriteIcon className="w-4 h-4" filled={allRoundTasksFavorited} />
                             </AgentActionButton>
-                                                        <AgentActionButton tooltip="下载所有图片" className={`p-1.5 rounded-md transition-colors ${getRoundTasks(round ?? null, tasks).filter(Boolean).length > 0 ? 'text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-500/10' : 'text-gray-300 dark:text-gray-600 opacity-50 cursor-not-allowed'}`} disabled={getRoundTasks(round ?? null, tasks).filter(Boolean).length === 0} onClick={async () => {
+                            <AgentActionButton tooltip="下载所有图片" className={`p-1.5 rounded-md transition-colors ${hasRoundTasks ? 'text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-500/10' : 'text-gray-300 dark:text-gray-600 opacity-50 cursor-not-allowed'}`} disabled={!hasRoundTasks} onClick={async () => {
                                const imageIds = tasksForRound.flatMap(t => t.outputImages || []);
                                if (imageIds.length === 0) return;
                                try {
-                                 const roundIndex = round?.index ?? 0;
-                                 const { successCount, failCount } = await downloadImageIds(imageIds, 'agent-round-' + roundIndex);
+                                  const roundIndex = round?.index ?? 0;
+                                  const fileNameBase = 'agent-round-' + roundIndex;
+                                  const settings = useStore.getState().settings;
+                                  const { successCount, failCount } = settings.zipDownloadRoutes.includes('agent-round-all')
+                                    ? await downloadImageEntriesAsZip(getImageZipEntries(imageIds, fileNameBase), fileNameBase)
+                                    : await downloadImageIds(imageIds, fileNameBase);
                                  if (successCount === 0) {
                                    useStore.getState().showToast('下载失败', 'error');
                                  } else if (failCount > 0) {

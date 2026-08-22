@@ -66,6 +66,23 @@ export function deleteTask(id: string): Promise<undefined> {
   return dbTransaction(STORE_TASKS, 'readwrite', (s) => s.delete(id))
 }
 
+export function commitTaskDeletion(deletedTaskIds: string[], updatedTasks: TaskRecord[], updatedConversations: AgentConversation[]): Promise<undefined> {
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE_TASKS, STORE_AGENT_CONVERSATIONS], 'readwrite')
+        const taskStore = tx.objectStore(STORE_TASKS)
+        const conversationStore = tx.objectStore(STORE_AGENT_CONVERSATIONS)
+        for (const id of deletedTaskIds) taskStore.delete(id)
+        for (const task of updatedTasks) taskStore.put(task)
+        for (const conversation of updatedConversations) conversationStore.put(conversation)
+        tx.oncomplete = () => resolve(undefined)
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      }),
+  )
+}
+
 export function clearTasks(): Promise<undefined> {
   return dbTransaction(STORE_TASKS, 'readwrite', (s) => s.clear())
 }
@@ -78,10 +95,6 @@ export function getAllAgentConversations(): Promise<AgentConversation[]> {
 
 export function putAgentConversation(conversation: AgentConversation): Promise<IDBValidKey> {
   return dbTransaction(STORE_AGENT_CONVERSATIONS, 'readwrite', (s) => s.put(conversation))
-}
-
-export function deleteAgentConversation(id: string): Promise<undefined> {
-  return dbTransaction(STORE_AGENT_CONVERSATIONS, 'readwrite', (s) => s.delete(id))
 }
 
 export function clearAgentConversations(): Promise<undefined> {
@@ -235,11 +248,21 @@ function hashDataUrlFallback(dataUrl: string): string {
   return `fallback-${(h1 >>> 0).toString(16).padStart(8, '0')}${(h2 >>> 0).toString(16).padStart(8, '0')}`
 }
 
+export interface StoreImageResult {
+  id: string
+  width?: number
+  height?: number
+}
+
 /**
  * 存储图片，若已存在（按 hash 去重）则跳过。
- * 返回 image id。
+ * 返回 image id 及图片真实宽高。
  */
 export async function storeImage(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload'): Promise<string> {
+  return (await storeImageWithSize(dataUrl, source)).id
+}
+
+export async function storeImageWithSize(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload'): Promise<StoreImageResult> {
   const id = await hashDataUrl(dataUrl)
   const existing = await getImage(id)
   if (!existing) {
@@ -261,8 +284,13 @@ export async function storeImage(dataUrl: string, source: NonNullable<StoredImag
         thumbnailVersion: THUMBNAIL_VERSION,
       })
     }
-  } else if ((await getStoredImageThumbnail(id))?.thumbnailVersion !== THUMBNAIL_VERSION) {
+    return { id, width: thumbnail.width, height: thumbnail.height }
+  }
+
+  if ((await getStoredImageThumbnail(id))?.thumbnailVersion !== THUMBNAIL_VERSION) {
     const thumbnail = await safeCreateImageThumbnail(existing.dataUrl)
+    const width = thumbnail.width ?? existing.width
+    const height = thumbnail.height ?? existing.height
     if (thumbnail.width && thumbnail.height && (existing.width !== thumbnail.width || existing.height !== thumbnail.height)) {
       await putImage({ ...existing, width: thumbnail.width, height: thumbnail.height })
     }
@@ -275,8 +303,9 @@ export async function storeImage(dataUrl: string, source: NonNullable<StoredImag
         thumbnailVersion: THUMBNAIL_VERSION,
       })
     }
+    return { id, width, height }
   }
-  return id
+  return { id, width: existing.width, height: existing.height }
 }
 
 function loadImage(dataUrl: string): Promise<HTMLImageElement> {
