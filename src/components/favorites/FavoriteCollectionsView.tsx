@@ -3,6 +3,9 @@ import type { TaskRecord, FavoriteCollection } from '../../types'
 import {
   ALL_FAVORITES_COLLECTION_ID,
   deleteFavoriteCollection,
+  getActiveDefaultFavoriteCollectionId,
+  getFavoriteCollectionsForProject,
+  getFavoriteScopeProjectId,
   renameFavoriteCollection,
   useStore,
 } from '../../store'
@@ -13,8 +16,14 @@ import { getCollectionTasks, getLatestCoverTask, type CollectionCard } from './f
 
 export function FavoriteCollectionsView() {
   const tasks = useStore((s) => s.tasks)
-  const collections = useStore((s) => s.favoriteCollections)
-  const defaultFavoriteCollectionId = useStore((s) => s.defaultFavoriteCollectionId)
+  const allCollections = useStore((s) => s.favoriteCollections)
+  const activeProjectId = useStore((s) => s.activeProjectId)
+  const projectId = getFavoriteScopeProjectId(activeProjectId)
+  const collections = useMemo(
+    () => getFavoriteCollectionsForProject(allCollections, projectId),
+    [allCollections, projectId],
+  )
+  const defaultFavoriteCollectionId = useStore(getActiveDefaultFavoriteCollectionId)
   const setDefaultFavoriteCollectionId = useStore((s) => s.setDefaultFavoriteCollectionId)
   const searchQuery = useStore((s) => s.searchQuery)
   const setActiveFavoriteCollectionId = useStore((s) => s.setActiveFavoriteCollectionId)
@@ -27,17 +36,18 @@ export function FavoriteCollectionsView() {
   const suppressClickUntilRef = useRef(0)
   
   const cards = useMemo<CollectionCard[]>(() => {
-    const allTasks = getCollectionTasks(ALL_FAVORITES_COLLECTION_ID, tasks)
+    const projectTasks = tasks.filter((task) => task.projectId === projectId)
+    const allTasks = getCollectionTasks(ALL_FAVORITES_COLLECTION_ID, projectTasks)
     return [
       { id: ALL_FAVORITES_COLLECTION_ID, name: '全部', tasks: allTasks },
       ...collections.map((collection) => ({
         id: collection.id,
         name: collection.name,
         collection,
-        tasks: getCollectionTasks(collection.id, tasks),
+        tasks: getCollectionTasks(collection.id, projectTasks),
       })),
     ]
-  }, [collections, tasks])
+  }, [collections, projectId, tasks])
 
   const filteredCards = useMemo(() => {
     if (!searchQuery.trim()) return cards

@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 
 	"gpt-image-backend/internal/database"
 	"gpt-image-backend/internal/middleware"
@@ -28,6 +29,131 @@ import (
 
 const maxGenerationRequestBytes = 512 << 20
 const promptRewriteGuardPrefix = "Use the following text as the complete prompt. Do not rewrite it:"
+const maxGenerationLogResponseBytes = 64 << 10
+
+type generationLogResponseWriter struct {
+	gin.ResponseWriter
+	body      bytes.Buffer
+	truncated bool
+}
+
+func (w *generationLogResponseWriter) Write(data []byte) (int, error) {
+	remaining := maxGenerationLogResponseBytes - w.body.Len()
+	if remaining > 0 {
+		captured := len(data)
+		if captured > remaining {
+			captured = remaining
+			w.truncated = true
+		}
+		_, _ = w.body.Write(data[:captured])
+	} else if len(data) > 0 {
+		w.truncated = true
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+func (w *generationLogResponseWriter) WriteString(data string) (int, error) {
+	return w.Write([]byte(data))
+}
+
+func maskGenerationLogSecret(value string) string {
+	if value == "" {
+		return ""
+	}
+	if len(value) <= 12 {
+		return "***"
+	}
+	return value[:6] + "..." + value[len(value)-4:]
+}
+
+func summarizeGenerationLogString(value string) string {
+	if strings.HasPrefix(value, "data:") {
+		mediaType := strings.TrimPrefix(strings.SplitN(value, ";", 2)[0], "data:")
+		return fmt.Sprintf("[data URL: type=%s length=%d]", mediaType, len(value))
+	}
+	return fmt.Sprintf("[encoded data: length=%d]", len(value))
+}
+
+func sanitizeGenerationLogValue(value any, key string) any {
+	lowerKey := strings.ToLower(key)
+	switch typed := value.(type) {
+	case string:
+		if lowerKey == "api_key" || lowerKey == "apikey" || lowerKey == "authorization" {
+			return maskGenerationLogSecret(typed)
+		}
+		if strings.HasPrefix(typed, "data:") || strings.Contains(lowerKey, "b64") || strings.Contains(lowerKey, "base64") {
+			return summarizeGenerationLogString(typed)
+		}
+		return typed
+	case []any:
+		items := make([]any, len(typed))
+		for index, item := range typed {
+			items[index] = sanitizeGenerationLogValue(item, key)
+		}
+		return items
+	case map[string]any:
+		items := make(map[string]any, len(typed))
+		for itemKey, item := range typed {
+			items[itemKey] = sanitizeGenerationLogValue(item, itemKey)
+		}
+		return items
+	default:
+		return value
+	}
+}
+
+func generationLogPayload(data []byte, truncated bool) any {
+	if truncated {
+		return map[string]any{"captured_bytes": len(data), "truncated": true}
+	}
+	var payload any
+	if json.Unmarshal(data, &payload) == nil {
+		return sanitizeGenerationLogValue(payload, "")
+	}
+	text := string(data)
+	if len(text) > 4096 {
+		text = text[:4096] + "..."
+	}
+	return text
+}
+
+func logGenerationRequest(c *gin.Context, req projectGenerationRequest) {
+	data, _ := json.Marshal(req)
+	log.Info().
+		Str("method", c.Request.Method).
+		Str("path", c.Request.URL.Path).
+		Str("user_id", c.GetString(middleware.ContextKeyUserID)).
+		Interface("body", generationLogPayload(data, false)).
+		Msg("generation request")
+}
+
+func logGenerationUpstreamRequest(method, endpoint string, attempt int, body []byte) {
+	event := log.Info().
+		Str("method", method).
+		Str("url", endpoint).
+		Int("attempt", attempt)
+	if len(body) > 0 {
+		event = event.Interface("body", generationLogPayload(body, false))
+	}
+	event.Msg("generation upstream request")
+}
+
+func logGenerationUpstream(method, endpoint string, attempt, status int, body []byte, err error) {
+	event := log.Info().
+		Str("method", method).
+		Str("url", endpoint).
+		Int("attempt", attempt)
+	if status > 0 {
+		event = event.Int("status", status)
+	}
+	if len(body) > 0 {
+		event = event.Interface("body", generationLogPayload(body, false))
+	}
+	if err != nil {
+		event = event.Err(err)
+	}
+	event.Msg("generation upstream response")
+}
 
 type projectGenerationStore interface {
 	Ensure(ctx context.Context, userID, id, title string) error
@@ -76,6 +202,7 @@ type projectGenerationRequest struct {
 	TaskID       string                  `json:"task_id"`
 	ProjectTitle string                  `json:"project_title"`
 	APIKey       string                  `json:"api_key"`
+	Provider     string                  `json:"provider"`
 	Model        string                  `json:"model"`
 	APIMode      string                  `json:"api_mode"`
 	AllowRewrite bool                    `json:"allow_prompt_rewrite"`
@@ -122,6 +249,9 @@ func validateProjectGenerationRequest(req projectGenerationRequest) error {
 	}
 	if req.APIMode != "images" && req.APIMode != "responses" {
 		return errors.New("unsupported api mode")
+	}
+	if req.Provider != "openai" {
+		return errors.New("unsupported image provider")
 	}
 	if len(req.RequestIDs) == 0 || len(req.RequestIDs) > 10 {
 		return errors.New("request_ids must contain 1-10 ids")
@@ -262,7 +392,7 @@ func createUpstreamGenerationRequest(ctx context.Context, baseURL string, req pr
 	return request, nil
 }
 
-func readGenerationImage(client *http.Client, item upstreamImageItem, mimeType string) (string, []byte, error) {
+func readGenerationImage(ctx context.Context, client *http.Client, item upstreamImageItem, mimeType string) (string, []byte, error) {
 	if item.B64JSON != "" {
 		payload := strings.TrimSpace(item.B64JSON)
 		if strings.HasPrefix(payload, "data:") {
@@ -281,7 +411,11 @@ func readGenerationImage(client *http.Client, item upstreamImageItem, mimeType s
 	if item.URL == "" {
 		return "", nil, errors.New("upstream image data missing")
 	}
-	resp, err := client.Get(item.URL)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, item.URL, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	resp, err := client.Do(request)
 	if err != nil {
 		return "", nil, err
 	}
@@ -391,7 +525,7 @@ func decodeResponsesImageResult(raw json.RawMessage) string {
 }
 
 func (h *ProjectGenerationHandler) saveGeneratedImage(ctx context.Context, userID, projectID, taskID, mimeType string, width, height *int, item upstreamImageItem) (string, string, error) {
-	dataURL, data, err := readGenerationImage(h.client, item, mimeType)
+	dataURL, data, err := readGenerationImage(ctx, h.client, item, mimeType)
 	if err != nil {
 		return "", "", err
 	}
@@ -419,13 +553,16 @@ func (h *ProjectGenerationHandler) generateResponses(c *gin.Context, userID, pro
 			c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
 			return
 		}
+		logGenerationUpstreamRequest(upstreamRequest.Method, upstreamRequest.URL.String(), 1, nil)
 		upstreamResponse, err := h.client.Do(upstreamRequest)
 		if err != nil {
+			logGenerationUpstream(upstreamRequest.Method, upstreamRequest.URL.String(), 1, 0, nil, err)
 			c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "上游连接中断: " + err.Error()})
 			return
 		}
 		responseData, readErr := io.ReadAll(upstreamResponse.Body)
 		upstreamResponse.Body.Close()
+		logGenerationUpstream(upstreamRequest.Method, upstreamRequest.URL.String(), 1, upstreamResponse.StatusCode, responseData, readErr)
 		if readErr != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "read image provider response failed"})
 			return
@@ -551,6 +688,17 @@ func (h *ProjectGenerationHandler) Status(c *gin.Context) {
 
 // Generate POST /api/v1/projects/:id/generations 或 /edits，由后端生成并先落库再返回。
 func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
+	responseWriter := &generationLogResponseWriter{ResponseWriter: c.Writer}
+	c.Writer = responseWriter
+	defer func() {
+		log.Info().
+			Str("method", c.Request.Method).
+			Str("path", c.Request.URL.Path).
+			Int("status", c.Writer.Status()).
+			Interface("body", generationLogPayload(responseWriter.body.Bytes(), responseWriter.truncated)).
+			Msg("generation response")
+	}()
+
 	userID := c.GetString(middleware.ContextKeyUserID)
 	providerName := c.GetString(middleware.ContextKeyProvider)
 	projectID := strings.TrimSpace(c.Param("id"))
@@ -571,9 +719,13 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 	if req.APIMode == "" {
 		req.APIMode = "images"
 	}
+	if req.Provider == "" {
+		req.Provider = "openai"
+	}
 	if len(req.RequestIDs) == 0 {
 		req.RequestIDs = []string{req.TaskID}
 	}
+	logGenerationRequest(c, req)
 	if err := validateProjectGenerationRequest(req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
 		return
@@ -600,13 +752,16 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
 		return
 	}
+	logGenerationUpstreamRequest(upstreamRequest.Method, upstreamRequest.URL.String(), 1, nil)
 	upstreamResponse, err := h.client.Do(upstreamRequest)
 	if err != nil {
+		logGenerationUpstream(upstreamRequest.Method, upstreamRequest.URL.String(), 1, 0, nil, err)
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "上游连接中断: " + err.Error()})
 		return
 	}
 	defer upstreamResponse.Body.Close()
 	responseData, err := io.ReadAll(upstreamResponse.Body)
+	logGenerationUpstream(upstreamRequest.Method, upstreamRequest.URL.String(), 1, upstreamResponse.StatusCode, responseData, err)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "read image provider response failed"})
 		return

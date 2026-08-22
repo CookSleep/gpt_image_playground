@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,6 +40,7 @@ func (h *AuthHandler) Register(r *gin.Engine, authMW gin.HandlerFunc) {
 	g.GET("/user", authMW, h.GetUser)
 	g.POST("/logout", authMW, h.Logout)
 	g.POST("/oidc/refresh", authMW, h.RefreshOIDC)
+	g.POST("/oidc/sync", authMW, h.SyncOIDCProfile)
 }
 
 // ListProviders GET /auth/providers
@@ -149,6 +151,32 @@ func (h *AuthHandler) RefreshOIDC(c *gin.Context) {
 		"oidc_refresh_token": tokens.RefreshToken,
 		"expires_in":         tokens.ExpiresIn,
 	})
+}
+
+// SyncOIDCProfile POST /auth/oidc/sync  body: {"access_token":"..."}
+// 使用当前 OIDC access token 读取 UserInfo，供素材上传等按需回填用户 claims。
+func (h *AuthHandler) SyncOIDCProfile(c *gin.Context) {
+	userID := c.GetString(middleware.ContextKeyUserID)
+	provider := c.GetString(middleware.ContextKeyProvider)
+	if userID == "" || provider == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "unauthenticated"})
+		return
+	}
+	var body struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.AccessToken) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "access_token required"})
+		return
+	}
+	user, err := h.svc.SyncOIDCProfile(c.Request.Context(), userID, provider, body.AccessToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": err.Error()})
+		return
+	}
+	profile := user.ToPublicProfile()
+	profile.IsAdmin = h.svc.IsAdmin(user)
+	c.JSON(http.StatusOK, profile)
 }
 
 // GetUser GET /auth/user

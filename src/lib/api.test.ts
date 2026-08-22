@@ -1043,6 +1043,52 @@ describe('callImageApi', () => {
     })
   })
 
+  it('submits composite generations, polls status, then fetches the completed result', async () => {
+    const outputImage = 'data:image/png;base64,aW1hZ2U='
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ request_id: 'request-1' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        images: [{ url: outputImage }],
+      }), { status: 200 }))
+
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      baseUrl: 'https://localhost:8443/api',
+      apiKey: 'composite-key',
+      model: 'openai/gpt-image-2',
+      customProviders: [COMPOSITE_IMAGE_EDIT_PROVIDER],
+      profiles: [{
+        ...DEFAULT_SETTINGS.profiles[0],
+        id: 'profile-composite',
+        provider: 'composite',
+        baseUrl: 'https://localhost:8443/api',
+        apiKey: 'composite-key',
+        model: 'openai/gpt-image-2',
+      }],
+      activeProfileId: 'profile-composite',
+    }
+    await callImageApi({
+      settings,
+      prompt: '生成图片',
+      params: { ...DEFAULT_PARAMS, size: '1024x1536' },
+      inputImageDataUrls: [],
+    })
+
+    const [, submitInit] = fetchMock.mock.calls[0]
+    expect(fetchMock.mock.calls[0][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2')
+    expect((submitInit as RequestInit).headers).toMatchObject({ Authorization: 'Bearer composite-key' })
+    expect(JSON.parse(String((submitInit as RequestInit).body))).toEqual({
+      prompt: '生成图片',
+      image_size: { width: 1024, height: 1536 },
+      quality: 'auto',
+      num_images: 1,
+      output_format: 'png',
+    })
+    expect(fetchMock.mock.calls[1][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/requests/request-1/status')
+    expect(fetchMock.mock.calls[2][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/requests/request-1')
+  })
+
   it('submits composite edits, polls status, then fetches the completed result', async () => {
     const inputImage = 'data:image/png;base64,aW1hZ2U='
     const fetchMock = vi.spyOn(globalThis, 'fetch')
@@ -1077,7 +1123,8 @@ describe('callImageApi', () => {
 
     await promise
     const [, submitInit] = fetchMock.mock.calls[0]
-    expect(fetchMock.mock.calls[0][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/edit')
+    expect(fetchMock.mock.calls[0][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2')
+    expect((submitInit as RequestInit).headers).toMatchObject({ Authorization: 'Bearer composite-key' })
     expect(JSON.parse(String((submitInit as RequestInit).body))).toMatchObject({
       platform: 'composite',
       prompt: '修改图片',
@@ -1087,7 +1134,7 @@ describe('callImageApi', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledTimes(3)
-    expect(fetchMock.mock.calls[1][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/edit/requests/request-1/status')
-    expect(fetchMock.mock.calls[2][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/edit/requests/request-1')
+    expect(fetchMock.mock.calls[1][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/requests/request-1/status')
+    expect(fetchMock.mock.calls[2][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/requests/request-1')
   })
 })

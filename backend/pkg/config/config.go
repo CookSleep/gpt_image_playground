@@ -17,6 +17,17 @@ type Config struct {
 	JWT      JWTConfig      `yaml:"jwt"`
 	OIDC     OIDCConfig     `yaml:"oidc"`
 	Admin    AdminConfig    `yaml:"admin"`
+	InnerAPI InnerAPIConfig `yaml:"inner_api_rpc"`
+}
+
+type InnerAPIConfig struct {
+	Target         string `yaml:"target"`
+	AppToken       string `yaml:"app_token"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
+}
+
+func (c InnerAPIConfig) Enabled() bool {
+	return strings.TrimSpace(c.Target) != "" && strings.TrimSpace(c.AppToken) != ""
 }
 
 // AdminConfig 管理员身份配置
@@ -79,9 +90,9 @@ type OIDCConfig struct {
 
 // OIDCProviderConfig 单个OIDC提供商配置
 type OIDCProviderConfig struct {
-	Name         string   `yaml:"name"`          // 内部唯一标识，例如 "corp-sso"
-	DisplayName  string   `yaml:"display_name"`  // 前端展示名称
-	IssuerURL    string   `yaml:"issuer_url"`    // OIDC Issuer，用于 discovery
+	Name         string   `yaml:"name"`         // 内部唯一标识，例如 "corp-sso"
+	DisplayName  string   `yaml:"display_name"` // 前端展示名称
+	IssuerURL    string   `yaml:"issuer_url"`   // OIDC Issuer，用于 discovery
 	ClientID     string   `yaml:"client_id"`
 	ClientSecret string   `yaml:"client_secret"`
 	RedirectURI  string   `yaml:"redirect_uri"`
@@ -175,6 +186,9 @@ func (c *Config) applyDefaults() {
 	if c.JWT.RefreshHours == 0 {
 		c.JWT.RefreshHours = 24 * 7
 	}
+	if c.InnerAPI.TimeoutSeconds == 0 {
+		c.InnerAPI.TimeoutSeconds = 30
+	}
 	for i := range c.OIDC.Providers {
 		p := &c.OIDC.Providers[i]
 		if len(p.Scopes) == 0 {
@@ -207,6 +221,12 @@ func (c *Config) Validate() error {
 		if p.RedirectURI == "" {
 			return fmt.Errorf("oidc.providers[%s].redirect_uri is required", p.Name)
 		}
+	}
+	if (strings.TrimSpace(c.InnerAPI.Target) == "") != (strings.TrimSpace(c.InnerAPI.AppToken) == "") {
+		return errors.New("inner_api_rpc.target and inner_api_rpc.app_token must be configured together")
+	}
+	if c.InnerAPI.TimeoutSeconds < 1 {
+		return errors.New("inner_api_rpc.timeout_seconds must be positive")
 	}
 	return nil
 }

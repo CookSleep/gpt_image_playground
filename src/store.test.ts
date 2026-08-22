@@ -205,6 +205,15 @@ vi.mock('./lib/backendImageApi', () => ({
     imagesStoredOnline: true,
   })),
 }))
+vi.mock('./lib/backendCompositeImageApi', () => ({
+  callBackendCompositeImageApi: vi.fn(async () => ({
+    images: [],
+    actualParams: {},
+    actualParamsList: [],
+    revisedPrompts: [],
+    imagesStoredOnline: false,
+  })),
+}))
 vi.mock('./lib/falAiImageApi', () => ({
   getFalErrorMessage: vi.fn((err: unknown) => err instanceof Error ? err.message : String(err)),
   getFalQueuedImageResult: vi.fn(async () => ({
@@ -261,8 +270,9 @@ import { getFalQueuedImageResult } from './lib/falAiImageApi'
 import { queryImageStatuses } from './lib/imageStatusApi'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { callBackendImageApi } from './lib/backendImageApi'
+import { callBackendCompositeImageApi } from './lib/backendCompositeImageApi'
 import { buildLegacyProjectArchive, clearLegacyProjectUploadId, deleteOnlineProject, downloadOnlineProject, downloadOnlineProjectImage, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
-import { LOCAL_PROJECT_ID, cleanStaleAgentInputDrafts, clearFailedTasks, deleteAgentRoundFromConversation, deleteFavoriteCollection, editOutputs, getActiveAgentRounds, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, reuseConfig, retryTask, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
+import { LOCAL_PROJECT_ID, cleanStaleAgentInputDrafts, clearFailedTasks, createFavoriteCollection, deleteAgentRoundFromConversation, deleteFavoriteCollection, editOutputs, getActiveAgentRounds, getActiveDefaultFavoriteCollectionId, getActiveFavoriteCollections, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, renameFavoriteCollection, reuseConfig, retryTask, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -363,6 +373,75 @@ describe('favorite collection deletion', () => {
       favoriteCollectionIds: [collectionB.id],
     })
     expect((await getAllTasks()).map((item) => item.id)).toEqual([sharedTask.id])
+  })
+})
+
+describe('project favorite collection scope', () => {
+  const projectA: Project = {
+    id: 'project-a',
+    title: '项目 A',
+    initialPrompt: '',
+    storage: 'local',
+    defaultFavoriteCollectionId: 'shared-id',
+    createdAt: 1,
+    updatedAt: 1,
+  }
+  const projectB: Project = {
+    ...projectA,
+    id: 'project-b',
+    title: '项目 B',
+  }
+  const collectionA = { id: 'shared-id', projectId: projectA.id, name: '项目 A 收藏夹', createdAt: 1, updatedAt: 1 }
+  const collectionB = { id: 'shared-id', projectId: projectB.id, name: '项目 B 收藏夹', createdAt: 1, updatedAt: 1 }
+
+  beforeEach(() => {
+    useStore.setState({
+      projects: [projectA, projectB],
+      activeProjectId: projectA.id,
+      tasks: [],
+      favoriteCollections: [collectionA, collectionB],
+      showToast: vi.fn(),
+    })
+  })
+
+  it('creates and renames collections only in the active project', () => {
+    const created = createFavoriteCollection('新收藏夹')
+    expect(created?.projectId).toBe(projectA.id)
+
+    renameFavoriteCollection(collectionA.id, '项目 A 已改名')
+    expect(getActiveFavoriteCollections().map((collection) => collection.name)).toEqual(['项目 A 已改名', '新收藏夹'])
+
+    useStore.getState().setActiveProjectId(projectB.id)
+    expect(getActiveFavoriteCollections()).toEqual([collectionB])
+    expect(getActiveDefaultFavoriteCollectionId()).toBe(collectionB.id)
+  })
+
+  it('deletes only the active project collection and task references', async () => {
+    const keepA = { id: 'keep-a', projectId: projectA.id, name: '保留', createdAt: 1, updatedAt: 1 }
+    const taskA = task({ id: 'task-a', projectId: projectA.id, isFavorite: true, favoriteCollectionIds: [collectionA.id] })
+    const taskB = task({ id: 'task-b', projectId: projectB.id, isFavorite: true, favoriteCollectionIds: [collectionB.id] })
+    useStore.setState({ tasks: [taskA, taskB], favoriteCollections: [collectionA, keepA, collectionB] })
+
+    await deleteFavoriteCollection(collectionA.id)
+
+    const state = useStore.getState()
+    expect(state.favoriteCollections).toEqual([keepA, collectionB])
+    expect(state.tasks.find((item) => item.id === taskA.id)).toMatchObject({ isFavorite: false, favoriteCollectionIds: [] })
+    expect(state.tasks.find((item) => item.id === taskB.id)).toMatchObject({ isFavorite: true, favoriteCollectionIds: [collectionB.id] })
+  })
+
+  it('marks an online project pending when collection metadata changes', () => {
+    useStore.setState({
+      projects: [{ ...projectA, storage: 'online', remoteId: projectA.id, syncPending: false }],
+      activeProjectId: projectA.id,
+    })
+
+    createFavoriteCollection('需要同步')
+
+    expect(useStore.getState().projects[0]).toMatchObject({
+      id: projectA.id,
+      syncPending: true,
+    })
   })
 })
 
@@ -682,6 +761,7 @@ describe('mask draft lifecycle in store actions', () => {
         projectTitle: '后端在线生成',
         taskId: generatedTask.id,
         apiKey: 'oidc-key',
+        provider: 'openai',
         model: 'gpt-image-2',
         prompt: 'prompt',
         onImageStatusRequestCreated: expect.any(Function),
@@ -690,6 +770,40 @@ describe('mask draft lifecycle in store actions', () => {
       expect(uploadOnlineProjectImage).not.toHaveBeenCalled()
       expect(generatedTask.outputImages).toHaveLength(1)
       expect(generatedTask).toMatchObject({ apiMode: 'images', apiModel: 'gpt-image-2' })
+    } finally {
+      authState.accessToken = null
+    }
+  })
+
+  it('routes a Composite platform API key through the asynchronous backend', async () => {
+    const { callImageApi } = await import('./lib/api')
+    authState.accessToken = 'token'
+    vi.mocked(callImageApi).mockClear()
+    vi.mocked(callBackendImageApi).mockClear()
+    vi.mocked(callBackendCompositeImageApi).mockClear()
+    vi.mocked(uploadOnlineProjectImage).mockClear()
+    vi.mocked(callBackendCompositeImageApi).mockResolvedValueOnce({
+      images: ['data:image/png;base64,Y29tcG9zaXRl'],
+      imagesStoredOnline: false,
+    })
+    try {
+      useStore.setState({
+        settings: normalizeSettings(DEFAULT_SETTINGS),
+      })
+      const projectId = useStore.getState().createProject('Composite 在线生成')
+
+      await submitTask({ apiOverride: { apiKey: 'composite-key', model: 'openai/gpt-image-2', platform: 'Composite' } })
+
+      await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
+      expect(callBackendCompositeImageApi).toHaveBeenCalledWith(expect.objectContaining({
+        apiKey: 'composite-key',
+        model: 'openai/gpt-image-2',
+      }))
+      expect(callBackendImageApi).not.toHaveBeenCalled()
+      expect(callImageApi).not.toHaveBeenCalled()
+      expect(uploadOnlineProjectImage).toHaveBeenCalledWith(projectId, expect.any(String), expect.objectContaining({
+        dataUrl: 'data:image/png;base64,Y29tcG9zaXRl',
+      }))
     } finally {
       authState.accessToken = null
     }

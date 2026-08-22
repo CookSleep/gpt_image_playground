@@ -172,6 +172,23 @@ export function SidebarLeftIcon(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+export function HomeIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1V10Z" />
+    </svg>
+  )
+}
+
+export function SearchIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" {...props}>
+      <circle cx="11" cy="11" r="7" strokeWidth={2} />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m20 20-4-4" />
+    </svg>
+  )
+}
+
 export function FavoriteIcon({ filled, ...props }: SVGProps<SVGSVGElement> & { filled?: boolean }) {
   return (
     <svg fill={filled ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24" {...props}>

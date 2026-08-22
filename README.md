@@ -424,7 +424,7 @@ JSON 结构示例：
 
 第三方服务商可以参考 [自定义服务商 LLM 提示词](docs/custom-provider-llm-prompt.md)，让 LLM 根据自己的 API 文档生成可导入的完整配置。导入后只需要在设置里补充 API Key。
 
-Composite 图生图/图片编辑的配置示例见 [`docs/composite-image-edit-settings.json`](docs/composite-image-edit-settings.json)。导入后填写 Composite API Key；`baseUrl` 默认对应文档中的 `https://localhost:8443/api`，可按实际网关地址调整。该配置提交任务后会轮询 `IN_QUEUE`/`IN_PROGRESS`，在 `COMPLETED` 后再请求最终结果接口并读取 `images[*].url`。文生图提交配置暂待对应接口文档补充。
+Composite 文生图与图片编辑的配置示例见 [`docs/composite-image-edit-settings.json`](docs/composite-image-edit-settings.json)。导入后填写 Composite API Key；`baseUrl` 默认对应文档中的 `https://localhost:8443/api`，可按实际网关地址调整。登录后选择 `platform` 为 `composite`（忽略大小写）的 OIDC API Key 时，前端会直接调用应用后台的独立异步接口：POST `/api/v1/model/{slug}` 提交任务，GET `/api/v1/model/{slug}/requests/{request_id}/status` 轮询，并在 `COMPLETED` 后 GET `/api/v1/model/{slug}/requests/{request_id}` 获取 `images[*].url`。图片编辑会先通过 `/api/v1/materials` 和后台 Inner API RPC 上传参考图/遮罩，随后只把返回的 `file_url` 写入 `image_urls` / `mask_url`。后台逐次将请求和 Bearer API Key 转发给 OIDC issuer 对应的 Composite 上游，不经过 `/api/v1/projects/:id/generations`。`groupName` 仅用于界面展示，不参与路由判断。
 
 ---
 

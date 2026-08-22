@@ -332,6 +332,21 @@ export async function storeImage(dataUrl: string, source: NonNullable<StoredImag
   return (await storeImageWithSize(dataUrl, source)).id
 }
 
+/** 保存远程图片引用，不读取图片内容；Composite 素材接口只需要 URL。 */
+export async function storeImageReference(id: string, url: string, source: NonNullable<StoredImage['source']> = 'upload'): Promise<string> {
+  const existing = await getImage(id)
+  if (!existing || existing.dataUrl !== url) {
+    await putImage({
+      ...(existing ?? {}),
+      id,
+      dataUrl: url,
+      createdAt: existing?.createdAt ?? Date.now(),
+      source,
+    })
+  }
+  return id
+}
+
 export async function storeImageWithSize(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload'): Promise<StoreImageResult> {
   const id = await hashDataUrl(dataUrl)
   const existing = await getImage(id)

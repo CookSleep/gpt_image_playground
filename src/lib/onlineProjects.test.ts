@@ -138,6 +138,7 @@ describe('onlineProjects', () => {
       remoteId: 'project-a',
       remoteArchiveSha256: 'old-sha',
       syncPending: true,
+      defaultFavoriteCollectionId: 'favorite-a',
       createdAt: 1,
       updatedAt: 2,
     }
@@ -162,7 +163,11 @@ describe('onlineProjects', () => {
         task({ id: 'other-task', projectId: 'project-b', outputImages: ['other-image'] }),
       ],
       agentConversations: [projectConversation, conversation('other-conversation', 'project-b')],
-      favoriteCollections: [],
+      favoriteCollections: [
+        { id: 'favorite-a', projectId: project.id, name: '项目 A 收藏夹', createdAt: 1, updatedAt: 1 },
+        { id: 'favorite-b', projectId: 'project-b', name: '项目 B 收藏夹', createdAt: 1, updatedAt: 1 },
+        { id: 'favorite-local', name: '本地收藏夹', createdAt: 1, updatedAt: 1 },
+      ],
       defaultFavoriteCollectionId: null,
     }, project.id)
     const parsed = readExportZip(new Uint8Array(await archive.arrayBuffer()))
@@ -171,6 +176,8 @@ describe('onlineProjects', () => {
     expect(parsed.manifest.projects?.[0]).not.toHaveProperty('remoteArchiveSha256')
     expect(parsed.manifest.tasks?.map((item) => item.id)).toEqual(['project-task'])
     expect(parsed.manifest.agentConversations?.map((item) => item.id)).toEqual(['project-conversation'])
+    expect(parsed.manifest.favoriteCollections?.map((item) => item.id)).toEqual(['favorite-a'])
+    expect(parsed.manifest.defaultFavoriteCollectionId).toBe('favorite-a')
     expect(parsed.manifest.imageFiles).toEqual({})
   })
 

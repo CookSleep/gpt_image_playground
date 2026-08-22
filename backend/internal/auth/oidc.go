@@ -152,16 +152,24 @@ func (p *Provider) Exchange(ctx context.Context, code, codeVerifier string) (*Us
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, fmt.Errorf("decode id_token claims: %w", err)
 	}
+	var idTokenClaims map[string]interface{}
+	if err := idToken.Claims(&idTokenClaims); err != nil {
+		return nil, fmt.Errorf("decode id_token raw claims: %w", err)
+	}
 
 	// 调用userinfo端点获取完整的claims信息
-	var allClaims map[string]interface{}
+	allClaims := make(map[string]interface{}, len(idTokenClaims))
+	for key, value := range idTokenClaims {
+		allClaims[key] = value
+	}
 	userInfo, err := p.provider.UserInfo(ctx, oauth2.StaticTokenSource(tok))
 	if err == nil && userInfo != nil {
-		if err := userInfo.Claims(&allClaims); err != nil {
-			allClaims = make(map[string]interface{})
+		var userInfoClaims map[string]interface{}
+		if err := userInfo.Claims(&userInfoClaims); err == nil {
+			for key, value := range userInfoClaims {
+				allClaims[key] = value
+			}
 		}
-	} else {
-		allClaims = make(map[string]interface{})
 	}
 
 	// 合并id_token和userinfo的claims
@@ -216,6 +224,47 @@ func (p *Provider) RefreshOIDCToken(ctx context.Context, refreshToken string) (*
 		RefreshToken: tok.RefreshToken,
 		ExpiresIn:    expiresIn,
 	}, nil
+}
+
+// FetchUserInfo 使用当前 OIDC access token 读取最新 UserInfo，不会触发 refresh。
+func (p *Provider) FetchUserInfo(ctx context.Context, accessToken string) (*UserClaims, error) {
+	if strings.TrimSpace(accessToken) == "" {
+		return nil, errors.New("missing oidc access token")
+	}
+	userInfo, err := p.provider.UserInfo(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: accessToken}))
+	if err != nil {
+		return nil, fmt.Errorf("fetch oidc userinfo: %w", err)
+	}
+	var raw map[string]interface{}
+	if err := userInfo.Claims(&raw); err != nil {
+		return nil, fmt.Errorf("decode oidc userinfo: %w", err)
+	}
+	getString := func(key string) string {
+		value, _ := raw[key].(string)
+		return strings.TrimSpace(value)
+	}
+	sub := getString("sub")
+	if sub == "" {
+		return nil, errors.New("oidc userinfo missing sub")
+	}
+	name := getString("name")
+	if name == "" {
+		name = getString("preferred_username")
+	}
+	return &UserClaims{
+		Provider:   p.Name,
+		Sub:        sub,
+		Email:      getString("email"),
+		Name:       name,
+		PictureURL: getString("picture"),
+		RawJSON:    mustMarshalClaims(raw),
+		IssuerURL:  p.cfg.IssuerURL,
+	}, nil
+}
+
+func mustMarshalClaims(claims map[string]interface{}) []byte {
+	data, _ := json.Marshal(claims)
+	return data
 }
 
 // rawClaims 标准 OIDC claims 子集

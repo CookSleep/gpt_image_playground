@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -23,6 +24,7 @@ type User struct {
 type PublicProfile struct {
 	ID           string                 `json:"id"`
 	OIDCProvider string                 `json:"oidc_provider"`
+	AccountID    string                 `json:"account_id,omitempty"`
 	Email        string                 `json:"email,omitempty"`
 	Name         string                 `json:"name,omitempty"`
 	PictureURL   string                 `json:"picture_url,omitempty"`
@@ -40,9 +42,24 @@ func (u *User) ToPublicProfile() PublicProfile {
 	return PublicProfile{
 		ID:           u.ID,
 		OIDCProvider: u.OIDCProvider,
+		AccountID:    ExtractAccountID(u.RawClaims),
 		Email:        u.Email,
 		Name:         u.Name,
 		PictureURL:   u.PictureURL,
 		Claims:       claims,
 	}
+}
+
+// ExtractAccountID 读取 OIDC 返回的外部账户标识。它不能回退到 OIDC sub，二者语义不同。
+func ExtractAccountID(rawClaims []byte) string {
+	var claims map[string]any
+	if json.Unmarshal(rawClaims, &claims) != nil {
+		return ""
+	}
+	for _, key := range []string{"account_id", "sub2api:account_id", "accountId"} {
+		if value, ok := claims[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

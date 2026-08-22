@@ -1024,16 +1024,18 @@ export async function getCustomQueuedImageResult(
   customProvider: CustomProviderDefinition,
   taskId: string,
   params: TaskParams,
+  isEdit = false,
 ): Promise<CallApiResult> {
-  if (!customProvider.poll) throw new Error('自定义异步任务缺少 poll 配置')
+  const poll = isEdit && customProvider.editPoll ? customProvider.editPoll : customProvider.poll
+  if (!poll) throw new Error('自定义异步任务缺少 poll 配置')
   const mime = MIME_MAP[params.output_format] || 'image/png'
-  return pollCustomTaskResult(profile, customProvider.poll, taskId, mime)
+  return pollCustomTaskResult(profile, poll, taskId, mime)
 }
 
 async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile, customProvider: CustomProviderDefinition): Promise<CallApiResult> {
   const { params, inputImageDataUrls } = opts
   const isEdit = inputImageDataUrls.length > 0
-  if (customProvider.editOnly && !isEdit) throw new Error('当前 Composite 配置仅支持图生图/图片编辑，文生图接口待补充')
+  if (customProvider.editOnly && !isEdit) throw new Error('当前服务商配置仅支持图生图/图片编辑')
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const controller = new AbortController()
   let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => controller.abort(), profile.timeout * 1000)
@@ -1042,10 +1044,11 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
     const proxyConfig = readClientDevProxyConfig()
     const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
     const submitMapping = isEdit && customProvider.editSubmit ? customProvider.editSubmit : customProvider.submit
+    const pollMapping = isEdit && customProvider.editPoll ? customProvider.editPoll : customProvider.poll
     if (useApiProxy && (submitMapping.method ?? 'POST') !== 'POST') {
       throw new Error('API 代理暂不支持使用 GET 提交的自定义服务商。请关闭 API 代理，或改用 POST 提交的自定义服务商配置。')
     }
-    if (useApiProxy && (submitMapping.taskIdPath || customProvider.poll)) {
+    if (useApiProxy && (submitMapping.taskIdPath || pollMapping)) {
       throw new Error('API 代理暂不支持使用异步任务的自定义服务商。请关闭 API 代理，或改用同步返回图片的自定义服务商配置。')
     }
     const submitPayload = await submitCustomRequest(submitMapping, opts, profile, controller, proxyConfig, useApiProxy)
@@ -1057,13 +1060,13 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
       throw err
     }
     if (!taskId) return extractCustomImages(submitPayload, submitMapping.result ?? {}, mime, controller.signal)
-    if (!customProvider.poll) throw new Error('异步接口返回了 task_id，但服务商配置缺少 poll')
+    if (!pollMapping) throw new Error('异步接口返回了 task_id，但服务商配置缺少 poll')
     opts.onCustomTaskEnqueued?.({ taskId })
     if (timeoutId) {
       clearTimeout(timeoutId)
       timeoutId = null
     }
-    return pollCustomTaskResult(profile, customProvider.poll, taskId, mime, controller.signal)
+    return pollCustomTaskResult(profile, pollMapping, taskId, mime, controller.signal)
   } finally {
     if (timeoutId) clearTimeout(timeoutId)
   }

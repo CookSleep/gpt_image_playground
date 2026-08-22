@@ -3,7 +3,7 @@ import { LOCAL_PROJECT_ID, useStore } from '../store'
 import { useVersionCheck } from '../hooks/useVersionCheck'
 import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
-import { updateProjectUrl } from '../lib/projectRoute'
+import { updateWorkspaceUrl } from '../lib/projectRoute'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
 import HistoryModal from './HistoryModal'
@@ -12,6 +12,7 @@ import { EditIcon, HelpCircleIcon, HistoryIcon, InstallIcon, SettingsIcon } from
 import UserMenu from '../auth/UserMenu'
 import { useAuth } from '../auth/AuthContext'
 import { ProjectBalance } from './ProjectApiControls'
+import type { AppView } from './AppSidebar'
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -23,7 +24,7 @@ function isInstalledPwa() {
   return window.matchMedia('(display-mode: standalone)').matches || nav.standalone === true
 }
 
-export default function Header() {
+export default function Header({ view = 'workspace', onNavigate }: { view?: AppView; onNavigate?: (view: AppView) => void } = {}) {
   const appMode = useStore((s) => s.appMode)
   const setAppMode = useStore((s) => s.setAppMode)
   const projects = useStore((s) => s.projects)
@@ -66,8 +67,9 @@ export default function Header() {
   }
 
   const openHome = () => {
+    onNavigate?.('workspace')
     setActiveProjectId(null)
-    updateProjectUrl(null)
+    updateWorkspaceUrl(null, true)
   }
 
 
@@ -157,7 +159,7 @@ export default function Header() {
                     onClick={openHome}
                     className="hidden text-lg font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:inline"
                   >
-                    OpenToken Images
+                  {view === 'materials' ? '素材库' : 'OpenToken Images'}
                   </button>
                 </>
               ) : (
@@ -198,9 +200,9 @@ export default function Header() {
                   <button
                     type="button"
                     onClick={openHome}
-                    className={`${activeProject ? 'hidden sm:inline' : ''} text-[17px] font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:text-lg`}
+                    className={`${activeProject ? 'hidden sm:inline' : ''} min-w-0 max-w-full truncate whitespace-nowrap text-[17px] font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:text-lg`}
                   >
-                    OpenToken Images
+                    {view === 'materials' ? '素材库' : 'OpenToken Images'}
                   </button>
                 </>
               )}

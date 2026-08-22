@@ -88,20 +88,24 @@ export function ProjectApiKeySelect() {
   useEffect(() => {
     if (!apiKey) return
     const current = useStore.getState().oidcApiOverride
-    if (current?.apiKey === apiKey) return
+    const platform = apiKeyItems.find((item) => item.key === apiKey)?.platform
+    if (current?.apiKey === apiKey && current.platform === platform) return
     setOidcApiOverride({
       ...(current?.model ? { model: current.model } : {}),
       apiKey,
+      ...(platform ? { platform } : {}),
     })
-  }, [apiKey, setOidcApiOverride])
+  }, [apiKey, apiKeyItems, setOidcApiOverride])
 
   const handleApiKeyChange = (value: string) => {
     setApiKey(value)
     writeCachedApiKey(user?.id, value)
     const current = useStore.getState().oidcApiOverride
+    const platform = apiKeyItems.find((item) => item.key === value)?.platform
     setOidcApiOverride({
       ...(current?.model ? { model: current.model } : {}),
       ...(value ? { apiKey: value } : {}),
+      ...(platform ? { platform } : {}),
     })
   }
 

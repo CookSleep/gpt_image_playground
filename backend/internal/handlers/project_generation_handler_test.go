@@ -88,6 +88,21 @@ func generationRequestBody(inputImages []string, mask string) io.Reader {
 	return bytes.NewReader(data)
 }
 
+func TestSanitizeGenerationLogValueRedactsSecretsAndImageData(t *testing.T) {
+	value := sanitizeGenerationLogValue(map[string]any{
+		"api_key": "composite-secret-key",
+		"image":   "data:image/png;base64,AAECAw==",
+		"result":  map[string]any{"b64_json": "AAECAw=="},
+	}, "").(map[string]any)
+
+	if value["api_key"] != "compos...-key" {
+		t.Fatalf("api key was not masked: %#v", value["api_key"])
+	}
+	if strings.Contains(value["image"].(string), "AAECAw==") || strings.Contains(value["result"].(map[string]any)["b64_json"].(string), "AAECAw==") {
+		t.Fatalf("image data leaked into log value: %#v", value)
+	}
+}
+
 func TestProjectGenerationHandlerGeneratesAndSavesBeforeReturning(t *testing.T) {
 	store := &projectGenerationStoreStub{}
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -172,6 +187,29 @@ func TestProjectGenerationHandlerUsesMultipartEdits(t *testing.T) {
 	}
 	if strings.Join(store.events, ",") != "ensure,upstream,save" {
 		t.Fatalf("unexpected operation order: %v", store.events)
+	}
+}
+
+func TestProjectGenerationHandlerRejectsCompositeProvider(t *testing.T) {
+	store := &projectGenerationStoreStub{}
+	r := newProjectGenerationRouter(store, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatalf("upstream must not be called: %s", req.URL)
+		return nil, nil
+	}))
+	body, _ := io.ReadAll(generationRequestBody(nil, ""))
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["provider"] = "composite"
+	body, _ = json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "unsupported image provider") {
+		t.Fatalf("unexpected response: status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

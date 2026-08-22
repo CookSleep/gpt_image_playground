@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"gpt-image-backend/internal/auth"
@@ -109,14 +110,14 @@ func (s *AuthService) HandleCallback(ctx context.Context, providerName, state, c
 		log.Printf("=== OIDC Callback Complete Claims ===")
 		log.Printf("Provider: %s", providerName)
 		log.Printf("User: %s (%s)", claims.Name, claims.Email)
-		
+
 		// 检查并打印apikey相关claims
 		if apikey, ok := allClaims["sub2api:apikey"].(string); ok && apikey != "" {
 			log.Printf("API Key: %s", apikey)
 		} else {
 			log.Printf("API Key: not found in claims")
 		}
-		
+
 		// 检查并打印balance相关claims
 		if balance, ok := allClaims["sub2api:balance"].(string); ok && balance != "" {
 			log.Printf("Balance: %s", balance)
@@ -125,7 +126,7 @@ func (s *AuthService) HandleCallback(ctx context.Context, providerName, state, c
 		} else {
 			log.Printf("Balance: not found in claims")
 		}
-		
+
 		// 打印所有claims用于调试
 		log.Printf("All claims keys: ")
 		for key := range allClaims {
@@ -171,6 +172,68 @@ func (s *AuthService) RefreshOIDCToken(ctx context.Context, providerName, refres
 		return nil, fmt.Errorf("unknown provider: %s", providerName)
 	}
 	return p.RefreshOIDCToken(ctx, refreshToken)
+}
+
+// SyncOIDCProfile 使用当前 OIDC access token 重新读取 UserInfo，并回填本地用户 claims。
+func (s *AuthService) SyncOIDCProfile(ctx context.Context, userID, providerName, accessToken string) (*models.User, error) {
+	user, err := s.users.FindByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user.OIDCProvider != providerName {
+		return nil, fmt.Errorf("oidc provider mismatch")
+	}
+	provider, ok := s.registry.Get(providerName)
+	if !ok {
+		return nil, fmt.Errorf("unknown provider: %s", providerName)
+	}
+	claims, err := provider.FetchUserInfo(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	if claims.Sub != user.OIDCSub {
+		return nil, fmt.Errorf("oidc subject mismatch")
+	}
+	// UserInfo 可能只返回标准字段。合并而不是覆盖，避免丢失 ID Token 中已有的自定义 claims。
+	rawClaims := mergeOIDCClaims(user.RawClaims, claims.RawJSON)
+	email := claims.Email
+	if strings.TrimSpace(email) == "" {
+		email = user.Email
+	}
+	name := claims.Name
+	if strings.TrimSpace(name) == "" {
+		name = user.Name
+	}
+	pictureURL := claims.PictureURL
+	if strings.TrimSpace(pictureURL) == "" {
+		pictureURL = user.PictureURL
+	}
+	return s.users.UpsertFromOIDC(ctx, &models.User{
+		OIDCProvider: claims.Provider,
+		OIDCSub:      claims.Sub,
+		Email:        email,
+		Name:         name,
+		PictureURL:   pictureURL,
+		RawClaims:    rawClaims,
+	})
+}
+
+func mergeOIDCClaims(existing, latest []byte) []byte {
+	merged := make(map[string]interface{})
+	if err := json.Unmarshal(existing, &merged); err != nil {
+		merged = make(map[string]interface{})
+	}
+	var fresh map[string]interface{}
+	if err := json.Unmarshal(latest, &fresh); err == nil {
+		for key, value := range fresh {
+			merged[key] = value
+		}
+	}
+	data, err := json.Marshal(merged)
+	if err != nil {
+		return latest
+	}
+	return data
 }
 
 // GetUser 根据 user_id 取用户资料

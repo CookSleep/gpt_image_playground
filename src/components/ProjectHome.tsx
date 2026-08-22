@@ -8,22 +8,23 @@ import { createLegacyProject } from '../lib/legacyProject'
 import { updateProjectUrl } from '../lib/projectRoute'
 import { readCachedApiKey, writeCachedApiKey } from '../lib/oidcApiKeySelection'
 import Select from './Select'
-import { ArrowUpIcon, CloseIcon, EditIcon, KeyIcon, OpenAIIcon, PlusIcon, TrashIcon } from './icons'
+import { ArrowUpIcon, CloseIcon, CollectionManageIcon, EditIcon, KeyIcon, OpenAIIcon, PlusIcon, TrashIcon } from './icons'
 import HomePromptEditor from './HomePromptEditor'
+import MaterialPickerModal from './MaterialPickerModal'
 
 const HOME_MODEL_OPTIONS = [{
   label: 'GPT Image 2',
   value: DEFAULT_IMAGES_MODEL,
   description: 'OpenAI',
   icon: (
-    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gray-950 text-white shadow-sm dark:bg-white dark:text-gray-950">
+    <span className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gray-950 text-white shadow-sm dark:bg-white dark:text-gray-950 sm:flex">
       <OpenAIIcon className="h-4 w-4" />
     </span>
   ),
 }]
 
 const HOME_API_KEY_ICON = (
-  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">
+  <span className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300 sm:flex">
     <KeyIcon className="h-4 w-4" />
   </span>
 )
@@ -178,8 +179,11 @@ export default function ProjectHome() {
   const [model, setModel] = useState(DEFAULT_IMAGES_MODEL)
   const [submitting, setSubmitting] = useState(false)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
   const [attachments, setAttachments] = useState<InputImage[]>([])
   const [attachmentsLoading, setAttachmentsLoading] = useState(false)
+  const [showAttachmentMenu, setShowAttachmentMenu] = useState(false)
+  const [showMaterialPicker, setShowMaterialPicker] = useState(false)
   const legacyTasks = useMemo(() => tasks.filter((task) => !task.projectId), [tasks])
 
   const latestTaskByProject = useMemo(() => {
@@ -266,13 +270,15 @@ export default function ProjectHome() {
   }, [user])
 
   useEffect(() => {
-    useStore.getState().setOidcApiOverride(apiKey ? { apiKey, model } : { model })
-  }, [apiKey, model])
+    const platform = apiKeyItems.find((item) => item.key === apiKey)?.platform
+    useStore.getState().setOidcApiOverride(apiKey ? { apiKey, model, ...(platform ? { platform } : {}) } : { model })
+  }, [apiKey, apiKeyItems, model])
 
   const setHomeApiKey = (value: string) => {
     setApiKey(value)
     writeCachedApiKey(user?.id, value)
-    useStore.getState().setOidcApiOverride(value ? { apiKey: value, model } : { model })
+    const platform = apiKeyItems.find((item) => item.key === value)?.platform
+    useStore.getState().setOidcApiOverride(value ? { apiKey: value, model, ...(platform ? { platform } : {}) } : { model })
   }
 
   const handleAttachmentChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -324,7 +330,8 @@ export default function ProjectHome() {
     let projectId: string | null = null
     try {
       const state = useStore.getState()
-      const apiOverride = { ...state.oidcApiOverride, apiKey, model }
+      const platform = apiKeyItems.find((item) => item.key === apiKey)?.platform
+      const apiOverride = { ...state.oidcApiOverride, apiKey, model, ...(platform ? { platform } : {}) }
       state.setOidcApiOverride(apiOverride)
       writeCachedApiKey(user?.id, apiKey)
 
@@ -406,8 +413,8 @@ export default function ProjectHome() {
             onChange={setPrompt}
             onSubmit={() => void startProject()}
           />
-          <div className="flex flex-wrap items-center gap-2 px-1 pb-1 sm:px-2">
-            <div className="min-w-0 w-48 max-w-full shrink-0">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.5rem_2.5rem] items-center gap-2 px-1 pb-1 sm:flex sm:flex-wrap sm:px-2">
+            <div className="min-w-0 sm:w-48 sm:max-w-full sm:shrink-0">
               <Select
                 value={model}
                 onChange={(value) => setModel(String(value))}
@@ -416,8 +423,8 @@ export default function ProjectHome() {
                 menuClassName="!py-0"
               />
             </div>
-            <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2">
-              <div className="min-w-0 w-44 shrink-0 sm:w-48">
+            <div className="contents sm:ml-auto sm:flex sm:min-w-0 sm:shrink-0 sm:items-center sm:gap-2">
+              <div className="min-w-0 sm:w-48 sm:shrink-0">
                 <Select
                   value={apiKey}
                   onChange={(value) => setHomeApiKey(String(value))}
@@ -435,22 +442,81 @@ export default function ProjectHome() {
                 className="hidden"
                 onChange={(event) => void handleAttachmentChange(event)}
               />
-              <button
-                type="button"
-                onClick={() => attachmentInputRef.current?.click()}
-                disabled={attachmentsLoading || attachments.length >= HOME_MAX_ATTACHMENTS}
-                className={`p-2.5 rounded-xl transition-all shadow-sm ${
-                  attachmentsLoading || attachments.length >= HOME_MAX_ATTACHMENTS
-                    ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
-                    : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300 hover:shadow'
-                }`}
-                aria-label="添加附件"
-                title="添加附件"
-              >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                </svg>
-              </button>
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(event) => void handleAttachmentChange(event)}
+              />
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!attachmentsLoading && attachments.length < HOME_MAX_ATTACHMENTS) {
+                      setShowAttachmentMenu((value) => !value)
+                    }
+                  }}
+                  disabled={attachmentsLoading || attachments.length >= HOME_MAX_ATTACHMENTS}
+                  className={`p-2.5 rounded-xl transition-all shadow-sm ${
+                    attachmentsLoading || attachments.length >= HOME_MAX_ATTACHMENTS
+                      ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
+                      : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300 hover:shadow'
+                  }`}
+                  aria-label="添加附件"
+                  title="添加附件"
+                >
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                </button>
+                {showAttachmentMenu && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowAttachmentMenu(false)} />
+                    <div className="absolute bottom-full right-0 z-50 mb-2 w-36 overflow-hidden rounded-xl border border-gray-100 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/50"
+                        onClick={() => {
+                          setShowAttachmentMenu(false)
+                          attachmentInputRef.current?.click()
+                        }}
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        上传图片
+                      </button>
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/50 sm:hidden"
+                        onClick={() => {
+                          setShowAttachmentMenu(false)
+                          cameraInputRef.current?.click()
+                        }}
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        拍照
+                      </button>
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/50"
+                        onClick={() => {
+                          setShowAttachmentMenu(false)
+                          setShowMaterialPicker(true)
+                        }}
+                      >
+                        <CollectionManageIcon className="h-4 w-4" />
+                        素材库
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => void startProject()}
@@ -465,6 +531,18 @@ export default function ProjectHome() {
           </div>
         </div>
       </section>
+      {showMaterialPicker && (
+        <MaterialPickerModal
+          onClose={() => setShowMaterialPicker(false)}
+          preferRemoteUrl={apiKeyItems.find((item) => item.key === apiKey)?.platform?.trim().toLowerCase() === 'composite'}
+          onSelect={(_, image) => {
+            if (attachments.length >= HOME_MAX_ATTACHMENTS) return
+            setAttachments((current) => [...current, image])
+            setShowMaterialPicker(false)
+            useStore.getState().showToast('已从素材库添加图片', 'success')
+          }}
+        />
+      )}
 
       <section aria-labelledby="recent-projects-title">
         <div className="mb-5 flex items-end justify-between gap-4">

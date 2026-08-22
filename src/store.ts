@@ -5,6 +5,7 @@ import type {
   AgentMessage,
   AgentRound,
   ApiMode,
+  ApiOverride,
   ApiProfile,
   AppSettings,
   AppMode,
@@ -48,12 +49,14 @@ import {
   deleteImage,
   clearImages,
   storeImage,
+  storeImageReference,
   storeImageWithSize,
 } from './lib/db'
 import { getAccessToken, isAuthEnabled } from './auth/api'
 import { buildLegacyProjectArchive, buildOnlineProjectArchive, clearLegacyProjectUploadId, createOnlineProject, deleteOnlineProject, deleteOnlineProjectImage, downloadOnlineProject, downloadOnlineProjectImage, getAgentConversationReferencedImageIds, getLegacyProjectUploadId, getTaskReferencedImageIds, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
 import { callImageApi } from './lib/api'
 import { callBackendImageApi } from './lib/backendImageApi'
+import { callBackendCompositeImageApi } from './lib/backendCompositeImageApi'
 import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
 import { showBrowserNotification } from './lib/browserNotification'
@@ -628,6 +631,9 @@ function normalizeProjects(value: unknown): Project[] {
       ...(typeof item.remoteId === 'string' && item.remoteId ? { remoteId: item.remoteId } : {}),
       ...(typeof item.remoteArchiveSha256 === 'string' && item.remoteArchiveSha256 ? { remoteArchiveSha256: item.remoteArchiveSha256 } : {}),
       ...(item.syncPending === true ? { syncPending: true } : {}),
+      ...(item.defaultFavoriteCollectionId === null || typeof item.defaultFavoriteCollectionId === 'string'
+        ? { defaultFavoriteCollectionId: item.defaultFavoriteCollectionId }
+        : {}),
       createdAt,
       updatedAt: typeof item.updatedAt === 'number' ? item.updatedAt : createdAt,
     })
@@ -643,9 +649,10 @@ function createProjectTitle(prompt: string) {
 }
 
 
-function createDefaultFavoriteCollection(now = Date.now()): FavoriteCollection {
+function createDefaultFavoriteCollection(now = Date.now(), projectId?: string): FavoriteCollection {
   return {
-    id: DEFAULT_FAVORITE_COLLECTION_ID,
+    id: projectId ? `${DEFAULT_FAVORITE_COLLECTION_ID}:${projectId}` : DEFAULT_FAVORITE_COLLECTION_ID,
+    ...(projectId ? { projectId } : {}),
     name: DEFAULT_FAVORITE_COLLECTION_NAME,
     createdAt: now,
     updatedAt: now,
@@ -661,12 +668,17 @@ function normalizeFavoriteCollections(value: unknown): FavoriteCollection[] {
     if (!isRecord(item)) continue
     if (typeof item.id !== 'string' || !item.id.trim()) continue
     const id = item.id
-    if (id === ALL_FAVORITES_COLLECTION_ID || ids.has(id)) continue
+    const projectId = typeof item.projectId === 'string' && item.projectId && item.projectId !== ALL_PROJECTS_ID && item.projectId !== LOCAL_PROJECT_ID
+      ? item.projectId
+      : undefined
+    const scopedId = `${projectId ?? ''}\n${id}`
+    if (id === ALL_FAVORITES_COLLECTION_ID || ids.has(scopedId)) continue
     const name = normalizeFavoriteCollectionName(typeof item.name === 'string' ? item.name : '')
     if (!name) continue
-    ids.add(id)
+    ids.add(scopedId)
     normalized.push({
       id,
+      ...(projectId ? { projectId } : {}),
       name: name.slice(0, 60),
       createdAt: typeof item.createdAt === 'number' ? item.createdAt : now,
       updatedAt: typeof item.updatedAt === 'number' ? item.updatedAt : now,
@@ -697,6 +709,46 @@ function resolveDefaultFavoriteCollectionId(collections: FavoriteCollection[], p
   if (typeof preferredId === 'string' && collections.some((collection) => collection.id === preferredId)) return preferredId
   if (collections.some((collection) => collection.id === DEFAULT_FAVORITE_COLLECTION_ID)) return DEFAULT_FAVORITE_COLLECTION_ID
   return collections[0]?.id ?? null
+}
+
+export function getFavoriteScopeProjectId(activeProjectId: string | null) {
+  return activeProjectId && activeProjectId !== ALL_PROJECTS_ID && activeProjectId !== LOCAL_PROJECT_ID
+    ? activeProjectId
+    : undefined
+}
+
+export function getFavoriteCollectionsForProject(collections: FavoriteCollection[], projectId?: string) {
+  return collections.filter((collection) => collection.projectId === projectId)
+}
+
+function getFavoriteDefaultForProject(state: AppState, projectId?: string) {
+  const collections = getFavoriteCollectionsForProject(state.favoriteCollections, projectId)
+  if (!projectId) return resolveDefaultFavoriteCollectionId(collections, state.defaultFavoriteCollectionId)
+  const project = state.projects.find((item) => item.id === projectId)
+  return resolveDefaultFavoriteCollectionId(collections, project?.defaultFavoriteCollectionId)
+}
+
+export function getActiveFavoriteCollections(state = useStore.getState()) {
+  return getFavoriteCollectionsForProject(state.favoriteCollections, getFavoriteScopeProjectId(state.activeProjectId))
+}
+
+export function getActiveDefaultFavoriteCollectionId(state = useStore.getState()) {
+  return getFavoriteDefaultForProject(state, getFavoriteScopeProjectId(state.activeProjectId))
+}
+
+function ensureProjectFavoriteCollections(collections: FavoriteCollection[], projects: Project[]) {
+  const normalized = normalizeFavoriteCollections(collections)
+  const legacyCollections = getFavoriteCollectionsForProject(normalized)
+  const next = [...normalized]
+  for (const project of projects) {
+    if (getFavoriteCollectionsForProject(next, project.id).length > 0) continue
+    if (legacyCollections.length > 0) {
+      next.push(...legacyCollections.map((collection) => ({ ...collection, projectId: project.id })))
+      continue
+    }
+    next.push(createDefaultFavoriteCollection(Date.now(), project.id))
+  }
+  return next
 }
 
 function createAgentConversation(now = Date.now(), projectId?: string): AgentConversation {
@@ -870,8 +922,8 @@ interface AppState {
   // 设置
   settings: AppSettings
   setSettings: (s: Partial<AppSettings>) => void
-  oidcApiOverride: { apiKey?: string; model?: string } | null
-  setOidcApiOverride: (apiOverride: { apiKey?: string; model?: string } | null) => void
+  oidcApiOverride: ApiOverride | null
+  setOidcApiOverride: (apiOverride: ApiOverride | null) => void
   agentOidcApiOverride: { model?: string } | null
   setAgentOidcApiOverride: (apiOverride: { model?: string } | null) => void
   dismissedCodexCliPrompts: string[]
@@ -1248,18 +1300,21 @@ export const useStore = create<AppState>()(
         const now = Date.now()
         const online = isAuthEnabled() && (options?.autoRecord === true || Boolean(getAccessToken()))
         const id = online ? crypto.randomUUID() : genId()
+        const defaultCollection = createDefaultFavoriteCollection(now, id)
         const project: Project = {
           id,
           title: createProjectTitle(prompt),
           initialPrompt: prompt.trim(),
           storage: online ? 'online' : 'local',
           ...(online ? { remoteId: id, syncPending: true } : {}),
+          defaultFavoriteCollectionId: defaultCollection.id,
           createdAt: now,
           updatedAt: now,
         }
         get().setAppMode('gallery')
         set((state) => ({
           projects: [project, ...state.projects],
+          favoriteCollections: [...state.favoriteCollections, defaultCollection],
           activeProjectId: project.id,
           selectedTaskIds: [],
           selectedFavoriteCollectionIds: [],
@@ -1374,6 +1429,7 @@ export const useStore = create<AppState>()(
             : false
           return {
             projects: current.projects.filter((item) => item.id !== id),
+            favoriteCollections: current.favoriteCollections.filter((collection) => isLocalProject ? Boolean(collection.projectId) : collection.projectId !== id),
             tasks: current.tasks.filter((task) => isLocalProject ? Boolean(task.projectId) : task.projectId !== id),
             agentConversations: current.agentConversations.filter((conversation) => !deletedConversationIds.has(conversation.id)),
             agentInputDrafts,
@@ -1413,6 +1469,10 @@ export const useStore = create<AppState>()(
           const archive = await buildLegacyProjectArchive(snapshot)
           const response = await uploadOnlineProject(id, '本地数据', archive)
           const project = createOnlineProject(response)
+          const projectCollections = getFavoriteCollectionsForProject(get().favoriteCollections)
+            .map((collection) => ({ ...collection, projectId: project.id }))
+          const defaultFavoriteCollectionId = resolveDefaultFavoriteCollectionId(projectCollections, get().defaultFavoriteCollectionId)
+          project.defaultFavoriteCollectionId = defaultFavoriteCollectionId
           const legacyTaskIds = new Set(legacyTasks.map((task) => task.id))
           const latestTasks = get().tasks
           const changedTasks = latestTasks
@@ -1429,6 +1489,10 @@ export const useStore = create<AppState>()(
           await putProjectWithRecords(project, changedTasks, changedConversations)
           set((state) => ({
             projects: [project, ...state.projects.filter((item) => item.id !== project.id)],
+            favoriteCollections: [
+              ...state.favoriteCollections.filter((collection) => collection.projectId),
+              ...projectCollections,
+            ],
             tasks: state.tasks.map((task) =>
               legacyTaskIds.has(task.id) && !task.projectId ? { ...task, projectId: project.id } : task,
             ),
@@ -1884,11 +1948,22 @@ export const useStore = create<AppState>()(
         }
       }),
       defaultFavoriteCollectionId: DEFAULT_FAVORITE_COLLECTION_ID,
-      setDefaultFavoriteCollectionId: (defaultFavoriteCollectionId) => set((state) => (
-        defaultFavoriteCollectionId === null || state.favoriteCollections.some((collection) => collection.id === defaultFavoriteCollectionId)
-          ? { defaultFavoriteCollectionId }
-          : state
-      )),
+      setDefaultFavoriteCollectionId: (defaultFavoriteCollectionId) => {
+        const state = get()
+        const projectId = getFavoriteScopeProjectId(state.activeProjectId)
+        const collections = getFavoriteCollectionsForProject(state.favoriteCollections, projectId)
+        if (defaultFavoriteCollectionId !== null && !collections.some((collection) => collection.id === defaultFavoriteCollectionId)) return
+        if (!projectId) {
+          set({ defaultFavoriteCollectionId })
+          return
+        }
+        set((current) => ({
+          projects: current.projects.map((project) => project.id === projectId
+            ? { ...project, defaultFavoriteCollectionId }
+            : project),
+        }))
+        touchProject(projectId)
+      },
       activeFavoriteCollectionId: null,
       isManageCollectionsModalOpen: false,
       setActiveFavoriteCollectionId: (activeFavoriteCollectionId) => set({ activeFavoriteCollectionId, selectedTaskIds: [], selectedFavoriteCollectionIds: [] }),
@@ -2253,7 +2328,9 @@ function hasImageStatusRequestIds(task: TaskRecord) {
 
 function isAsyncCustomProviderTask(settings: AppSettings, provider: string, hasInputImages: boolean) {
   const customProvider = getCustomProviderDefinition(settings, provider)
-  if (!customProvider?.poll) return false
+  if (!customProvider) return false
+  const poll = hasInputImages && customProvider.editPoll ? customProvider.editPoll : customProvider.poll
+  if (!poll) return false
   const submitMapping = hasInputImages && customProvider.editSubmit ? customProvider.editSubmit : customProvider.submit
   return Boolean(submitMapping.taskIdPath)
 }
@@ -3341,7 +3418,6 @@ async function loadOnlineProjectCache(localProjects: Project[], localTasks: Task
   const thumbnails: StoredImageThumbnail[] = []
   const availableImageIds = new Set(localImageIds)
   const favoriteCollections: FavoriteCollection[] = []
-  let defaultFavoriteCollectionId: string | null = null
 
   for (const response of responses) {
     const cached = localProjects.find((project) => project.id === response.id || project.remoteId === response.id)
@@ -3363,9 +3439,16 @@ async function loadOnlineProjectCache(localProjects: Project[], localTasks: Task
       try {
         const parsed = readOnlineProjectArchive(await downloadOnlineProject(response.id))
         const archivedProject = normalizeProjects(parsed.project ? [parsed.project] : [])[0]
+        const projectFavoriteCollections = normalizeFavoriteCollections(parsed.favoriteCollections)
+          .map((collection) => ({ ...collection, projectId: remote.id }))
+        const defaultFavoriteCollectionId = resolveDefaultFavoriteCollectionId(
+          projectFavoriteCollections,
+          parsed.defaultFavoriteCollectionId,
+        )
         project = {
           ...remote,
           initialPrompt: archivedProject?.initialPrompt ?? cached?.initialPrompt ?? '',
+          defaultFavoriteCollectionId,
         }
         tasks = [
           ...tasks.filter((task) => task.projectId !== project.id),
@@ -3378,8 +3461,7 @@ async function loadOnlineProjectCache(localProjects: Project[], localTasks: Task
         images.push(...parsed.images)
         for (const image of parsed.images) availableImageIds.add(image.id)
         thumbnails.push(...parsed.thumbnails)
-        favoriteCollections.push(...parsed.favoriteCollections)
-        defaultFavoriteCollectionId = defaultFavoriteCollectionId ?? parsed.defaultFavoriteCollectionId
+        favoriteCollections.push(...projectFavoriteCollections)
       } catch (err) {
         console.warn(`在线项目 ${response.id} 内容加载失败：`, err)
         project = {
@@ -3408,7 +3490,7 @@ async function loadOnlineProjectCache(localProjects: Project[], localTasks: Task
 
   projects.sort((a, b) => b.updatedAt - a.updatedAt)
   tasks = [...new Map(tasks.map((task) => [task.id, task])).values()]
-  return { projects, tasks, agentConversations, images, thumbnails, favoriteCollections, defaultFavoriteCollectionId }
+  return { projects, tasks, agentConversations, images, thumbnails, favoriteCollections }
 }
 
 let initStoreInFlight: Promise<void> | null = null
@@ -3440,7 +3522,6 @@ async function initializeStore() {
     ...storedProjectRecords,
   ]).sort((a, b) => b.updatedAt - a.updatedAt)
   let importedFavoriteCollections: FavoriteCollection[] = []
-  let importedDefaultFavoriteCollectionId: string | null = null
   let importedImages: StoredImage[] = []
   let importedThumbnails: StoredImageThumbnail[] = []
   let onlineListLoaded = false
@@ -3453,7 +3534,6 @@ async function initializeStore() {
       storedTasks = online.tasks
       storedAgentConversations = online.agentConversations
       importedFavoriteCollections = online.favoriteCollections
-      importedDefaultFavoriteCollectionId = online.defaultFavoriteCollectionId
       importedImages = online.images
       importedThumbnails = online.thumbnails
       onlineListLoaded = true
@@ -3527,12 +3607,24 @@ async function initializeStore() {
   const { tasks: markedTasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
   const interruptedTaskIds = new Set(interruptedTasks.map((task) => task.id))
   const favoriteState = useStore.getState()
-  const favoriteCollections = importedFavoriteCollections.length
-    ? ensureDefaultFavoriteCollection(normalizeFavoriteCollections([...favoriteState.favoriteCollections, ...importedFavoriteCollections]))
-    : favoriteState.favoriteCollections
-  const defaultFavoriteCollectionId = importedDefaultFavoriteCollectionId && favoriteCollections.some((collection) => collection.id === importedDefaultFavoriteCollectionId)
-    ? importedDefaultFavoriteCollectionId
-    : favoriteState.defaultFavoriteCollectionId
+  const favoriteCollections = ensureProjectFavoriteCollections(
+    ensureDefaultFavoriteCollection(normalizeFavoriteCollections([...importedFavoriteCollections, ...favoriteState.favoriteCollections])),
+    projects,
+  )
+  const defaultFavoriteCollectionId = favoriteState.defaultFavoriteCollectionId
+  const projectsWithFavoriteDefaults = projects.map((project) => {
+    if (project.defaultFavoriteCollectionId !== undefined) return project
+    const id = resolveDefaultFavoriteCollectionId(
+      getFavoriteCollectionsForProject(favoriteCollections, project.id),
+      defaultFavoriteCollectionId,
+    )
+    return { ...project, defaultFavoriteCollectionId: id }
+  })
+  if (projectsWithFavoriteDefaults.some((project, index) => project !== projects[index])) {
+    projects = projectsWithFavoriteDefaults
+    useStore.setState({ projects })
+    for (const project of projects) queueProjectSave(project)
+  }
   const normalizedFavorites = normalizeLoadedFavoriteState(markedTasks.map(getPersistableTask), favoriteCollections, defaultFavoriteCollectionId)
   const tasks = normalizedFavorites.tasks
   if (normalizedFavorites.collections !== favoriteState.favoriteCollections) {
@@ -3727,7 +3819,7 @@ async function initializeStore() {
 }
 
 /** 提交新任务 */
-export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean; apiOverride?: { apiKey?: string; model?: string } } = {}) {
+export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean; apiOverride?: ApiOverride } = {}) {
   const { settings, prompt, inputImages, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, oidcApiOverride, showToast, setConfirmDialog } =
     useStore.getState()
   const apiOverride = options.apiOverride ?? oidcApiOverride ?? undefined
@@ -3815,6 +3907,10 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
 
   // 持久化输入图片到 IndexedDB（此前只在内存缓存中）
   for (const img of orderedInputImages) {
+    if (apiOverride?.platform?.trim().toLowerCase() === 'composite' && /^https?:\/\//i.test(img.dataUrl)) {
+      await storeImageReference(img.id, img.dataUrl)
+      continue
+    }
     await storeImage(img.dataUrl)
   }
 
@@ -5815,6 +5911,7 @@ async function executeTask(taskId: string) {
   const activeProfile = { ...resolvedProfile, apiMode: task.apiMode ?? 'images' }
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
   const taskProvider = task.apiProvider ?? activeProfile.provider
+  const isCompositeRequest = task.apiOverride?.platform?.trim().toLowerCase() === 'composite' && Boolean(task.apiOverride.apiKey)
   let falRequestInfo: { requestId: string; endpoint: string } | null = task.falRequestId && task.falEndpoint
         ? { requestId: task.falRequestId, endpoint: task.falEndpoint }
     : null
@@ -5824,6 +5921,7 @@ async function executeTask(taskId: string) {
 
   if (
     taskProvider !== 'fal' &&
+    !isCompositeRequest &&
     !isAsyncCustomProviderTask(requestSettings, taskProvider, task.inputImageIds.length > 0) &&
     !usesConcurrentOpenAIImageRequests(activeProfile, task.params)
   ) {
@@ -5855,12 +5953,22 @@ async function executeTask(taskId: string) {
     const backendRequest = project?.storage === 'online' && project.remoteId && taskProvider === 'openai' && task.apiOverride?.apiKey
       ? { projectId: project.remoteId, projectTitle: project.title, apiKey: task.apiOverride.apiKey }
       : null
-    const result = backendRequest
+    const result = isCompositeRequest
+      ? await callBackendCompositeImageApi({
+          apiKey: task.apiOverride?.apiKey ?? '',
+          model: activeProfile.model,
+          prompt,
+          params: task.params,
+          inputImageDataUrls: inputDataUrls,
+          maskDataUrl,
+        })
+      : backendRequest
       ? await callBackendImageApi({
           projectId: backendRequest.projectId,
           projectTitle: backendRequest.projectTitle,
           taskId: task.id,
           apiKey: backendRequest.apiKey,
+          provider: 'openai',
           model: activeProfile.model,
           apiMode: activeProfile.apiMode,
           allowPromptRewrite: requestSettings.allowPromptRewrite,
@@ -6082,9 +6190,10 @@ function normalizeFavoritePatch(task: TaskRecord, patch: Partial<TaskRecord>, de
 }
 
 export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
-  const { tasks, setTasks, defaultFavoriteCollectionId } = useStore.getState()
+  const state = useStore.getState()
+  const { tasks, setTasks } = state
   const updated = tasks.map((t) =>
-    t.id === taskId ? { ...t, ...normalizeFavoritePatch(t, patch, defaultFavoriteCollectionId) } : t,
+    t.id === taskId ? { ...t, ...normalizeFavoritePatch(t, patch, getFavoriteDefaultForProject(state, t.projectId)) } : t,
   )
   const task = updated.find((t) => t.id === taskId)
   setTasks(updated)
@@ -6106,15 +6215,16 @@ function sameFavoriteCollectionIds(a: string[], b: string[]) {
 export function getTaskFavoriteCollectionIds(task: TaskRecord) {
   const ids = normalizeFavoriteCollectionIds(task.favoriteCollectionIds)
   if (ids.length > 0) return ids
-  const defaultFavoriteCollectionId = useStore.getState().defaultFavoriteCollectionId
+  const defaultFavoriteCollectionId = getFavoriteDefaultForProject(useStore.getState(), task.projectId)
   return task.isFavorite && defaultFavoriteCollectionId ? [defaultFavoriteCollectionId] : []
 }
 
 function normalizeTaskFavoriteState(task: TaskRecord, collections: FavoriteCollection[]): TaskRecord {
-  const collectionIdSet = new Set(collections.map((collection) => collection.id))
+  const scopedCollections = getFavoriteCollectionsForProject(collections, task.projectId)
+  const collectionIdSet = new Set(scopedCollections.map((collection) => collection.id))
   const normalizedIds = normalizeFavoriteCollectionIds(task.favoriteCollectionIds).filter((id) => collectionIdSet.has(id))
   // 旧版本只有 isFavorite 没有 favoriteCollectionIds，迁移到"默认"收藏夹
-  const defaultId = getDefaultNamedFavoriteCollectionId(collections)
+  const defaultId = getDefaultNamedFavoriteCollectionId(scopedCollections) ?? scopedCollections[0]?.id ?? null
   const ids = normalizedIds.length > 0 ? normalizedIds : task.isFavorite && defaultId ? [defaultId] : []
   const isFavorite = ids.length > 0 || Boolean(task.isFavorite)
   if (ids.length === (task.favoriteCollectionIds ?? []).length && ids.every((id, index) => id === task.favoriteCollectionIds?.[index]) && Boolean(task.isFavorite) === isFavorite) {
@@ -6149,13 +6259,29 @@ export function createFavoriteCollection(name: string) {
     return null
   }
   const state = useStore.getState()
-  const existing = state.favoriteCollections.find((collection) => collection.name === normalizedName)
+  const projectId = getFavoriteScopeProjectId(state.activeProjectId)
+  const existing = getFavoriteCollectionsForProject(state.favoriteCollections, projectId)
+    .find((collection) => collection.name === normalizedName)
   if (existing) return existing
   const now = Date.now()
-  const collection: FavoriteCollection = { id: genId(), name: normalizedName, createdAt: now, updatedAt: now }
+  const collection: FavoriteCollection = { id: genId(), ...(projectId ? { projectId } : {}), name: normalizedName, createdAt: now, updatedAt: now }
   state.setFavoriteCollections([...state.favoriteCollections, collection])
+  touchProject(projectId)
   state.showToast(`已创建收藏夹「${normalizedName}」`, 'success')
   return collection
+}
+
+export function replaceActiveFavoriteCollections(collections: FavoriteCollection[]) {
+  const state = useStore.getState()
+  const projectId = getFavoriteScopeProjectId(state.activeProjectId)
+  state.setFavoriteCollections([
+    ...state.favoriteCollections.filter((collection) => collection.projectId !== projectId),
+    ...collections.map((collection) => ({
+      ...collection,
+      ...(projectId ? { projectId } : { projectId: undefined }),
+    })),
+  ])
+  touchProject(projectId)
 }
 
 export function renameFavoriteCollection(collectionId: string, name: string) {
@@ -6165,19 +6291,26 @@ export function renameFavoriteCollection(collectionId: string, name: string) {
     useStore.getState().showToast('收藏夹名称最多 60 个字符', 'error')
     return
   }
-  const { favoriteCollections, setFavoriteCollections, showToast } = useStore.getState()
+  const state = useStore.getState()
+  const projectId = getFavoriteScopeProjectId(state.activeProjectId)
+  const { favoriteCollections, setFavoriteCollections, showToast } = state
   setFavoriteCollections(favoriteCollections.map((collection) =>
-    collection.id === collectionId ? { ...collection, name: normalizedName, updatedAt: Date.now() } : collection,
+    collection.id === collectionId && collection.projectId === projectId
+      ? { ...collection, name: normalizedName, updatedAt: Date.now() }
+      : collection,
   ))
+  touchProject(projectId)
   showToast('收藏夹名称已更新', 'success')
 }
 
 export async function updateTasksFavoriteCollections(taskIds: string[], collectionIds: string[]) {
-  const ids = normalizeFavoriteCollectionIds(collectionIds)
   const uniqueTaskIds = Array.from(new Set(taskIds)).filter(Boolean)
   if (!uniqueTaskIds.length) return
   const { tasks, setTasks, clearSelection, showToast } = useStore.getState()
   const idSet = new Set(uniqueTaskIds)
+  const projectId = tasks.find((task) => idSet.has(task.id))?.projectId
+  const validCollectionIds = new Set(getFavoriteCollectionsForProject(useStore.getState().favoriteCollections, projectId).map((collection) => collection.id))
+  const ids = normalizeFavoriteCollectionIds(collectionIds).filter((id) => validCollectionIds.has(id))
   const changedTaskIds = new Set<string>()
   const updated = tasks.map((task) => {
     if (!idSet.has(task.id)) return task
@@ -6198,18 +6331,21 @@ export async function updateTasksFavoriteCollections(taskIds: string[], collecti
 export async function deleteFavoriteCollection(collectionId: string, deleteTasks = false) {
   if (!collectionId || collectionId === ALL_FAVORITES_COLLECTION_ID) return
   const state = useStore.getState()
-  const collection = state.favoriteCollections.find((item) => item.id === collectionId)
-  if (!collection || state.favoriteCollections.length <= 1) return
+  const projectId = getFavoriteScopeProjectId(state.activeProjectId)
+  const scopedCollections = getFavoriteCollectionsForProject(state.favoriteCollections, projectId)
+  const collection = scopedCollections.find((item) => item.id === collectionId)
+  if (!collection || scopedCollections.length <= 1) return
   const collectionTaskRefs = state.tasks
+    .filter((task) => task.projectId === projectId)
     .map((task) => ({ task, favoriteIds: getTaskFavoriteCollectionIds(task) }))
     .filter(({ favoriteIds }) => favoriteIds.includes(collectionId))
   const taskIds = collectionTaskRefs.map(({ task }) => task.id)
-  const nextCollections = state.favoriteCollections.filter((item) => item.id !== collectionId)
-  const nextCollectionIdSet = new Set(nextCollections.map((item) => item.id))
+  const nextCollections = state.favoriteCollections.filter((item) => item.id !== collectionId || item.projectId !== projectId)
+  const nextScopedCollections = getFavoriteCollectionsForProject(nextCollections, projectId)
+  const nextCollectionIdSet = new Set(nextScopedCollections.map((item) => item.id))
   state.setFavoriteCollections(nextCollections)
-  if (state.defaultFavoriteCollectionId === collectionId) {
-    const nextDefaultId = nextCollections[0]?.id
-    if (nextDefaultId) useStore.getState().setDefaultFavoriteCollectionId(nextDefaultId)
+  if (getFavoriteDefaultForProject(state, projectId) === collectionId) {
+    useStore.getState().setDefaultFavoriteCollectionId(nextScopedCollections[0]?.id ?? null)
   }
   if (state.activeFavoriteCollectionId === collectionId) state.setActiveFavoriteCollectionId(null)
   if (deleteTasks) {
@@ -6247,6 +6383,7 @@ export async function deleteFavoriteCollection(collectionId: string, deleteTasks
     await Promise.all(updated.filter((task) => idsByTaskId.has(task.id)).map((task) => putTask(task)))
   }
   useStore.getState().setSelectedFavoriteCollectionIds((ids) => ids.filter((id) => id !== collectionId))
+  touchProject(projectId)
   useStore.getState().showToast(`已删除收藏夹「${collection.name}」`, 'success')
 }
 
@@ -6581,13 +6718,14 @@ async function recoverCustomTask(taskId: string) {
 
   const profile = getCustomRecoveryProfile(settings, task)
   const customProvider = task.apiProvider ? getCustomProviderDefinition(settings, task.apiProvider) : null
-  if (!profile || !customProvider?.poll) {
+  const poll = task.inputImageIds.length > 0 && customProvider?.editPoll ? customProvider.editPoll : customProvider?.poll
+  if (!profile || !customProvider || !poll) {
     scheduleCustomRecovery(taskId)
     return
   }
 
   try {
-    const result = await getCustomQueuedImageResult(profile, customProvider, task.customTaskId, task.params)
+    const result = await getCustomQueuedImageResult(profile, customProvider, task.customTaskId, task.params, task.inputImageIds.length > 0)
     clearCustomRecoveryTimer(taskId)
     await completeRecoveredCustomTask(task, result)
   } catch (err) {
@@ -6798,7 +6936,19 @@ export async function addImageFromUrl(src: string): Promise<void> {
   const blob = await res.blob()
   if (!blob.type.startsWith('image/')) throw new Error('不是有效的图片')
   const dataUrl = await blobToDataUrl(blob)
+  const image = await createInputImageFromDataUrl(dataUrl)
+  useStore.getState().addInputImage(image)
+}
+
+export async function createInputImageFromDataUrl(dataUrl: string): Promise<InputImage> {
   const id = await storeImage(dataUrl, 'upload')
   cacheImage(id, dataUrl)
-  useStore.getState().addInputImage({ id, dataUrl })
+  return { id, dataUrl }
+}
+
+export async function createInputImageFromUrl(src: string): Promise<InputImage> {
+  const res = await fetch(src)
+  const blob = await res.blob()
+  if (!blob.type.startsWith('image/')) throw new Error('素材不是有效图片')
+  return createInputImageFromDataUrl(await blobToDataUrl(blob))
 }

@@ -4,7 +4,11 @@ import type { FavoriteCollection } from '../../types'
 import {
   createFavoriteCollection,
   deleteFavoriteCollection,
+  getActiveDefaultFavoriteCollectionId,
+  getFavoriteCollectionsForProject,
+  getFavoriteScopeProjectId,
   getTaskFavoriteCollectionIds,
+  replaceActiveFavoriteCollections,
   renameFavoriteCollection,
   updateTasksFavoriteCollections,
   useStore,
@@ -19,10 +23,14 @@ import { getInitialCheckedCollectionIds } from './favoriteUtils'
 export function FavoriteCollectionPickerModal() {
   const taskIds = useStore((s) => s.favoritePickerTaskIds)
   const tasks = useStore((s) => s.tasks)
-  const collections = useStore((s) => s.favoriteCollections)
-  const defaultFavoriteCollectionId = useStore((s) => s.defaultFavoriteCollectionId)
+  const allCollections = useStore((s) => s.favoriteCollections)
+  const activeProjectId = useStore((s) => s.activeProjectId)
+  const collections = useMemo(
+    () => getFavoriteCollectionsForProject(allCollections, getFavoriteScopeProjectId(activeProjectId)),
+    [activeProjectId, allCollections],
+  )
+  const defaultFavoriteCollectionId = useStore(getActiveDefaultFavoriteCollectionId)
   const setDefaultFavoriteCollectionId = useStore((s) => s.setDefaultFavoriteCollectionId)
-  const setFavoriteCollections = useStore((s) => s.setFavoriteCollections)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const closePicker = useStore((s) => s.closeFavoritePicker)
   const [checkedIds, setCheckedIds] = useState<string[]>([])
@@ -218,7 +226,7 @@ export function FavoriteCollectionPickerModal() {
         if (sourceIndex < targetIndex) newTargetIndex--
 
         newCollections.splice(newTargetIndex, 0, removed)
-        setFavoriteCollections(newCollections)
+        replaceActiveFavoriteCollections(newCollections)
       }
     }
     handleDragEnd()
@@ -242,7 +250,7 @@ export function FavoriteCollectionPickerModal() {
     if (sourceIndex < targetIndex) newTargetIndex--
 
     newCollections.splice(newTargetIndex, 0, removed)
-    setFavoriteCollections(newCollections)
+    replaceActiveFavoriteCollections(newCollections)
     handleDragEnd()
   }
 
@@ -274,7 +282,7 @@ export function FavoriteCollectionPickerModal() {
     e.preventDefault()
     e.stopPropagation()
     if (collections.length <= 1) return
-    const collectionTasks = tasks.filter(t => getTaskFavoriteCollectionIds(t).includes(collection.id))
+    const collectionTasks = tasks.filter((task) => task.projectId === collection.projectId && getTaskFavoriteCollectionIds(task).includes(collection.id))
     const imageCount = new Set(collectionTasks.flatMap((task) => task.outputImages || [])).size
     setConfirmDialog({
       title: '删除收藏夹',

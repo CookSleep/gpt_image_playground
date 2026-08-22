@@ -1,6 +1,6 @@
 # GPT Image Playground 后端（OIDC 账号体系）
 
-后端提供 **OIDC 登录、在线项目持久化和图片生成**。在线项目使用 OIDC 选择的 API Key 时，前端只请求本后端，由后端调用受信任 provider 的 Images 或 Responses API，并在返回图片前写入数据库。
+后端提供 **OIDC 登录、在线项目持久化和图片生成**。OpenAI Images/Responses 请求由项目 generation 接口生成并落库；Composite 使用独立的 `/api/v1/model/*` 代理，前端分别提交任务、查询状态和获取结果。
 
 - 框架：Gin + zerolog
 - 数据库：PostgreSQL
@@ -65,15 +65,37 @@ backend/
 |---|---|---|
 | GET  | `/auth/user` | 当前登录用户的公开资料 |
 | POST | `/auth/logout` | 第一期 JWT 无状态，仅 204 |
+| POST | `/auth/oidc/refresh` | 用 OIDC refresh token 刷新 OIDC access token |
+| POST | `/auth/oidc/sync` | 使用当前 OIDC access token 重新读取 UserInfo 并回填本地 claims |
 | GET  | `/api/v1/me` | 占位示例，演示登录后的 API 访问 |
 | GET/POST | `/api/v1/projects` | 查询或保存在线项目 |
 | GET/PATCH/DELETE | `/api/v1/projects/:id` | 读取、重命名或删除在线项目 |
 | GET/POST | `/api/v1/projects/:id/images` | 查询或保存项目图片 |
 | GET/DELETE | `/api/v1/projects/:id/images/:imageId` | 读取或删除项目图片 |
+| POST | `/api/v1/materials` | 上传 Composite 参考图，后台通过 Inner API RPC 返回 `file_url` |
+| POST | `/api/v1/materials/batch-delete` | 批量删除素材，JSON `ids` 最多 100 个，后台调用 `BatchDeleteMaterials` RPC |
+| POST | `/api/v1/model/:slug`（支持多段 slug） | 向 Composite 上游提交异步任务 |
+| GET | `/api/v1/model/:slug/requests/:requestId/status` | 查询 Composite 异步任务状态 |
+| GET | `/api/v1/model/:slug/requests/:requestId` | 获取 Composite 异步任务结果 |
 | POST | `/api/v1/projects/:id/generations` | 由后端调用 Images 或 Responses API 生成图片，图片落库后返回 |
 | POST | `/api/v1/projects/:id/edits` | 由后端调用 Images Edits 或 Responses API 编辑图片，图片落库后返回 |
 
-生图请求中的 API Key 仅用于本次上游请求，不会写入数据库。上游基址由当前 JWT 的 OIDC provider 配置决定，客户端不能指定任意地址。
+生图请求中的 API Key 仅用于本次上游请求，不会写入数据库。上游基址由当前 JWT 的 OIDC provider 配置决定，客户端不能指定任意地址。Composite 代理从 `X-Upstream-API-Key` 读取 Composite Key，并将其转换为上游 `Authorization: Bearer <key>`；代理只转发当前这一次请求，不在 generation 接口中提交或轮询。前端以 2 秒起始、最大 15 秒的指数退避轮询，总超时 10 分钟；网络错误和 HTTP 5xx 最多重试 3 次，HTTP 4xx 直接报错。
+
+Composite 图片编辑会先把每张参考图和遮罩以 multipart 文件提交到 `/api/v1/materials`。后台使用当前用户 claims 中的 `account_id`（兼容 `sub2api:account_id` 和 `accountId`）调用 tRPC `UploadMaterial`，不会把 OIDC `sub` 当作账户 ID。若历史用户本地 claims 缺少 `account_id`，素材接口返回 `account_id_required`，前端会用当前 OIDC access token 调 `/auth/oidc/sync` 重新读取 UserInfo、回填 claims 后自动重试上传；不需要重新登录或 refresh。
+
+素材库批量删除调用 `POST /api/v1/materials/batch-delete`，请求格式为 `{"ids":["opaque-id-1","opaque-id-2"]}`。单次最多 100 个 ID；前端选择超过 100 个素材时会自动分批请求。
+
+后台配置文件需要加入：
+
+```yaml
+inner_api_rpc:
+  target: ip://10.0.0.5:9100
+  app_token: "创建内部 API App 时获得的 token"
+  timeout_seconds: 30
+```
+
+对应的内部 API App 必须授予 `materials:write` 权限。`app_token` 只保存在后台配置中，不会返回前端。
 
 ### 回调 token 传递格式
 

@@ -32,6 +32,13 @@ admin:
   emails: []
     # - admin@example.com
 
+# Composite 图片编辑会先通过该内部 RPC 上传参考图，再把 file_url 传给模型接口。
+# app 必须具有 materials:write 权限；不使用 Composite 图片编辑时可整体留空。
+inner_api_rpc:
+  target: ""                    # 例如 ip://10.0.0.5:9100
+  app_token: ""                 # 内部 API App 页面创建后仅展示一次
+  timeout_seconds: 30
+
 oidc:
   providers:
     # 通用 OIDC 提供商（标准 OIDC discovery 协议即可）

@@ -13,6 +13,7 @@ export type ApiKeyItem = {
   key: string
   name?: string
   groupName?: string
+  platform?: string
 }
 
 export type ApiKeysResponse = {
@@ -217,8 +218,19 @@ async function _fetchApiKeys(): Promise<ApiKeysResponse> {
           if (typeof gn2 === 'string' && gn2) groupName = gn2
         }
 
+        const platformRaw = obj['platform'] ?? (
+          groupRaw && typeof groupRaw === 'object'
+            ? (groupRaw as Record<string, unknown>)['platform']
+            : undefined
+        )
+        const platform = typeof platformRaw === 'string' && platformRaw
+          ? platformRaw
+          : platformRaw && typeof platformRaw === 'object'
+          ? String((platformRaw as Record<string, unknown>)['name'] ?? (platformRaw as Record<string, unknown>)['id'] ?? '') || undefined
+          : undefined
+
         keys.push(keyStr)
-        items.push({ key: keyStr, name, groupName })
+        items.push({ key: keyStr, name, groupName, platform })
       }
     }
   }

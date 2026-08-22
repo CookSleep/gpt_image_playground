@@ -319,6 +319,7 @@ export function normalizeCustomProviderDefinition(input: unknown, usedIds = new 
       result: DEFAULT_OPENAI_RESULT,
     }) : undefined,
     poll: normalizePollMapping(record.poll),
+    editPoll: normalizePollMapping(record.editPoll),
   }
 }
 

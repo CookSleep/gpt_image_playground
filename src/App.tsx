@@ -3,7 +3,7 @@ import { LOCAL_PROJECT_ID, initStore, useStore } from './store'
 import { activateFirstImportedProfile, buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
 import { isDefaultConfigOnlyEnabled, mergeImportedSettings } from './lib/apiProfiles'
 import { getCustomProviderConfigUrl, loadCustomProviderSettingsFromUrl } from './lib/customProviderConfigUrl'
-import { getProjectIdFromUrl } from './lib/projectRoute'
+import { getAppViewFromUrl, getProjectIdFromUrl, updateMaterialsUrl, updateWorkspaceUrl } from './lib/projectRoute'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import type { AppSettings } from './types'
 import Header from './components/Header'
@@ -21,6 +21,8 @@ import ConfirmDialog from './components/ConfirmDialog'
 import Toast from './components/Toast'
 import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
+import AppSidebar, { type AppView } from './components/AppSidebar'
+import MaterialLibrary from './components/MaterialLibrary'
 import SupportPromptModal from './components/SupportPromptModal'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
@@ -35,6 +37,18 @@ export default function App() {
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(false)
+  const [view, setView] = useState<AppView>(() => getAppViewFromUrl())
+
+  const navigateView = (nextView: AppView) => {
+    setView(nextView)
+    if (nextView === 'materials') {
+      useStore.getState().setActiveProjectId(null)
+      updateMaterialsUrl()
+      return
+    }
+    useStore.getState().setActiveProjectId(null)
+    updateWorkspaceUrl(null)
+  }
 
   useEffect(() => {
     setAgentPanelCollapsed(false)
@@ -44,6 +58,7 @@ export default function App() {
 
   useEffect(() => {
     const syncProjectFromUrl = () => {
+      setView(getAppViewFromUrl())
       useStore.getState().setActiveProjectId(getProjectIdFromUrl())
     }
 
@@ -129,10 +144,15 @@ export default function App() {
 
   return (
     <>
-      <Header />
-      {activeProjectId === null ? (
-        <ProjectHome />
+      <Header view={view} onNavigate={navigateView} />
+      <AppSidebar view={view} onChange={navigateView} />
+      {view === 'materials' ? (
+        <div data-material-library-root data-drag-select-surface className="min-h-[calc(100vh-4rem)] pt-11 lg:pl-56 lg:pt-0">
+          <MaterialLibrary />
+        </div>
       ) : (
+        <div className="pt-11 lg:pl-56 lg:pt-0">
+          {activeProjectId === null ? <ProjectHome /> : (
         <div data-project-workspace data-drag-select-surface className="relative min-h-[calc(100vh-4rem)] w-full">
           <div className={`safe-area-x mx-auto grid w-full max-w-[1600px] ${agentPanelCollapsed ? 'xl:grid-cols-1' : 'xl:grid-cols-[minmax(0,1fr)_420px] xl:gap-4'}`}>
             <main
@@ -171,8 +191,10 @@ export default function App() {
             )}
           </div>
         </div>
+          )}
+        </div>
       )}
-      {activeProjectId !== null && appMode !== 'agent' && <InputBar hideApiKeyBalance hideModeToggle moveModelToAttachment hideModeration />}
+      {view === 'workspace' && activeProjectId !== null && appMode !== 'agent' && <InputBar hideApiKeyBalance hideModeToggle moveModelToAttachment hideModeration />}
       <DetailModal />
       <Lightbox />
       <SettingsModal />

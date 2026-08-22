@@ -26,6 +26,7 @@ describe('callBackendImageApi', () => {
       projectTitle: '项目 A',
       taskId: 'task-a',
       apiKey: 'oidc-key',
+      provider: 'openai',
       model: 'gpt-image-2',
       apiMode: 'responses',
       allowPromptRewrite: false,
@@ -44,6 +45,7 @@ describe('callBackendImageApi', () => {
       task_id: 'task-a',
       project_title: '项目 A',
       api_key: 'oidc-key',
+      provider: 'openai',
       model: 'gpt-image-2',
       api_mode: 'responses',
       allow_prompt_rewrite: false,
@@ -75,6 +77,7 @@ describe('callBackendImageApi', () => {
       projectTitle: '项目 A',
       taskId: 'task-a',
       apiKey: 'oidc-key',
+      provider: 'openai',
       model: 'gpt-image-2',
       apiMode: 'images',
       allowPromptRewrite: true,
@@ -90,6 +93,7 @@ describe('callBackendImageApi', () => {
     }))
     const request = JSON.parse(vi.mocked(authFetch).mock.calls[0][1]?.body as string)
     expect(request).toMatchObject({
+      provider: 'openai',
       prompt: '按参考图编辑',
       input_images: [image],
       mask,
@@ -107,6 +111,7 @@ describe('callBackendImageApi', () => {
       projectTitle: '项目 A',
       taskId: 'task-a',
       apiKey: 'oidc-key',
+      provider: 'openai',
       model: 'gpt-image-2',
       apiMode: 'images',
       allowPromptRewrite: true,

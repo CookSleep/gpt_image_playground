@@ -1,9 +1,41 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { OIDC_ISSUER_KEY } from './api'
-import { estimateModelPricing, fetchUsage } from './oidcResource'
+import { OIDC_ACCESS_TOKEN_KEY, OIDC_ISSUER_KEY, OIDC_TOKEN_EXPIRY_KEY } from './api'
+import { estimateModelPricing, fetchApiKeys, fetchUsage, invalidateApiKeysCache } from './oidcResource'
 
 afterEach(() => {
+  invalidateApiKeysCache()
   vi.unstubAllGlobals()
+})
+
+describe('fetchApiKeys', () => {
+  it('parses platform independently from the display group name', async () => {
+    const storage = new Map<string, string>([
+      [OIDC_ISSUER_KEY, 'https://issuer.example.com/'],
+      [OIDC_ACCESS_TOKEN_KEY, 'oidc-token'],
+      [OIDC_TOKEN_EXPIRY_KEY, String(Date.now() + 3600_000)],
+    ])
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key: string) => storage.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
+      removeItem: vi.fn((key: string) => storage.delete(key)),
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      items: [{
+        api_key: 'composite-key',
+        name: '生产 Key',
+        group: { name: '图像生成组', platform: 'composite' },
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+
+    const result = await fetchApiKeys()
+
+    expect(result.items).toEqual([{
+      key: 'composite-key',
+      name: '生产 Key',
+      groupName: '图像生成组',
+      platform: 'composite',
+    }])
+  })
 })
 
 describe('fetchUsage', () => {

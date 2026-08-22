@@ -129,6 +129,8 @@ func main() {
 	})
 	handlers.NewProjectHandler(projectRepo).Register(api)
 	handlers.NewProjectImageHandler(projectRepo).Register(api)
+	handlers.NewMaterialHandler(services.NewMaterialService(userRepo, cfg.InnerAPI)).Register(api)
+	handlers.NewCompositeModelHandler(registry).Register(api)
 	handlers.NewProjectGenerationHandler(projectRepo, registry).Register(api)
 
 	// 前端 SPA fallback：所有 API 路由之后挂载，仅接管未匹配路由。
@@ -189,7 +191,7 @@ func buildCORS(origins []string) gin.HandlerFunc {
 	return cors.New(cors.Config{
 		AllowOrigins:     origins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Upstream-API-Key"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,

@@ -36,8 +36,8 @@ type mockOIDCServer struct {
 	email    string
 	name     string
 
-	mu     sync.Mutex
-	codes  map[string]string // code -> code_challenge
+	mu    sync.Mutex
+	codes map[string]string // code -> code_challenge
 }
 
 func newMockOIDCServer(t *testing.T, clientID, sub, email, name string) *mockOIDCServer {
@@ -72,10 +72,10 @@ func (m *mockOIDCServer) URL() string { return m.server.URL }
 
 func (m *mockOIDCServer) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
-		"issuer":                 m.server.URL,
-		"authorization_endpoint": m.server.URL + "/auth",
-		"token_endpoint":         m.server.URL + "/token",
-		"jwks_uri":               m.server.URL + "/keys",
+		"issuer":                                m.server.URL,
+		"authorization_endpoint":                m.server.URL + "/auth",
+		"token_endpoint":                        m.server.URL + "/token",
+		"jwks_uri":                              m.server.URL + "/keys",
 		"id_token_signing_alg_values_supported": []string{"RS256"},
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
@@ -132,13 +132,14 @@ func (m *mockOIDCServer) handleToken(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	claims := jwt.MapClaims{
-		"iss":   m.server.URL,
-		"sub":   m.subject,
-		"aud":   m.clientID,
-		"exp":   now.Add(5 * time.Minute).Unix(),
-		"iat":   now.Unix(),
-		"email": m.email,
-		"name":  m.name,
+		"iss":        m.server.URL,
+		"sub":        m.subject,
+		"aud":        m.clientID,
+		"exp":        now.Add(5 * time.Minute).Unix(),
+		"iat":        now.Unix(),
+		"email":      m.email,
+		"name":       m.name,
+		"account_id": "acct_root_" + m.subject,
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tok.Header["kid"] = m.keyID
@@ -277,6 +278,10 @@ func TestOIDCEndToEnd(t *testing.T) {
 	}
 	if claims.Sub != "sub-1" || claims.Email != "user@example.com" {
 		t.Fatalf("unexpected claims: %+v", claims)
+	}
+	var rawClaims map[string]any
+	if err := json.Unmarshal(claims.RawJSON, &rawClaims); err != nil || rawClaims["account_id"] != "acct_root_sub-1" {
+		t.Fatalf("account_id was not preserved in raw claims: %s", claims.RawJSON)
 	}
 
 	user, err := users.UpsertFromOIDC(ctx, &models.User{

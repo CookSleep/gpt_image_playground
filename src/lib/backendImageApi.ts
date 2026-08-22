@@ -51,6 +51,7 @@ export async function callBackendImageApi(options: {
   projectTitle: string
   taskId: string
   apiKey: string
+  provider: 'openai'
   model: string
   apiMode: 'images' | 'responses'
   allowPromptRewrite: boolean
@@ -81,6 +82,7 @@ export async function callBackendImageApi(options: {
     task_id: options.taskId,
     project_title: options.projectTitle,
     api_key: options.apiKey,
+    provider: options.provider,
     model: options.model,
     api_mode: options.apiMode,
     allow_prompt_rewrite: options.allowPromptRewrite,

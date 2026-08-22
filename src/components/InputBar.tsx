@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { ALL_FAVORITES_COLLECTION_ID, ALL_PROJECTS_ID, LOCAL_PROJECT_ID, deleteFavoriteCollection, getTaskFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
+import { ALL_FAVORITES_COLLECTION_ID, ALL_PROJECTS_ID, LOCAL_PROJECT_ID, deleteFavoriteCollection, getFavoriteCollectionsForProject, getFavoriteScopeProjectId, getTaskFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { useAuth } from '../auth/AuthContext'
 import { getOIDCIssuer } from '../auth/api'
 import { estimateModelPricing, fetchApiKeys, fetchUsage, fetchModels, extractBalance, invalidateApiKeysCache, type ModelInfo, type ApiKeyItem } from '../auth/oidcResource'
@@ -19,11 +19,12 @@ import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getT
 import SizePickerModal from './SizePickerModal'
 import Select from './Select'
 import ViewportTooltip from './ViewportTooltip'
-import { CloseIcon, OpenAIIcon } from './icons'
+import { CloseIcon, CollectionManageIcon, OpenAIIcon } from './icons'
 import ButtonTooltip from './input/buttonTooltip'
 import DragUploadOverlay from './input/dragUploadOverlay'
 import InputBatchBars from './input/inputBatchBars'
 import InputParamsPanel from './input/inputParamsPanel'
+import MaterialPickerModal from './MaterialPickerModal'
 
 const MODEL_ICON = (
   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gray-950 text-white shadow-sm dark:bg-white dark:text-gray-950">
@@ -509,12 +510,17 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const setSelectedFavoriteCollectionIds = useStore((s) => s.setSelectedFavoriteCollectionIds)
   const clearFavoriteCollectionSelection = useStore((s) => s.clearFavoriteCollectionSelection)
   const tasks = useStore((s) => s.tasks)
-  const favoriteCollections = useStore((s) => s.favoriteCollections)
+  const allFavoriteCollections = useStore((s) => s.favoriteCollections)
   const agentConversations = useStore((s) => s.agentConversations)
   const filterStatus = useStore((s) => s.filterStatus)
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const activeProjectId = useStore((s) => s.activeProjectId)
+  const favoriteProjectId = getFavoriteScopeProjectId(activeProjectId)
+  const favoriteCollections = useMemo(
+    () => getFavoriteCollectionsForProject(allFavoriteCollections, favoriteProjectId),
+    [allFavoriteCollections, favoriteProjectId],
+  )
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
   const searchQuery = useStore((s) => s.searchQuery)
 
@@ -636,12 +642,16 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   useEffect(() => {
     if (embeddedAgent || inputMode === 'agent' || !selectedModel) return
     const selectedApiKey = hideApiKeyBalance ? galleryOidcApiOverride?.apiKey : apiKey
-    if (galleryOidcApiOverride?.apiKey === selectedApiKey && galleryOidcApiOverride?.model === selectedModel) return
+    const platform = hideApiKeyBalance
+      ? galleryOidcApiOverride?.platform
+      : apiKeyItems.find((item) => item.key === selectedApiKey)?.platform
+    if (galleryOidcApiOverride?.apiKey === selectedApiKey && galleryOidcApiOverride?.model === selectedModel && galleryOidcApiOverride?.platform === platform) return
     setOidcApiOverride({
       ...(selectedApiKey ? { apiKey: selectedApiKey } : {}),
       model: selectedModel,
+      ...(platform ? { platform } : {}),
     })
-  }, [apiKey, embeddedAgent, galleryOidcApiOverride, hideApiKeyBalance, inputMode, selectedModel, setOidcApiOverride])
+  }, [apiKey, apiKeyItems, embeddedAgent, galleryOidcApiOverride, hideApiKeyBalance, inputMode, selectedModel, setOidcApiOverride])
 
   useEffect(() => {
     if (!hideModeration || params.moderation === 'auto') return
@@ -698,20 +708,21 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const inCollectionOverview = filterFavorite && !activeFavoriteCollectionId
 
   const favoriteCollectionCards = useMemo(() => {
+    const projectTasks = tasks.filter((task) => task.projectId === favoriteProjectId)
     return [
       {
         id: ALL_FAVORITES_COLLECTION_ID,
         name: '全部',
-        tasks: getFavoriteCollectionTasksForBatch(ALL_FAVORITES_COLLECTION_ID, tasks),
+        tasks: getFavoriteCollectionTasksForBatch(ALL_FAVORITES_COLLECTION_ID, projectTasks),
       },
       ...favoriteCollections.map((collection) => ({
         id: collection.id,
         name: collection.name,
         collection,
-        tasks: getFavoriteCollectionTasksForBatch(collection.id, tasks),
+        tasks: getFavoriteCollectionTasksForBatch(collection.id, projectTasks),
       })),
     ]
-  }, [favoriteCollections, tasks])
+  }, [favoriteCollections, favoriteProjectId, tasks])
 
   const filteredFavoriteCollectionCards = useMemo(() => {
     if (!searchQuery.trim()) return favoriteCollectionCards
@@ -850,7 +861,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     const selectedCollectionIds = new Set(selectedCollections.map((collection) => collection.id))
     const imageCount = new Set(
       tasks
-        .filter((task) => getTaskFavoriteCollectionIds(task).some((id) => selectedCollectionIds.has(id)))
+        .filter((task) => task.projectId === favoriteProjectId && getTaskFavoriteCollectionIds(task).some((id) => selectedCollectionIds.has(id)))
         .flatMap((task) => task.outputImages || []),
     ).size
     setConfirmDialog({
@@ -869,7 +880,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
         clearFavoriteCollectionSelection()
       },
     })
-  }, [clearFavoriteCollectionSelection, favoriteCollections, selectedFavoriteCollectionIds, setConfirmDialog, showToast, tasks])
+  }, [clearFavoriteCollectionSelection, favoriteCollections, favoriteProjectId, selectedFavoriteCollectionIds, setConfirmDialog, showToast, tasks])
 
   const maskDraft = useStore((s) => embeddedAgent && s.activeAgentConversationId
     ? s.agentInputDrafts[s.activeAgentConversationId]?.maskDraft ?? null
@@ -901,6 +912,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const [mobileCollapsed, setMobileCollapsed] = useState(false)
   const [showSizePicker, setShowSizePicker] = useState(false)
   const [showMobileUploadMenu, setShowMobileUploadMenu] = useState(false)
+  const [showMaterialPicker, setShowMaterialPicker] = useState(false)
   const [maskPreviewUrl, setMaskPreviewUrl] = useState('')
   const [imageDragIndex, setImageDragIndex] = useState<number | null>(null)
   const [imageDragOverIndex, setImageDragOverIndex] = useState<number | null>(null)
@@ -985,6 +997,9 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   ), [activeProfile.id, settingsActiveProfile.id, settings])
   // 项目页的图片模型只使用当前下拉框选择，避免回退到 Agent 的文本模型配置。
   const submitApiKey = galleryOidcApiOverride?.apiKey || apiKey
+  const submitPlatform = galleryOidcApiOverride?.apiKey === submitApiKey
+    ? galleryOidcApiOverride?.platform
+    : apiKeyItems.find((item) => item.key === submitApiKey)?.platform
   const submitModel = selectedModel
   const hasSubmitApiConfig = Boolean((submitApiKey && submitModel) || activeProfile.apiKey)
   const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !activeAgentIsRunning)
@@ -1005,10 +1020,11 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
         apiOverride: {
           ...(submitApiKey ? { apiKey: submitApiKey } : {}),
           model: selectedModel,
+          ...(submitPlatform ? { platform: submitPlatform } : {}),
         },
       })
     }
-  }, [inputMode, selectedModel, submitApiKey])
+  }, [inputMode, selectedModel, submitApiKey, submitPlatform])
   const stopActiveAgentResponse = useCallback(() => {
     stopAgentResponse(activeAgentConversationId)
   }, [activeAgentConversationId])
@@ -1118,6 +1134,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     setOidcApiOverride({
       ...(current?.apiKey ? { apiKey: current.apiKey } : {}),
       model: next,
+      ...(current?.platform ? { platform: current.platform } : {}),
     })
   }, [hideApiKeyBalance, inputMode, setAgentOidcApiOverride, setOidcApiOverride])
   const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加` : '上传图片'
@@ -2590,7 +2607,9 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                 >
                   <ButtonTooltip visible={attachHover} text={uploadImageTooltipText} />
                   <button
-                    onClick={() => !atImageLimit && fileInputRef.current?.click()}
+                    onClick={() => {
+                      if (!atImageLimit) setShowMobileUploadMenu((value) => !value)
+                    }}
                     className={`p-2.5 rounded-xl transition-all shadow-sm ${
                       atImageLimit
                         ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
@@ -2602,6 +2621,37 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                     </svg>
                   </button>
+                  {showMobileUploadMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowMobileUploadMenu(false)} />
+                      <div className="absolute bottom-full left-0 z-50 mb-2 w-36 overflow-hidden rounded-xl border border-gray-100 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/50"
+                          onClick={() => {
+                            setShowMobileUploadMenu(false)
+                            fileInputRef.current?.click()
+                          }}
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                          </svg>
+                          上传图片
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/50"
+                          onClick={() => {
+                            setShowMobileUploadMenu(false)
+                            setShowMaterialPicker(true)
+                          }}
+                        >
+                          <CollectionManageIcon className="h-4 w-4" />
+                          素材库
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
                 <div
                   className="relative shrink-0"
@@ -2714,6 +2764,16 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                           </svg>
                           上传图片
                         </button>
+                        <button
+                          className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/50"
+                          onClick={() => {
+                            setShowMobileUploadMenu(false)
+                            setShowMaterialPicker(true)
+                          }}
+                        >
+                          <CollectionManageIcon className="h-4 w-4" />
+                          素材库
+                        </button>
                       </div>
                     </>
                   )}
@@ -2778,6 +2838,17 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
           />
         </div>
       </div>
+      {showMaterialPicker && (
+        <MaterialPickerModal
+          onClose={() => setShowMaterialPicker(false)}
+          preferRemoteUrl={submitPlatform?.trim().toLowerCase() === 'composite'}
+          onSelect={(_, image) => {
+            addInputImage(image)
+            setShowMaterialPicker(false)
+            showToast('已从素材库添加图片', 'success')
+          }}
+        />
+      )}
     </>
   )
 }

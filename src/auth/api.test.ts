@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ACCESS_TOKEN_KEY, authFetch, fetchUser, getAuthBaseUrl, isAuthEnabled } from './api'
+import {
+  ACCESS_TOKEN_KEY,
+  OIDC_ACCESS_TOKEN_KEY,
+  authFetch,
+  fetchUser,
+  getAuthBaseUrl,
+  isAuthEnabled,
+  syncOIDCUserProfile,
+} from './api'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -74,5 +82,35 @@ describe('authFetch', () => {
     const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers
     expect(headers.get('Authorization')).toBe('Bearer token-a')
     expect(headers.has('Content-Type')).toBe(false)
+  })
+})
+
+describe('syncOIDCUserProfile', () => {
+  it('使用现有 OIDC access token 读取 UserInfo，不调用 refresh', async () => {
+    vi.stubGlobal('window', { __APP_CONFIG__: { AUTH_BACKEND_URL: '' } })
+    const storage = new Map<string, string>([
+      [ACCESS_TOKEN_KEY, 'app-token'],
+      [OIDC_ACCESS_TOKEN_KEY, 'oidc-token'],
+    ])
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key: string) => storage.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
+      removeItem: vi.fn((key: string) => storage.delete(key)),
+    })
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      id: 'user-a',
+      oidc_provider: 'oidc',
+      account_id: 'acct-a',
+    }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const profile = await syncOIDCUserProfile()
+
+    expect(profile?.account_id).toBe('acct-a')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith('/auth/oidc/sync', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ access_token: 'oidc-token' }),
+    }))
   })
 })

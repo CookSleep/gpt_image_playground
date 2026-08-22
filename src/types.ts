@@ -16,6 +16,11 @@ export type ZipDownloadRoute = typeof ZIP_DOWNLOAD_ROUTE_VALUES[number]
 export const DEFAULT_ZIP_DOWNLOAD_ROUTES: ZipDownloadRoute[] = ['task-selection', 'favorite-collection-selection']
 export type BuiltInApiProvider = 'openai' | 'fal'
 export type ApiProvider = BuiltInApiProvider | string
+export interface ApiOverride {
+  apiKey?: string
+  model?: string
+  platform?: string
+}
 export type CustomProviderTemplate = 'http-image'
 export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
 export const DEFAULT_AGENT_MAX_TOOL_ROUNDS = 15
@@ -71,6 +76,7 @@ export interface CustomProviderDefinition {
   submit: CustomProviderSubmitMapping
   editSubmit?: CustomProviderSubmitMapping
   poll?: CustomProviderPollMapping
+  editPoll?: CustomProviderPollMapping
 }
 
 export interface ApiProfile {
@@ -150,7 +156,7 @@ export const DEFAULT_PARAMS: TaskParams = {
 export interface InputImage {
   /** IndexedDB image store 的 id（SHA-256 hash） */
   id: string
-  /** data URL，用于预览 */
+  /** data URL 或可直接访问的图片 URL，用于预览和请求 */
   dataUrl: string
 }
 
@@ -181,10 +187,10 @@ export interface TaskRecord {
   /** 生成时使用的模型 ID */
   apiModel?: string
   /**
-   * 运行时覆盖 API 配置中的 apiKey/model。仅本次请求生效，不会写回 settings。
+   * 运行时覆盖 API 配置中的 apiKey/model，并保留 API Key platform。仅本次请求生效，不会写回 settings。
    * 当 InputBar 中显式选择了 OIDC 拉取的 apiKey 与 model 时使用。
    */
-  apiOverride?: { apiKey?: string; model?: string }
+  apiOverride?: ApiOverride
   /** fal.ai 队列请求 ID，用于连接断开后的结果恢复 */
   falRequestId?: string
   /** fal.ai 队列 endpoint，用于连接断开后的状态和结果查询 */
@@ -253,6 +259,7 @@ export interface TaskRecord {
 
 export interface FavoriteCollection {
   id: string
+  projectId?: string
   name: string
   createdAt: number
   updatedAt: number
@@ -268,6 +275,7 @@ export interface Project {
   remoteId?: string
   remoteArchiveSha256?: string
   syncPending?: boolean
+  defaultFavoriteCollectionId?: string | null
   createdAt: number
   updatedAt: number
 }

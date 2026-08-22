@@ -34,6 +34,7 @@ export type Provider = {
 export type PublicUser = {
   id: string
   oidc_provider: string
+  account_id?: string
   email?: string
   name?: string
   picture_url?: string
@@ -203,6 +204,22 @@ export async function refreshOIDCToken(): Promise<string | null> {
       }
     }
     return data.oidc_access_token
+  } catch {
+    return null
+  }
+}
+
+/** 使用当前 OIDC access token 重新读取 UserInfo，并让后台回填本地 claims，不触发 refresh。 */
+export async function syncOIDCUserProfile(): Promise<PublicUser | null> {
+  const accessToken = getOIDCAccessToken()
+  if (!accessToken) return null
+  try {
+    const resp = await authFetch('/auth/oidc/sync', {
+      method: 'POST',
+      body: JSON.stringify({ access_token: accessToken }),
+    })
+    if (!resp.ok) return null
+    return await resp.json() as PublicUser
   } catch {
     return null
   }

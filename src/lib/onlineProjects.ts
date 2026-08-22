@@ -76,6 +76,7 @@ async function buildProjectArchive(state: ProjectArchiveState, project: Project 
     initialPrompt: project.initialPrompt,
     storage: project.storage,
     remoteId: project.remoteId,
+    defaultFavoriteCollectionId: project.defaultFavoriteCollectionId,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
   }] : []
@@ -97,11 +98,19 @@ async function buildProjectArchive(state: ProjectArchiveState, project: Project 
 export function buildOnlineProjectArchive(state: ProjectArchiveState & { projects: Project[] }, projectId: string) {
   const project = state.projects.find((item) => item.id === projectId)
   if (!project) throw new Error('找不到需要同步的项目')
+  const favoriteCollections = state.favoriteCollections.filter((collection) => collection.projectId === projectId)
+  const defaultFavoriteCollectionId = project.defaultFavoriteCollectionId !== undefined
+    ? project.defaultFavoriteCollectionId
+    : favoriteCollections[0]?.id ?? null
   const agentConversations = state.agentConversations
     .filter((conversation) => getAgentConversationProjectId(conversation, state.tasks) === projectId)
     .map((conversation) => conversation.projectId === projectId ? conversation : { ...conversation, projectId })
   return buildProjectArchive(
-    state,
+    {
+      ...state,
+      favoriteCollections,
+      defaultFavoriteCollectionId,
+    },
     project,
     state.tasks.filter((task) => task.projectId === projectId),
     agentConversations,
@@ -117,7 +126,10 @@ export async function buildLegacyProjectArchive(state: {
 }) {
   const tasks = state.tasks.filter((task) => !task.projectId)
   const agentConversations = state.agentConversations.filter((conversation) => !conversation.projectId)
-  return buildProjectArchive(state, null, tasks, agentConversations)
+  return buildProjectArchive({
+    ...state,
+    favoriteCollections: state.favoriteCollections.filter((collection) => !collection.projectId),
+  }, null, tasks, agentConversations)
 }
 
 export function getLegacyProjectUploadId() {

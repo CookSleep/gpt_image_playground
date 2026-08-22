@@ -162,6 +162,7 @@ function customProviderToForm(provider: CustomProviderDefinition): CustomProvide
       submit: provider.submit,
       editSubmit: provider.editSubmit,
       poll: provider.poll,
+      editPoll: provider.editPoll,
     }, null, 2),
   }
 }
@@ -199,7 +200,7 @@ function getImportedProfileFromMergedSettings(
 }
 
 function isAsyncCustomProvider(provider: CustomProviderDefinition | null | undefined) {
-  return Boolean(provider?.poll || provider?.submit.taskIdPath || provider?.editSubmit?.taskIdPath)
+  return Boolean(provider?.poll || provider?.editPoll || provider?.submit.taskIdPath || provider?.editSubmit?.taskIdPath)
 }
 
 function isProfileApiProxyEligible(settings: AppSettings, profile: ApiProfile) {
@@ -225,12 +226,13 @@ const CUSTOM_PROVIDER_LLM_PROMPT = `# 角色
 - profiles：API 配置数组，每项描述一个可直接使用的连接配置，引用 customProviders 中的服务商。
 
 ## customProviders 元素（Manifest）
-每个元素的顶层字段：id、name、editOnly、submit、editSubmit、poll。
+每个元素的顶层字段：id、name、editOnly、submit、editSubmit、poll、editPoll。
 id 是服务商的唯一标识，用于 profiles 中的 provider 字段引用，建议使用 custom-{英文短名} 格式。
 editOnly 可选，设为 true 时没有输入图片的文生图请求会直接提示接口未配置。
 submit 是文生图提交配置，必填。
 editSubmit 是图生图或局部重绘提交配置，可选。如果文生图和图生图使用同一个 JSON 接口，可以省略 editSubmit，并在 submit.body 中加入 image_urls。
 poll 是异步任务查询配置，可选；同步接口不要写 poll。
+editPoll 可选；只有图片编辑与文生图使用不同的轮询或结果路径时才填写，字段结构与 poll 相同。
 
 submit/editSubmit 字段：
 - path：接口路径，不带开头斜杠，不带 /v1/ 前缀，例如 images/generations 或 tasks/{task_id}。
@@ -242,7 +244,7 @@ submit/editSubmit 字段：
 - taskIdPath：提交响应里的任务 ID JSON 路径；同步接口不要写。
 - result：同步响应图片提取规则。
 
-poll 字段：
+poll/editPoll 字段：
 - path：任务查询路径，使用 {task_id} 占位，例如 images/tasks/{task_id} 或 tasks/{task_id}。
 - method：GET 或 POST，默认 GET。
 - query：查询 query 参数对象，可选。
