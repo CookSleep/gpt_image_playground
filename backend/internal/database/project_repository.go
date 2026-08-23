@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -23,6 +24,87 @@ var ErrProjectNotFound = errors.New("project not found")
 // ProjectRepository 负责在线项目归档持久化。
 type ProjectRepository struct {
 	db *DB
+}
+
+// SaveTaskRecord 将单条任务直接写入项目归档，避免浏览器为每次生成重新上传完整 ZIP。
+func (r *ProjectRepository) SaveTaskRecord(ctx context.Context, userID, id, title, taskID string, project, task json.RawMessage) (*models.OnlineProject, error) {
+	if err := r.Ensure(ctx, userID, id, title); err != nil {
+		return nil, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin task record update: %w", err)
+	}
+	defer tx.Rollback()
+
+	var archive []byte
+	if err := tx.QueryRowContext(ctx, `
+		SELECT archive FROM online_projects
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+		FOR UPDATE`, id, userID).Scan(&archive); errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrProjectForbidden
+	} else if err != nil {
+		return nil, fmt.Errorf("lock online project: %w", err)
+	}
+	archive, err = rewriteProjectTaskArchive(archive, project, task, taskID, false)
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(archive)
+	var saved models.OnlineProject
+	err = tx.QueryRowContext(ctx, `
+		UPDATE online_projects
+		SET title = $3, archive = $4, archive_size = $5, archive_sha256 = $6, updated_at = NOW()
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+		RETURNING id, user_id, title, archive_size, archive_sha256, created_at, updated_at`,
+		id, userID, title, archive, len(archive), hex.EncodeToString(digest[:]),
+	).Scan(&saved.ID, &saved.UserID, &saved.Title, &saved.ArchiveSize, &saved.ArchiveSHA256, &saved.CreatedAt, &saved.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("save project task record: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit project task record: %w", err)
+	}
+	return &saved, nil
+}
+
+// DeleteTaskRecord 从项目归档移除任务记录。
+func (r *ProjectRepository) DeleteTaskRecord(ctx context.Context, userID, id, taskID string) (*models.OnlineProject, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin task record delete: %w", err)
+	}
+	defer tx.Rollback()
+
+	var archive []byte
+	if err := tx.QueryRowContext(ctx, `
+		SELECT archive FROM online_projects
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+		FOR UPDATE`, id, userID).Scan(&archive); errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrProjectNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("lock online project: %w", err)
+	}
+	archive, err = rewriteProjectTaskArchive(archive, nil, nil, taskID, true)
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(archive)
+	var saved models.OnlineProject
+	err = tx.QueryRowContext(ctx, `
+		UPDATE online_projects
+		SET archive = $3, archive_size = $4, archive_sha256 = $5, updated_at = NOW()
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+		RETURNING id, user_id, title, archive_size, archive_sha256, created_at, updated_at`,
+		id, userID, archive, len(archive), hex.EncodeToString(digest[:]),
+	).Scan(&saved.ID, &saved.UserID, &saved.Title, &saved.ArchiveSize, &saved.ArchiveSHA256, &saved.CreatedAt, &saved.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("delete project task record: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit project task delete: %w", err)
+	}
+	return &saved, nil
 }
 
 func NewProjectRepository(db *DB) *ProjectRepository {

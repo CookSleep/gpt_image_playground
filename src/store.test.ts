@@ -97,6 +97,7 @@ vi.mock('./lib/db', () => {
       images.clear()
       thumbnails.clear()
     },
+    hashDataUrl: async (value: string) => `hash-${value}`,
     storeImage: async (dataUrl: string, source: StoredImage['source'] = 'upload') => {
       const id = `stored-image-${++imageSeq}`
       images.set(id, { id, dataUrl, source, createdAt: Date.now() })
@@ -163,6 +164,22 @@ vi.mock('./lib/onlineProjects', () => ({
     created_at: '2026-08-16T00:00:00Z',
     updated_at: '2026-08-16T00:00:00Z',
   })),
+  saveOnlineProjectTask: vi.fn(async (project: { id: string; title: string }) => ({
+    id: project.id,
+    title: project.title,
+    archive_size: 7,
+    archive_sha256: 'task-sha256',
+    created_at: '2026-08-16T00:00:00Z',
+    updated_at: '2026-08-16T00:00:00Z',
+  })),
+  deleteOnlineProjectTask: vi.fn(async () => ({
+    id: 'project-a',
+    title: '项目 A',
+    archive_size: 7,
+    archive_sha256: 'task-delete-sha256',
+    created_at: '2026-08-16T00:00:00Z',
+    updated_at: '2026-08-16T00:00:00Z',
+  })),
   downloadOnlineProjectImage: vi.fn(),
   deleteOnlineProjectImage: vi.fn(async () => undefined),
   downloadOnlineProject: vi.fn(async () => new Uint8Array()),
@@ -213,6 +230,7 @@ vi.mock('./lib/backendCompositeImageApi', () => ({
     revisedPrompts: [],
     imagesStoredOnline: false,
   })),
+  queryBackendCompositeImageTask: vi.fn(async () => null),
 }))
 vi.mock('./lib/falAiImageApi', () => ({
   getFalErrorMessage: vi.fn((err: unknown) => err instanceof Error ? err.message : String(err)),
@@ -270,8 +288,8 @@ import { getFalQueuedImageResult } from './lib/falAiImageApi'
 import { queryImageStatuses } from './lib/imageStatusApi'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { callBackendImageApi } from './lib/backendImageApi'
-import { callBackendCompositeImageApi } from './lib/backendCompositeImageApi'
-import { buildLegacyProjectArchive, clearLegacyProjectUploadId, deleteOnlineProject, downloadOnlineProject, downloadOnlineProjectImage, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
+import { callBackendCompositeImageApi, queryBackendCompositeImageTask } from './lib/backendCompositeImageApi'
+import { buildLegacyProjectArchive, clearLegacyProjectUploadId, deleteOnlineProject, downloadOnlineProject, downloadOnlineProjectImage, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectTask, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
 import { LOCAL_PROJECT_ID, cleanStaleAgentInputDrafts, clearFailedTasks, createFavoriteCollection, deleteAgentRoundFromConversation, deleteFavoriteCollection, editOutputs, getActiveAgentRounds, getActiveDefaultFavoriteCollectionId, getActiveFavoriteCollections, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, renameFavoriteCollection, reuseConfig, retryTask, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
@@ -726,6 +744,8 @@ describe('mask draft lifecycle in store actions', () => {
     authState.accessToken = 'token'
     vi.mocked(callImageApi).mockClear()
     vi.mocked(callBackendImageApi).mockClear()
+    vi.mocked(saveOnlineProjectTask).mockClear()
+    vi.mocked(uploadOnlineProject).mockClear()
     vi.mocked(uploadOnlineProjectImage).mockClear()
     vi.mocked(callBackendImageApi).mockResolvedValueOnce({
       images: ['data:image/png;base64,AAECAw=='],
@@ -768,6 +788,12 @@ describe('mask draft lifecycle in store actions', () => {
       }))
       expect(callImageApi).not.toHaveBeenCalled()
       expect(uploadOnlineProjectImage).not.toHaveBeenCalled()
+      await vi.waitFor(() => expect(saveOnlineProjectTask).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: projectId }),
+        expect.objectContaining({ id: generatedTask.id, status: 'done' }),
+      ))
+      expect(uploadOnlineProject).not.toHaveBeenCalled()
+      expect(useStore.getState().projects.find((item) => item.id === projectId)?.syncPending).toBe(false)
       expect(generatedTask.outputImages).toHaveLength(1)
       expect(generatedTask).toMatchObject({ apiMode: 'images', apiModel: 'gpt-image-2' })
     } finally {
@@ -782,9 +808,15 @@ describe('mask draft lifecycle in store actions', () => {
     vi.mocked(callBackendImageApi).mockClear()
     vi.mocked(callBackendCompositeImageApi).mockClear()
     vi.mocked(uploadOnlineProjectImage).mockClear()
-    vi.mocked(callBackendCompositeImageApi).mockResolvedValueOnce({
-      images: ['data:image/png;base64,Y29tcG9zaXRl'],
-      imagesStoredOnline: false,
+    vi.mocked(callBackendCompositeImageApi).mockImplementationOnce(async (options) => {
+      await options.onRequestCreated?.({
+        requestId: 'composite-request-1',
+        statusUrl: 'https://provider.example/status/composite-request-1',
+      })
+      return {
+        images: ['data:image/png;base64,Y29tcG9zaXRl'],
+        imagesStoredOnline: false,
+      }
     })
     try {
       useStore.setState({
@@ -798,12 +830,87 @@ describe('mask draft lifecycle in store actions', () => {
       expect(callBackendCompositeImageApi).toHaveBeenCalledWith(expect.objectContaining({
         apiKey: 'composite-key',
         model: 'openai/gpt-image-2',
+        onRequestCreated: expect.any(Function),
       }))
       expect(callBackendImageApi).not.toHaveBeenCalled()
       expect(callImageApi).not.toHaveBeenCalled()
       expect(uploadOnlineProjectImage).toHaveBeenCalledWith(projectId, expect.any(String), expect.objectContaining({
         dataUrl: 'data:image/png;base64,Y29tcG9zaXRl',
       }))
+      expect(useStore.getState().tasks[0]).toMatchObject({
+        compositeRequestId: 'composite-request-1',
+        compositeStatusUrl: 'https://provider.example/status/composite-request-1',
+      })
+    } finally {
+      authState.accessToken = null
+    }
+  })
+
+  it('persists and reuses Composite File API URLs only for the same API key', async () => {
+    authState.accessToken = 'token'
+    vi.mocked(callBackendCompositeImageApi).mockClear()
+    const dataUrl = 'data:image/png;base64,Y2FjaGVkLXJlZmVyZW5jZQ=='
+    const inputImage = { id: `hash-${dataUrl}`, dataUrl }
+    await putImage(inputImage)
+    vi.mocked(callBackendCompositeImageApi).mockImplementation(async (options) => {
+      if (!options.inputImageFileUrls?.[0]) {
+        const url = options.apiKey === 'composite-key-a'
+          ? 'https://files.example/reference-a.png'
+          : 'https://files.example/reference-b.png'
+        await options.onReferenceUploaded?.({ source: 'inputImage', index: 0, url })
+      }
+      return {
+        images: [],
+        imagesStoredOnline: false,
+      }
+    })
+    try {
+      useStore.setState({
+        settings: normalizeSettings(DEFAULT_SETTINGS),
+        inputImages: [inputImage],
+      })
+
+      await submitTask({ apiOverride: { apiKey: 'composite-key-a', model: 'openai/gpt-image-2', platform: 'Composite' } })
+      await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
+
+      expect((await getImage(inputImage.id))?.compositeFileUrls).toEqual({
+        'hash-composite-key-a': 'https://files.example/reference-a.png',
+      })
+
+      await submitTask({ apiOverride: { apiKey: 'composite-key-a', model: 'openai/gpt-image-2', platform: 'Composite' } })
+      await vi.waitFor(() => expect(callBackendCompositeImageApi).toHaveBeenCalledTimes(2))
+      expect(vi.mocked(callBackendCompositeImageApi).mock.calls[1][0].inputImageFileUrls).toEqual([
+        'https://files.example/reference-a.png',
+      ])
+
+      await submitTask({ apiOverride: { apiKey: 'composite-key-b', model: 'openai/gpt-image-2', platform: 'Composite' } })
+      await vi.waitFor(() => expect(callBackendCompositeImageApi).toHaveBeenCalledTimes(3))
+      expect(vi.mocked(callBackendCompositeImageApi).mock.calls[2][0].inputImageFileUrls).toEqual([undefined])
+    } finally {
+      authState.accessToken = null
+    }
+  })
+
+  it('shows Composite reference upload failures in the task and toast', async () => {
+    authState.accessToken = 'token'
+    vi.mocked(callBackendCompositeImageApi).mockClear()
+    vi.mocked(callBackendCompositeImageApi).mockImplementationOnce(async (options) => {
+      const error = new Error('File API developer key is not configured')
+      options.onReferenceUploadFailed?.(error)
+      throw error
+    })
+    try {
+      useStore.setState({
+        settings: normalizeSettings(DEFAULT_SETTINGS),
+      })
+
+      await submitTask({ apiOverride: { apiKey: 'composite-key', model: 'openai/gpt-image-2', platform: 'Composite' } })
+
+      await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('error'))
+      const failedTask = useStore.getState().tasks[0]
+      expect(failedTask.error).toBe('File API developer key is not configured')
+      expect(useStore.getState().detailTaskId).toBe(failedTask.id)
+      expect(useStore.getState().showToast).toHaveBeenCalledWith('File API developer key is not configured', 'error')
     } finally {
       authState.accessToken = null
     }
@@ -1397,11 +1504,12 @@ describe('interrupted OpenAI running tasks', () => {
     const legacyRunning = task({ id: 'legacy-running', status: 'running', createdAt: 1_000, finishedAt: null, elapsed: null })
     const openAIRunning = task({ id: 'openai-running', apiProvider: 'openai', status: 'running', createdAt: 2_000, finishedAt: null, elapsed: null })
     const trackedOpenAIRunning = task({ id: 'tracked-openai-running', apiProvider: 'openai', status: 'running', imageStatusRequestIds: ['img_request'], createdAt: 2_500, finishedAt: null, elapsed: null })
+    const compositeRunning = task({ id: 'composite-running', apiProvider: 'openai', status: 'running', compositeRequestId: 'composite-request', createdAt: 2_700, finishedAt: null, elapsed: null })
     const falRunning = task({ id: 'fal-running', apiProvider: 'fal', status: 'running', createdAt: 3_000, finishedAt: null, elapsed: null })
     const customAsyncRunning = task({ id: 'custom-running', apiProvider: 'custom-provider', customTaskId: 'task-1', status: 'running', createdAt: 4_000, finishedAt: null, elapsed: null })
     const doneTask = task({ id: 'done-task', apiProvider: 'openai', status: 'done' })
 
-    const result = markInterruptedOpenAIRunningTasks([legacyRunning, openAIRunning, trackedOpenAIRunning, falRunning, customAsyncRunning, doneTask], now)
+    const result = markInterruptedOpenAIRunningTasks([legacyRunning, openAIRunning, trackedOpenAIRunning, compositeRunning, falRunning, customAsyncRunning, doneTask], now)
 
     expect(result.interruptedTasks.map((item) => item.id)).toEqual(['legacy-running', 'openai-running'])
     expect(result.tasks.find((item) => item.id === 'legacy-running')).toMatchObject({
@@ -1417,9 +1525,59 @@ describe('interrupted OpenAI running tasks', () => {
       elapsed: 8_000,
     })
     expect(result.tasks.find((item) => item.id === 'tracked-openai-running')).toEqual(trackedOpenAIRunning)
+    expect(result.tasks.find((item) => item.id === 'composite-running')).toEqual(compositeRunning)
     expect(result.tasks.find((item) => item.id === 'fal-running')).toEqual(falRunning)
     expect(result.tasks.find((item) => item.id === 'custom-running')).toEqual(customAsyncRunning)
     expect(result.tasks.find((item) => item.id === 'done-task')).toEqual(doneTask)
+  })
+
+  it('queries a persisted Composite request during startup instead of interrupting it', async () => {
+    await clearTasks()
+    await clearImages()
+    const compositeTask = task({
+      id: 'composite-recovery',
+      apiProvider: 'openai',
+      apiModel: 'openai/gpt-image-2',
+      apiOverride: { apiKey: 'composite-key', model: 'openai/gpt-image-2', platform: 'Composite' },
+      compositeRequestId: 'composite-request',
+      compositeStatusUrl: 'https://provider.example/status/composite-request',
+      status: 'running',
+      createdAt: Date.now(),
+      finishedAt: null,
+      elapsed: null,
+    })
+    await putDbTask(compositeTask)
+    vi.mocked(queryBackendCompositeImageTask).mockClear()
+    vi.mocked(queryBackendCompositeImageTask).mockResolvedValueOnce({
+      images: ['data:image/png;base64,Y29tcG9zaXRlLXJlY292ZXJlZA=='],
+      rawImageUrls: ['https://images.example/recovered.png'],
+      actualParams: { ...DEFAULT_PARAMS },
+      actualParamsList: [{ ...DEFAULT_PARAMS }],
+      revisedPrompts: [],
+      imagesStoredOnline: false,
+    })
+    useStore.setState({
+      settings: normalizeSettings(DEFAULT_SETTINGS),
+      tasks: [],
+      projects: [],
+      activeProjectId: null,
+      showToast: vi.fn(),
+    })
+
+    await initStore()
+
+    await vi.waitFor(() => expect(queryBackendCompositeImageTask).toHaveBeenCalledWith({
+      apiKey: 'composite-key',
+      model: 'openai/gpt-image-2',
+      requestId: 'composite-request',
+      params: compositeTask.params,
+    }))
+    await vi.waitFor(() => expect(useStore.getState().tasks.find((item) => item.id === compositeTask.id)?.status).toBe('done'))
+    expect(useStore.getState().tasks.find((item) => item.id === compositeTask.id)).toMatchObject({
+      error: null,
+      rawImageUrls: ['https://images.example/recovered.png'],
+      compositeRecoverable: false,
+    })
   })
 })
 

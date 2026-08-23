@@ -1,4 +1,5 @@
 import { authFetch, syncOIDCUserProfile } from '../auth/api'
+import { dataUrlToBlob } from './canvasImage'
 
 export type MaterialItem = {
   id: string
@@ -74,6 +75,28 @@ export async function uploadMaterialFile(file: File): Promise<MaterialItem> {
   const body = new FormData()
   body.append('file', file, file.name)
   const response = await requestWithAccountSync('/api/v1/materials', { method: 'POST', body })
+  if (!response.ok) throw await readError(response)
+  return await response.json() as MaterialItem
+}
+
+export async function uploadMaterialImage(dataUrl: string, fileNameBase: string): Promise<MaterialItem> {
+  const blob = await dataUrlToBlob(dataUrl)
+  const ext = blob.type === 'image/jpeg'
+    ? 'jpg'
+    : blob.type === 'image/webp'
+    ? 'webp'
+    : blob.type === 'image/gif'
+    ? 'gif'
+    : 'png'
+  return uploadMaterialFile(new File([blob], `${fileNameBase}.${ext}`, { type: blob.type || 'image/png' }))
+}
+
+export async function renameMaterial(id: string, fileName: string): Promise<MaterialItem> {
+  const response = await requestWithAccountSync(`/api/v1/materials/${encodeURIComponent(String(id))}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_name: fileName }),
+  })
   if (!response.ok) throw await readError(response)
   return await response.json() as MaterialItem
 }

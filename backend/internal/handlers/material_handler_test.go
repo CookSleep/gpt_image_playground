@@ -20,6 +20,8 @@ type materialUploadServiceStub struct {
 	fileName    string
 	contentType string
 	data        []byte
+	renamedID   string
+	renamedName string
 	deletedID   string
 	deletedIDs  []string
 }
@@ -30,6 +32,12 @@ func (s *materialUploadServiceStub) List(_ context.Context, _ string, _ string, 
 
 func (s *materialUploadServiceStub) Get(_ context.Context, _, _ string) (*services.MaterialItem, error) {
 	return &services.MaterialItem{}, nil
+}
+
+func (s *materialUploadServiceStub) Rename(_ context.Context, _, id, fileName string) (*services.MaterialItem, error) {
+	s.renamedID = id
+	s.renamedName = fileName
+	return &services.MaterialItem{ID: id, FileName: fileName}, nil
 }
 
 func (s *materialUploadServiceStub) Delete(_ context.Context, _, id string) error {
@@ -63,6 +71,33 @@ func TestMaterialHandlerDeletesByOpaquePublicID(t *testing.T) {
 		t.Fatalf("unexpected material id: %q", service.deletedID)
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"id":"mat_public_A1b2"`)) {
+		t.Fatalf("unexpected response: %s", w.Body.String())
+	}
+}
+
+func TestMaterialHandlerRenamesByOpaquePublicID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &materialUploadServiceStub{}
+	r := gin.New()
+	api := r.Group("/api/v1", func(c *gin.Context) {
+		c.Set(middleware.ContextKeyUserID, "user-a")
+		c.Next()
+	})
+	NewMaterialHandler(service).Register(api)
+
+	body, _ := json.Marshal(map[string]string{"file_name": " 新名称.png "})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/materials/mat_public_A1b2", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if service.renamedID != "mat_public_A1b2" || service.renamedName != "新名称.png" {
+		t.Fatalf("unexpected rename: id=%q name=%q", service.renamedID, service.renamedName)
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"file_name":"新名称.png"`)) {
 		t.Fatalf("unexpected response: %s", w.Body.String())
 	}
 }

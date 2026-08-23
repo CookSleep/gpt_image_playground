@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { authFetch } from '../auth/api'
-import { batchDeleteMaterials, deleteMaterial, downloadMaterialFiles, type MaterialItem } from './materialApi'
+import { batchDeleteMaterials, deleteMaterial, downloadMaterialFiles, renameMaterial, uploadMaterialImage, type MaterialItem } from './materialApi'
 
 vi.mock('../auth/api', () => ({
   authFetch: vi.fn(),
@@ -24,6 +24,19 @@ describe('materialApi', () => {
     expect(authFetch).toHaveBeenCalledWith('/api/v1/materials/mat_public%2FA%2BB', expect.objectContaining({ method: 'DELETE' }))
   })
 
+  it('renames materials using the opaque public id', async () => {
+    const renamed = { id: 'mat_public/A+B', file_name: '新名称.png' }
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify(renamed), { status: 200 }))
+
+    const result = await renameMaterial('mat_public/A+B', '新名称.png')
+
+    expect(result).toEqual(renamed)
+    expect(authFetch).toHaveBeenCalledWith('/api/v1/materials/mat_public%2FA%2BB', expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({ file_name: '新名称.png' }),
+    }))
+  })
+
   it('batch deletes opaque ids in chunks of 100', async () => {
     vi.mocked(authFetch)
       .mockResolvedValueOnce(new Response(JSON.stringify({ deleted_ids: Array.from({ length: 100 }, (_, index) => `mat-${index}`), deleted_count: 100 }), { status: 200 }))
@@ -35,6 +48,19 @@ describe('materialApi', () => {
     expect(authFetch).toHaveBeenCalledTimes(2)
     expect(JSON.parse(String(vi.mocked(authFetch).mock.calls[0]?.[1]?.body)).ids).toHaveLength(100)
     expect(JSON.parse(String(vi.mocked(authFetch).mock.calls[1]?.[1]?.body)).ids).toEqual(['mat-100'])
+  })
+
+  it('uploads a generated data URL as a named material image', async () => {
+    const item = { id: 'material-1', file_name: 'task-a.jpg' }
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify(item), { status: 200 }))
+
+    await uploadMaterialImage('data:image/jpeg;base64,aW1hZ2U=', 'task-a')
+
+    const form = vi.mocked(authFetch).mock.calls[0]?.[1]?.body as FormData
+    const file = form.get('file') as File
+    expect(file.name).toBe('task-a.jpg')
+    expect(file.type).toBe('image/jpeg')
+    expect(authFetch).toHaveBeenCalledWith('/api/v1/materials', expect.objectContaining({ method: 'POST' }))
   })
 
   it('downloads material content directly from its url', async () => {

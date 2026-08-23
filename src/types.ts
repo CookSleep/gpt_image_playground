@@ -201,6 +201,12 @@ export interface TaskRecord {
   customTaskId?: string
   /** 自定义异步任务是否等待自动恢复 */
   customRecoverable?: boolean
+  /** Composite 异步请求 ID，用于重启后继续查询结果 */
+  compositeRequestId?: string
+  /** Composite 提交接口返回的状态查询 URL，保留用于恢复和排查 */
+  compositeStatusUrl?: string
+  /** Composite 任务连接断开后是否等待自动恢复 */
+  compositeRecoverable?: boolean
   /** 图片状态查询 request_id 列表，用于重启后继续查询结果 */
   imageStatusRequestIds?: string[]
   /** 图片状态任务是否等待自动恢复 */
@@ -338,6 +344,8 @@ export interface AgentConversation {
 export interface StoredImage {
   id: string
   dataUrl: string
+  /** 按 Composite API Key 哈希缓存的 File API URL */
+  compositeFileUrls?: Record<string, string>
   /** 图片首次存储时间（ms） */
   createdAt?: number
   /** 图片来源：用户上传 / API 生成 / 遮罩 */

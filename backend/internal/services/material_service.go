@@ -27,6 +27,7 @@ type innerMaterialClient interface {
 	ListMaterials(ctx context.Context, req *innerpb.ListMaterialsRequest, opts ...client.Option) (*innerpb.ListMaterialsResponse, error)
 	GetMaterial(ctx context.Context, req *innerpb.GetMaterialRequest, opts ...client.Option) (*innerpb.Material, error)
 	UploadMaterial(ctx context.Context, req *innerpb.UploadMaterialRequest, opts ...client.Option) (*innerpb.UploadMaterialResponse, error)
+	RenameMaterial(ctx context.Context, req *innerpb.RenameMaterialRequest, opts ...client.Option) (*innerpb.Material, error)
 	DeleteMaterial(ctx context.Context, req *innerpb.DeleteMaterialRequest, opts ...client.Option) (*innerpb.DeleteMaterialResponse, error)
 	BatchDeleteMaterials(ctx context.Context, req *innerpb.BatchDeleteMaterialsRequest, opts ...client.Option) (*innerpb.BatchDeleteMaterialsResponse, error)
 }
@@ -141,6 +142,22 @@ func (s *MaterialService) Get(ctx context.Context, userID, id string) (*Material
 		return nil, err
 	}
 	response, err := s.client.GetMaterial(ctx, &innerpb.GetMaterialRequest{AccountId: accountID, Id: id}, client.WithMetaData("app-token", []byte(s.appToken)))
+	if err != nil {
+		return nil, err
+	}
+	return materialItem(response), nil
+}
+
+func (s *MaterialService) Rename(ctx context.Context, userID, id, fileName string) (*MaterialItem, error) {
+	accountID, err := s.accountID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	response, err := s.client.RenameMaterial(ctx, &innerpb.RenameMaterialRequest{
+		AccountId: accountID,
+		Id:        id,
+		FileName:  fileName,
+	}, client.WithMetaData("app-token", []byte(s.appToken)))
 	if err != nil {
 		return nil, err
 	}

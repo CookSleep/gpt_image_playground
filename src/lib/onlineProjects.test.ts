@@ -12,7 +12,7 @@ vi.mock('./db', () => ({
   getAllImages: async () => images,
 }))
 
-import { buildLegacyProjectArchive, buildOnlineProjectArchive, deleteOnlineProject, downloadOnlineProject, getAgentConversationReferencedImageIds, getTaskReferencedImageIds, listOnlineProjects, uploadOnlineProjectImage } from './onlineProjects'
+import { buildLegacyProjectArchive, buildOnlineProjectArchive, deleteOnlineProject, deleteOnlineProjectTask, downloadOnlineProject, getAgentConversationReferencedImageIds, getTaskReferencedImageIds, listOnlineProjects, saveOnlineProjectTask, uploadOnlineProjectImage } from './onlineProjects'
 
 function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
   return {
@@ -209,6 +209,44 @@ describe('onlineProjects', () => {
     expect(form.get('source')).toBe('generated')
     expect(form.get('width')).toBe('1024')
     expect(form.get('image')).toBeInstanceOf(Blob)
+  })
+
+  it('saves and deletes one task without uploading a project archive', async () => {
+    const response = {
+      id: 'project-a',
+      title: '项目 A',
+      archive_size: 10,
+      archive_sha256: 'sha256',
+      created_at: '2026-08-16T00:00:00Z',
+      updated_at: '2026-08-16T01:00:00Z',
+    }
+    authFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), { status: 200 }))
+    const project = {
+      id: 'project-a',
+      title: '项目 A',
+      initialPrompt: 'prompt',
+      storage: 'online' as const,
+      remoteId: 'project-a',
+      createdAt: 1,
+      updatedAt: 2,
+    }
+
+    await saveOnlineProjectTask(project, task({ id: 'task-a', projectId: project.id }))
+    await deleteOnlineProjectTask(project.id, 'task-a')
+
+    expect(authFetch).toHaveBeenNthCalledWith(1, '/api/v1/projects/project-a/tasks/task-a', expect.objectContaining({
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const body = JSON.parse(String(authFetch.mock.calls[0]?.[1]?.body))
+    expect(body).toMatchObject({
+      project_title: '项目 A',
+      project: { id: 'project-a' },
+      task: { id: 'task-a' },
+    })
+    expect(authFetch).toHaveBeenNthCalledWith(2, '/api/v1/projects/project-a/tasks/task-a', { method: 'DELETE' })
   })
 
   it('loads the online project list', async () => {

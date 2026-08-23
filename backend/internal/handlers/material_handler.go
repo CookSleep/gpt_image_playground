@@ -23,6 +23,7 @@ type materialUploadService interface {
 	List(ctx context.Context, userID, kind, keyword string, page, pageSize int32) (*services.MaterialList, error)
 	Get(ctx context.Context, userID, id string) (*services.MaterialItem, error)
 	Upload(ctx context.Context, userID, fileName, contentType string, data []byte) (*services.MaterialUpload, error)
+	Rename(ctx context.Context, userID, id, fileName string) (*services.MaterialItem, error)
 	Delete(ctx context.Context, userID, id string) error
 	BatchDelete(ctx context.Context, userID string, ids []string) (*services.MaterialBatchDelete, error)
 }
@@ -40,6 +41,7 @@ func (h *MaterialHandler) Register(api *gin.RouterGroup) {
 	api.POST("/materials", h.Upload)
 	api.POST("/materials/batch-delete", h.BatchDelete)
 	api.GET("/materials/:id", h.Get)
+	api.PATCH("/materials/:id", h.Rename)
 	api.DELETE("/materials/:id", h.Delete)
 }
 
@@ -74,6 +76,37 @@ func (h *MaterialHandler) Get(c *gin.Context) {
 		return
 	}
 	result, err := h.materials.Get(c.Request.Context(), userID, id)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *MaterialHandler) Rename(c *gin.Context) {
+	userID := c.GetString(middleware.ContextKeyUserID)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "unauthenticated"})
+		return
+	}
+	id, err := materialIDParam(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
+		return
+	}
+	var request struct {
+		FileName string `json:"file_name"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "material file_name is required"})
+		return
+	}
+	fileName := strings.TrimSpace(request.FileName)
+	if fileName == "" || len(fileName) > 255 {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "material file_name must contain between 1 and 255 bytes"})
+		return
+	}
+	result, err := h.materials.Rename(c.Request.Context(), userID, id, fileName)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return

@@ -70,9 +70,11 @@ backend/
 | GET  | `/api/v1/me` | 占位示例，演示登录后的 API 访问 |
 | GET/POST | `/api/v1/projects` | 查询或保存在线项目 |
 | GET/PATCH/DELETE | `/api/v1/projects/:id` | 读取、重命名或删除在线项目 |
+| PUT/DELETE | `/api/v1/projects/:id/tasks/:taskId` | 异步保存或删除单条生成记录，无需重新上传项目 ZIP |
 | GET/POST | `/api/v1/projects/:id/images` | 查询或保存项目图片 |
 | GET/DELETE | `/api/v1/projects/:id/images/:imageId` | 读取或删除项目图片 |
-| POST | `/api/v1/materials` | 上传 Composite 参考图，后台通过 Inner API RPC 返回 `file_url` |
+| POST/DELETE | `/api/v1/files` | 上传或删除 Composite 参考图，后台代理上游 File API |
+| POST | `/api/v1/materials` | 上传素材库图片，后台通过 Inner API RPC 返回 `file_url` |
 | POST | `/api/v1/materials/batch-delete` | 批量删除素材，JSON `ids` 最多 100 个，后台调用 `BatchDeleteMaterials` RPC |
 | POST | `/api/v1/model/:slug`（支持多段 slug） | 向 Composite 上游提交异步任务 |
 | GET | `/api/v1/model/:slug/requests/:requestId/status` | 查询 Composite 异步任务状态 |
@@ -80,9 +82,9 @@ backend/
 | POST | `/api/v1/projects/:id/generations` | 由后端调用 Images 或 Responses API 生成图片，图片落库后返回 |
 | POST | `/api/v1/projects/:id/edits` | 由后端调用 Images Edits 或 Responses API 编辑图片，图片落库后返回 |
 
-生图请求中的 API Key 仅用于本次上游请求，不会写入数据库。上游基址由当前 JWT 的 OIDC provider 配置决定，客户端不能指定任意地址。Composite 代理从 `X-Upstream-API-Key` 读取 Composite Key，并将其转换为上游 `Authorization: Bearer <key>`；代理只转发当前这一次请求，不在 generation 接口中提交或轮询。前端以 2 秒起始、最大 15 秒的指数退避轮询，总超时 10 分钟；网络错误和 HTTP 5xx 最多重试 3 次，HTTP 4xx 直接报错。
+生图请求中的 API Key 仅用于本次上游请求，不会写入数据库。上游基址由当前 JWT 的 OIDC provider 配置决定，客户端不能指定任意地址。Composite 代理从 `X-Upstream-API-Key` 读取 Composite Key，并将其转换为上游 `Authorization: Bearer <key>`；代理只转发当前这一次请求，不在 generation 接口中提交或轮询。前端以 2 秒起始、最大 15 秒的指数退避轮询，总超时 10 分钟；网络错误和 HTTP 5xx 最多重试 3 次，HTTP 4xx 直接报错。提交成功后前端会把 `request_id` 和 `status_url` 写入任务记录；页面刷新后会通过本地代理继续查询状态，完成后获取并保存结果。
 
-Composite 图片编辑会先把每张参考图和遮罩以 multipart 文件提交到 `/api/v1/materials`。后台使用当前用户 claims 中的 `account_id`（兼容 `sub2api:account_id` 和 `accountId`）调用 tRPC `UploadMaterial`，不会把 OIDC `sub` 当作账户 ID。若历史用户本地 claims 缺少 `account_id`，素材接口返回 `account_id_required`，前端会用当前 OIDC access token 调 `/auth/oidc/sync` 重新读取 UserInfo、回填 claims 后自动重试上传；不需要重新登录或 refresh。
+Composite 图片编辑会先把本地参考图和遮罩以 multipart 文件提交到 `/api/v1/files`。后台使用 `file_api.developer_key` 代理到当前 OIDC provider 的 `/api/v1/file/`，密钥不会返回前端。前端会按 Composite API Key 的哈希把返回的 URL 缓存在本地图片记录中；同一 API Key 后续复用该图片时会直接提交 URL，不再重复上传。不同 API Key 之间不会共享缓存。为了保证缓存 URL 持续有效，前端不会在任务结束时自动删除 File API 文件；`DELETE /api/v1/files` 仍保留供显式清理使用。素材库中已有的远程 URL 也会直接复用。
 
 素材库批量删除调用 `POST /api/v1/materials/batch-delete`，请求格式为 `{"ids":["opaque-id-1","opaque-id-2"]}`。单次最多 100 个 ID；前端选择超过 100 个素材时会自动分批请求。
 
@@ -93,9 +95,13 @@ inner_api_rpc:
   target: ip://10.0.0.5:9100
   app_token: "创建内部 API App 时获得的 token"
   timeout_seconds: 30
+
+file_api:
+  developer_key: "dev_完整开发者密钥"
+  timeout_seconds: 600
 ```
 
-对应的内部 API App 必须授予 `materials:write` 权限。`app_token` 只保存在后台配置中，不会返回前端。
+对应的内部 API App 必须授予 `materials:write` 权限。`app_token` 与 `developer_key` 都只保存在后台配置中，不会返回前端。`developer_key` 必须填写创建时一次性展示的完整密钥，不能填写 `key_prefix`。
 
 ### 回调 token 传递格式
 

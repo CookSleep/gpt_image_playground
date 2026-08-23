@@ -48,15 +48,16 @@ import {
   putImageThumbnail,
   deleteImage,
   clearImages,
+  hashDataUrl,
   storeImage,
   storeImageReference,
   storeImageWithSize,
 } from './lib/db'
 import { getAccessToken, isAuthEnabled } from './auth/api'
-import { buildLegacyProjectArchive, buildOnlineProjectArchive, clearLegacyProjectUploadId, createOnlineProject, deleteOnlineProject, deleteOnlineProjectImage, downloadOnlineProject, downloadOnlineProjectImage, getAgentConversationReferencedImageIds, getLegacyProjectUploadId, getTaskReferencedImageIds, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
+import { buildLegacyProjectArchive, buildOnlineProjectArchive, clearLegacyProjectUploadId, createOnlineProject, deleteOnlineProject, deleteOnlineProjectImage, deleteOnlineProjectTask, downloadOnlineProject, downloadOnlineProjectImage, getAgentConversationReferencedImageIds, getLegacyProjectUploadId, getTaskReferencedImageIds, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectTask, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
 import { callImageApi } from './lib/api'
 import { callBackendImageApi } from './lib/backendImageApi'
-import { callBackendCompositeImageApi } from './lib/backendCompositeImageApi'
+import { callBackendCompositeImageApi, queryBackendCompositeImageTask } from './lib/backendCompositeImageApi'
 import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
 import { showBrowserNotification } from './lib/browserNotification'
@@ -93,12 +94,15 @@ const MAX_THUMBNAIL_CACHE_ENTRIES = 80
 const MAX_THUMBNAIL_BACKFILL_CONCURRENT = 4
 const FAL_RECOVERY_POLL_MS = 10_000
 const CUSTOM_RECOVERY_POLL_MS = 10_000
+const COMPOSITE_RECOVERY_POLL_MS = 5_000
+const COMPOSITE_RECOVERY_TIMEOUT_MS = 10 * 60 * 1000
 const IMAGE_STATUS_RECOVERY_POLL_MS = 5_000
 const SUPPORT_PROMPT_IMAGE_THRESHOLD = 50
 const AGENT_INPUT_DRAFT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000
 const AGENT_ROUND_IMAGE_MENTION_RE = /@(?:第)?(\d+)轮图(\d+)/g
 const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const customRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const compositeRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const imageStatusRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const agentImageStatusRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -107,6 +111,9 @@ const projectPersistenceQueues = new Map<string, Promise<IDBValidKey>>()
 const onlineProjectSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const onlineProjectSyncQueues = new Map<string, Promise<void>>()
 const onlineProjectSyncErrors = new Set<string>()
+const onlineTaskSyncQueues = new Map<string, Promise<void>>()
+const onlineTaskSyncRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const onlineTaskSyncErrors = new Set<string>()
 let agentConversationPersistenceReady = false
 let agentConversationMigrationPending = false
 let onlineProjectCacheReady = false
@@ -2161,10 +2168,83 @@ function getPersistableTask(task: TaskRecord): TaskRecord {
 }
 
 function putTask(task: TaskRecord): Promise<IDBValidKey> {
-  return dbPutTask(getPersistableTask(task)).then((key) => {
-    if (task.projectId) scheduleOnlineProjectSync(task.projectId)
+  const persistable = getPersistableTask(task)
+  return dbPutTask(persistable).then((key) => {
+    queueOnlineTaskSync(persistable)
     return key
   })
+}
+
+function queueOnlineTaskSync(task: TaskRecord) {
+  if (!task.projectId) return
+  const project = useStore.getState().projects.find((item) => item.id === task.projectId)
+  if (project?.storage !== 'online' || !project.remoteId) return
+  const retryTimer = onlineTaskSyncRetryTimers.get(task.id)
+  if (retryTimer) clearTimeout(retryTimer)
+  onlineTaskSyncRetryTimers.delete(task.id)
+
+  const previous = onlineTaskSyncQueues.get(task.id)
+  const syncing = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(async () => {
+    const state = useStore.getState()
+    const latestTask = state.tasks.find((item) => item.id === task.id) ?? task
+    const latestProject = state.projects.find((item) => item.id === latestTask.projectId)
+    if (latestProject?.storage !== 'online' || !latestProject.remoteId) return
+    const response = await saveOnlineProjectTask(latestProject, getPersistableTask(latestTask))
+    const current = useStore.getState().projects.find((item) => item.id === latestProject.id)
+    if (!current) return
+    const hasArchiveSync = onlineProjectSyncTimers.has(current.id) || onlineProjectSyncQueues.has(current.id)
+    const updated: Project = {
+      ...current,
+      remoteArchiveSha256: response.archive_sha256,
+      syncPending: hasArchiveSync ? current.syncPending : false,
+    }
+    useStore.setState((state) => ({
+      projects: state.projects.map((item) => item.id === current.id ? updated : item),
+    }))
+    queueProjectSave(updated)
+    onlineTaskSyncErrors.delete(task.id)
+  })
+  onlineTaskSyncQueues.set(task.id, syncing)
+  void syncing
+    .catch((err) => {
+      console.error('在线任务记录保存失败：', err)
+      if (!onlineTaskSyncErrors.has(task.id)) {
+        onlineTaskSyncErrors.add(task.id)
+        useStore.getState().showToast('在线任务记录保存失败，将自动重试', 'error')
+      }
+      if (onlineTaskSyncRetryTimers.has(task.id)) return
+      onlineTaskSyncRetryTimers.set(task.id, setTimeout(() => {
+        onlineTaskSyncRetryTimers.delete(task.id)
+        const latest = useStore.getState().tasks.find((item) => item.id === task.id)
+        if (latest) queueOnlineTaskSync(latest)
+      }, 5000))
+    })
+    .finally(() => {
+      if (onlineTaskSyncQueues.get(task.id) === syncing) onlineTaskSyncQueues.delete(task.id)
+    })
+}
+
+async function deleteOnlineTaskRecord(task: TaskRecord) {
+  if (!task.projectId) return
+  const project = useStore.getState().projects.find((item) => item.id === task.projectId)
+  if (project?.storage !== 'online' || !project.remoteId) return
+  const retryTimer = onlineTaskSyncRetryTimers.get(task.id)
+  if (retryTimer) clearTimeout(retryTimer)
+  onlineTaskSyncRetryTimers.delete(task.id)
+  await onlineTaskSyncQueues.get(task.id)?.catch(() => undefined)
+  const pendingRetry = onlineTaskSyncRetryTimers.get(task.id)
+  if (pendingRetry) clearTimeout(pendingRetry)
+  onlineTaskSyncRetryTimers.delete(task.id)
+  onlineTaskSyncErrors.delete(task.id)
+  const response = await deleteOnlineProjectTask(project.remoteId, task.id)
+  if (!response) return
+  const current = useStore.getState().projects.find((item) => item.id === project.id)
+  if (!current) return
+  const updated = { ...current, remoteArchiveSha256: response.archive_sha256 }
+  useStore.setState((state) => ({
+    projects: state.projects.map((item) => item.id === project.id ? updated : item),
+  }))
+  queueProjectSave(updated)
 }
 
 function getActiveTaskProjectId() {
@@ -2293,20 +2373,20 @@ async function uploadGeneratedProjectImages(task: TaskRecord, images: StoredImag
   }
 }
 
-function touchProject(id?: string) {
+function touchProject(id?: string, syncArchive = true) {
   if (!id) return
   const project = useStore.getState().projects.find((item) => item.id === id)
   if (!project) return
   const updated = {
     ...project,
-    ...(project.storage === 'online' ? { syncPending: true } : {}),
+    ...(project.storage === 'online' && syncArchive ? { syncPending: true } : {}),
     updatedAt: Date.now(),
   }
   useStore.setState((state) => ({
     projects: [updated, ...state.projects.filter((item) => item.id !== id)],
   }))
   queueProjectSave(updated)
-  scheduleOnlineProjectSync(id)
+  if (syncArchive) scheduleOnlineProjectSync(id)
 }
 
 export function getCodexCliPromptKey(settings: AppSettings): string {
@@ -2338,7 +2418,7 @@ function isAsyncCustomProviderTask(settings: AppSettings, provider: string, hasI
 export function markInterruptedOpenAIRunningTasks(tasks: TaskRecord[], now = Date.now()) {
   const interruptedTasks: TaskRecord[] = []
   const updatedTasks = tasks.map((task) => {
-    if (!isRunningOpenAITask(task) || task.customTaskId || hasImageStatusRequestIds(task)) return task
+    if (!isRunningOpenAITask(task) || task.customTaskId || task.compositeRequestId || hasImageStatusRequestIds(task)) return task
 
     const updated: TaskRecord = {
       ...task,
@@ -2661,6 +2741,21 @@ function scheduleCustomRecovery(taskId: string, delayMs = CUSTOM_RECOVERY_POLL_M
   customRecoveryTimers.set(taskId, timer)
 }
 
+function clearCompositeRecoveryTimer(taskId: string) {
+  const timer = compositeRecoveryTimers.get(taskId)
+  if (timer) clearTimeout(timer)
+  compositeRecoveryTimers.delete(taskId)
+}
+
+function scheduleCompositeRecovery(taskId: string, delayMs = COMPOSITE_RECOVERY_POLL_MS) {
+  if (compositeRecoveryTimers.has(taskId)) return
+  const timer = setTimeout(() => {
+    compositeRecoveryTimers.delete(taskId)
+    recoverCompositeTask(taskId)
+  }, delayMs)
+  compositeRecoveryTimers.set(taskId, timer)
+}
+
 function clearImageStatusRecoveryTimer(taskId: string) {
   const timer = imageStatusRecoveryTimers.get(taskId)
   if (timer) clearTimeout(timer)
@@ -2835,6 +2930,105 @@ async function recoverFalTask(taskId: string) {
       error: getFalErrorMessage(err) ?? (err instanceof Error ? err.message : String(err)),
       ...getRawErrorPayload(err),
       falRecoverable: false,
+      finishedAt: Date.now(),
+      elapsed: Date.now() - task.createdAt,
+    })
+  }
+}
+
+async function completeRecoveredCompositeTask(task: TaskRecord, result: Awaited<ReturnType<typeof queryBackendCompositeImageTask>>) {
+  if (!result) return
+  const latest = useStore.getState().tasks.find((item) => item.id === task.id)
+  if (!latest || latest.status === 'done') return
+
+  const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
+  const actualParamsList = await resolveImageSizeParamsList(outputDataUrls, result.actualParamsList, outputImageSizes)
+
+  updateTaskInStore(task.id, {
+    outputImages: outputIds,
+    transparentOriginalImages: transparentOriginalImageIds,
+    rawImageUrls: result.rawImageUrls?.length ? result.rawImageUrls : undefined,
+    actualParams: {
+      ...result.actualParams,
+      size: result.actualParams?.size ?? firstActualParams(actualParamsList)?.size,
+      n: outputIds.length,
+    },
+    actualParamsByImage: mapActualParamsByImage(outputIds, actualParamsList),
+    status: 'done',
+    error: null,
+    compositeRecoverable: false,
+    finishedAt: Date.now(),
+    elapsed: Date.now() - task.createdAt,
+  })
+  useStore.getState().showToast(`Composite 任务已恢复，共 ${outputIds.length} 张图片`, 'success')
+  if (!isAgentTask(task)) showTaskCompletionNotification('图像生成完成', `Composite 任务已恢复，共 ${outputIds.length} 张图片。`)
+}
+
+async function recoverCompositeTask(taskId: string) {
+  const task = useStore.getState().tasks.find((item) => item.id === taskId)
+  if (!task || task.status === 'done' || !task.compositeRequestId) return
+  const apiOverride = task.apiOverride
+  if (apiOverride?.platform?.trim().toLowerCase() !== 'composite' || !apiOverride.apiKey || !task.apiModel) {
+    clearCompositeRecoveryTimer(taskId)
+    updateTaskInStore(taskId, {
+      status: 'error',
+      error: 'Composite 任务缺少恢复所需的 API Key 或模型信息',
+      compositeRecoverable: false,
+      finishedAt: Date.now(),
+      elapsed: Date.now() - task.createdAt,
+    })
+    return
+  }
+
+  try {
+    console.log('[Store] 正在恢复 Composite 任务', {
+      taskId,
+      requestId: task.compositeRequestId,
+      statusUrl: task.compositeStatusUrl,
+    })
+    const result = await queryBackendCompositeImageTask({
+      apiKey: apiOverride.apiKey,
+      model: task.apiModel,
+      requestId: task.compositeRequestId,
+      params: task.params,
+    })
+    if (!result) {
+      if (Date.now() - task.createdAt >= COMPOSITE_RECOVERY_TIMEOUT_MS) {
+        clearCompositeRecoveryTimer(taskId)
+        updateTaskInStore(taskId, {
+          status: 'error',
+          error: 'Composite 异步任务轮询超时',
+          compositeRecoverable: false,
+          finishedAt: Date.now(),
+          elapsed: Date.now() - task.createdAt,
+        })
+        return
+      }
+      updateTaskInStore(taskId, {
+        status: 'running',
+        error: null,
+        compositeRecoverable: true,
+        finishedAt: null,
+        elapsed: null,
+      })
+      scheduleCompositeRecovery(taskId)
+      return
+    }
+
+    clearCompositeRecoveryTimer(taskId)
+    await completeRecoveredCompositeTask(task, result)
+  } catch (err) {
+    if (isFalConnectionRecoverableError(err)) {
+      updateTaskInStore(taskId, { compositeRecoverable: true })
+      scheduleCompositeRecovery(taskId)
+      return
+    }
+
+    clearCompositeRecoveryTimer(taskId)
+    updateTaskInStore(taskId, {
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+      compositeRecoverable: false,
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
     })
@@ -3605,6 +3799,13 @@ async function initializeStore() {
     useStore.setState({})
   }
   const { tasks: markedTasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
+  for (const task of interruptedTasks) {
+    console.warn('[Store] 任务被标记为“请求中断”', {
+      taskId: task.id,
+      apiProvider: task.apiProvider ?? 'openai',
+      reason: '应用重新初始化时任务仍处于运行中，但没有可恢复的远程请求标识，前端无法继续等待原请求',
+    })
+  }
   const interruptedTaskIds = new Set(interruptedTasks.map((task) => task.id))
   const favoriteState = useStore.getState()
   const favoriteCollections = ensureProjectFavoriteCollections(
@@ -3669,6 +3870,12 @@ async function initializeStore() {
       (task.status === 'running' || task.customRecoverable)
     ) {
       scheduleCustomRecovery(task.id, 0)
+    }
+    if (
+      task.compositeRequestId &&
+      (task.status === 'running' || task.compositeRecoverable)
+    ) {
+      scheduleCompositeRecovery(task.id, 0)
     }
     if (
       shouldScheduleTaskImageStatusRecovery(task, agentRoundRequestIds)
@@ -3958,7 +4165,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   const latestTasks = useStore.getState().tasks
   useStore.getState().setTasks([task, ...latestTasks])
   await putTask(task)
-  touchProject(projectId)
+  touchProject(projectId, false)
   useStore.getState().showToast('任务已提交', 'success')
 
   if (settings.clearInputAfterSubmit) {
@@ -5168,7 +5375,7 @@ async function executeAgentRound(
       useStore.getState().setTasks([task, ...useStore.getState().tasks])
       attachTaskToAgentRound(task.id)
       await putTask(task)
-      touchProject(projectId)
+      touchProject(projectId, false)
       return task.id
     }
 
@@ -5665,7 +5872,7 @@ async function executeAgentRound(
         attachTaskToAgentRound(task.id)
         await putTask(task)
         await uploadGeneratedProjectImages(task, [{ ...stored, dataUrl: image.dataUrl, source: 'generated' }])
-        touchProject(projectId)
+        touchProject(projectId, false)
       }
 
       if (result.rawResponsePayload && streamingTaskIds.length > 0) {
@@ -5918,6 +6125,9 @@ async function executeTask(taskId: string) {
   let customTaskInfo: { taskId: string } | null = task.customTaskId
     ? { taskId: task.customTaskId }
     : null
+  let compositeRequestInfo: { requestId: string; statusUrl?: string } | null = task.compositeRequestId
+    ? { requestId: task.compositeRequestId, statusUrl: task.compositeStatusUrl }
+    : null
 
   if (
     taskProvider !== 'fal' &&
@@ -5942,6 +6152,18 @@ async function executeTask(taskId: string) {
       if (!maskDataUrl) throw new Error('遮罩图片已不存在')
     }
 
+    const compositeFileCacheKey = isCompositeRequest
+      ? await hashDataUrl(task.apiOverride?.apiKey ?? '')
+      : ''
+    const compositeInputFileUrls = isCompositeRequest
+      ? await Promise.all(task.inputImageIds.map(async (imageId) => (
+          (await getImage(imageId))?.compositeFileUrls?.[compositeFileCacheKey]
+        )))
+      : []
+    const compositeMaskFileUrl = isCompositeRequest && task.maskImageId
+      ? (await getImage(task.maskImageId))?.compositeFileUrls?.[compositeFileCacheKey]
+      : undefined
+
     const requestPrompt = task.transparentOutput && task.transparentPrompt
       ? task.transparentPrompt
       : task.prompt
@@ -5960,7 +6182,53 @@ async function executeTask(taskId: string) {
           prompt,
           params: task.params,
           inputImageDataUrls: inputDataUrls,
+          inputImageFileUrls: compositeInputFileUrls,
           maskDataUrl,
+          maskFileUrl: compositeMaskFileUrl,
+          onRequestCreated: async (request) => {
+            compositeRequestInfo = request
+            await updateTaskInStore(taskId, {
+              compositeRequestId: request.requestId,
+              compositeStatusUrl: request.statusUrl,
+              compositeRecoverable: false,
+            })
+            console.log('[Store] 已保存 Composite 任务恢复信息', {
+              taskId,
+              requestId: request.requestId,
+              statusUrl: request.statusUrl,
+            })
+          },
+          onReferenceUploaded: async (reference) => {
+            const imageId = reference.source === 'mask'
+              ? task.maskImageId
+              : task.inputImageIds[reference.index]
+            if (!imageId) return
+            const image = await getImage(imageId)
+            if (!image) return
+            await putImage({
+              ...image,
+              compositeFileUrls: {
+                ...image.compositeFileUrls,
+                [compositeFileCacheKey]: reference.url,
+              },
+            })
+          },
+          onReferenceUploadFailed: (error) => {
+            const latestTask = useStore.getState().tasks.find((item) => item.id === taskId)
+            if (!latestTask || latestTask.status !== 'running') return
+            useStore.getState().setTaskStreamPreview(taskId)
+            updateTaskInStore(taskId, {
+              status: 'error',
+              error: error.message,
+              falRecoverable: false,
+              customRecoverable: false,
+              imageStatusRecoverable: false,
+              finishedAt: Date.now(),
+              elapsed: Date.now() - task.createdAt,
+            })
+            useStore.getState().setDetailTaskId(taskId)
+            useStore.getState().showToast(error.message, 'error')
+          },
         })
       : backendRequest
       ? await callBackendImageApi({
@@ -6079,6 +6347,7 @@ async function executeTask(taskId: string) {
       elapsed: Date.now() - task.createdAt,
       falRecoverable: false,
       customRecoverable: false,
+      compositeRecoverable: false,
       imageStatusRecoverable: false,
     })
     void deleteUnreferencedImageIds(partialImageIdsToClean)
@@ -6107,6 +6376,9 @@ async function executeTask(taskId: string) {
       ? { requestId: latestTask.falRequestId, endpoint: latestTask.falEndpoint }
       : null)
     const latestCustomTaskInfo = customTaskInfo ?? (latestTask.customTaskId ? { taskId: latestTask.customTaskId } : null)
+    const latestCompositeRequestInfo = compositeRequestInfo ?? (latestTask.compositeRequestId
+      ? { requestId: latestTask.compositeRequestId, statusUrl: latestTask.compositeStatusUrl }
+      : null)
     if (latestTask.apiProvider === 'fal' && latestFalRequestInfo && isFalConnectionRecoverableError(err)) {
       updateTaskInStore(taskId, {
         status: 'error',
@@ -6127,6 +6399,17 @@ async function executeTask(taskId: string) {
         elapsed: Date.now() - task.createdAt,
       })
       scheduleImageStatusRecovery(taskId)
+    } else if (isCompositeRequest && latestCompositeRequestInfo && isFalConnectionRecoverableError(err)) {
+      updateTaskInStore(taskId, {
+        status: 'error',
+        error: 'Composite 请求连接已断开，之后会继续查询任务结果。',
+        compositeRequestId: latestCompositeRequestInfo.requestId,
+        compositeStatusUrl: latestCompositeRequestInfo.statusUrl,
+        compositeRecoverable: true,
+        finishedAt: Date.now(),
+        elapsed: Date.now() - task.createdAt,
+      })
+      scheduleCompositeRecovery(taskId)
     } else if (latestCustomTaskInfo && isFalConnectionRecoverableError(err)) {
       updateTaskInStore(taskId, {
         status: 'error',
@@ -6164,9 +6447,10 @@ async function executeTask(taskId: string) {
         elapsed: Date.now() - task.createdAt,
       })
       useStore.getState().setDetailTaskId(taskId)
+      useStore.getState().showToast(errorMessage, 'error')
     }
   } finally {
-    touchProject(task.projectId)
+    touchProject(task.projectId, false)
     // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）
     for (const imgId of task.inputImageIds) {
       imageCache.delete(imgId)
@@ -6198,7 +6482,7 @@ export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
   const task = updated.find((t) => t.id === taskId)
   setTasks(updated)
   maybeOpenSupportPrompt(tasks, updated, taskId)
-  if (task) putTask(task)
+  return task ? putTask(task) : undefined
 }
 
 function normalizeFavoriteCollectionIds(ids: unknown) {
@@ -6437,7 +6721,7 @@ export async function retryTask(task: TaskRecord) {
   const latestTasks = useStore.getState().tasks
   useStore.getState().setTasks([newTask, ...latestTasks])
   await putTask(newTask)
-  touchProject(task.projectId)
+  touchProject(task.projectId, false)
 
   executeTask(taskId)
 }
@@ -6533,6 +6817,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
   const toDelete = new Set(taskIds)
   const deletedTasks = tasks.filter(t => toDelete.has(t.id))
   const remaining = await scrubAgentOutputPayloadsForDeletedTasks(deletedTasks, tasks.filter(t => !toDelete.has(t.id)))
+  await Promise.all(deletedTasks.map((task) => deleteOnlineTaskRecord(task)))
 
   // 收集所有被删除任务的关联图片
   const deletedImageIds = new Set<string>()
@@ -6565,8 +6850,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
     }
   }
   for (const projectId of new Set(deletedTasks.map((task) => task.projectId).filter((id): id is string => Boolean(id)))) {
-    touchProject(projectId)
-    scheduleOnlineProjectSync(projectId)
+    touchProject(projectId, false)
   }
 
   // 如果删除的任务在选中列表中，则移除
@@ -6619,6 +6903,7 @@ export async function removeTask(task: TaskRecord) {
 
   // 从列表移除
   const remaining = await scrubAgentOutputPayloadsForDeletedTasks([task], tasks.filter((t) => t.id !== task.id))
+  await deleteOnlineTaskRecord(task)
   setTasks(remaining)
   await dbDeleteTask(task.id)
 
@@ -6640,8 +6925,7 @@ export async function removeTask(task: TaskRecord) {
     }
   }
   if (task.projectId) {
-    touchProject(task.projectId)
-    scheduleOnlineProjectSync(task.projectId)
+    touchProject(task.projectId, false)
   }
 
   showToast('任务已删除', 'success')

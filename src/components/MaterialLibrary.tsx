@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
-import { batchDeleteMaterials, deleteMaterial, downloadMaterialFiles, getMaterialKey, listMaterials, uploadMaterialFile, type MaterialItem } from '../lib/materialApi'
+import { batchDeleteMaterials, deleteMaterial, downloadMaterialFiles, getMaterialKey, listMaterials, renameMaterial, type MaterialItem } from '../lib/materialApi'
 import { useDragSelect } from '../hooks/useDragSelect'
-import { CloseIcon, CloudUploadIcon, DownloadIcon, RefreshIcon, SearchIcon, TrashIcon } from './icons'
+import { useMaterialDropUpload } from '../hooks/useMaterialDropUpload'
+import { CloseIcon, CloudUploadIcon, DownloadIcon, EditIcon, RefreshIcon, SearchIcon, TrashIcon } from './icons'
 
 function formatBytes(value: number) {
   if (!Number.isFinite(value) || value <= 0) return '未知大小'
@@ -19,18 +20,32 @@ function isVideo(item: MaterialItem) {
   return item.content_type.toLowerCase().startsWith('video/')
 }
 
+function isAudio(item: MaterialItem) {
+  return item.content_type.toLowerCase().startsWith('audio/')
+}
+
+const MATERIAL_KIND_OPTIONS = [
+  { value: '', label: '全部' },
+  { value: 'image', label: '图片' },
+  { value: 'audio', label: '音频' },
+  { value: 'video', label: '视频' },
+] as const
+
 export default function MaterialLibrary() {
   const [items, setItems] = useState<MaterialItem[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [keyword, setKeyword] = useState('')
   const [query, setQuery] = useState('')
+  const [kind, setKind] = useState('')
   const [loading, setLoading] = useState(true)
-  const [uploading, setUploading] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [batchMode, setBatchMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
+  const [renamingId, setRenamingId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const materialsRef = useRef(new Map<string, MaterialItem>())
@@ -54,11 +69,11 @@ export default function MaterialLibrary() {
     },
   })
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const result = await listMaterials({ page, pageSize, keyword: query })
+      const result = await listMaterials({ page, pageSize, kind, keyword: query })
       const nextItems = result.items || []
       nextItems.forEach((item) => materialsRef.current.set(item.id, item))
       setItems(nextItems)
@@ -68,27 +83,27 @@ export default function MaterialLibrary() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [kind, page, query])
 
   useEffect(() => {
     void load()
-  }, [page, query])
+  }, [load])
+
+  const refreshAfterUpload = useCallback(async () => {
+    setPage(1)
+    if (page === 1) await load()
+  }, [load, page])
+
+  const { uploading, isDragging, uploadFiles, dropZoneProps } = useMaterialDropUpload({
+    onUploaded: refreshAfterUpload,
+    onError: setError,
+  })
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || [])
+    const files = event.target.files
     event.target.value = ''
-    if (files.length === 0) return
-    setUploading(true)
-    setError('')
-    try {
-      for (const file of files) await uploadMaterialFile(file)
-      setPage(1)
-      if (page === 1) await load()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setUploading(false)
-    }
+    if (!files?.length) return
+    await uploadFiles(files)
   }
 
   const handleDelete = async (item: MaterialItem) => {
@@ -99,6 +114,30 @@ export default function MaterialLibrary() {
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const handleRename = async () => {
+    if (!editingId || renamingId) return
+    const fileName = editingName.trim()
+    const item = materialsRef.current.get(editingId)
+    if (!fileName || fileName === item?.file_name) {
+      setEditingId(null)
+      setEditingName('')
+      return
+    }
+    setRenamingId(editingId)
+    setError('')
+    try {
+      const updated = await renameMaterial(editingId, fileName)
+      materialsRef.current.set(updated.id, updated)
+      setItems((values) => values.map((value) => value.id === updated.id ? updated : value))
+      setEditingId(null)
+      setEditingName('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRenamingId(null)
     }
   }
 
@@ -157,29 +196,53 @@ export default function MaterialLibrary() {
         </div>
       </div>
 
-      <div className="mb-5 flex items-center gap-2">
-        <form onSubmit={(event) => { event.preventDefault(); setPage(1); setQuery(keyword) }} className="flex min-w-0 max-w-xl flex-1 items-center gap-2">
-          <div className="relative min-w-0 flex-1">
-            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索文件名" className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-900 outline-none transition focus:border-gray-400 dark:border-white/[0.1] dark:bg-white/[0.04] dark:text-white dark:focus:border-white/[0.25]" />
+      <div className="mb-5 flex items-start gap-2">
+        <div className="min-w-0 max-w-xl flex-1">
+          <form onSubmit={(event) => { event.preventDefault(); setPage(1); setQuery(keyword) }} className="flex items-center gap-2">
+            <div className="relative min-w-0 flex-1">
+              <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索文件名" className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-900 outline-none transition focus:border-gray-400 dark:border-white/[0.1] dark:bg-white/[0.04] dark:text-white dark:focus:border-white/[0.25]" />
+            </div>
+            <button type="submit" className="h-10 shrink-0 rounded-lg border border-gray-200 px-4 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-white/[0.1] dark:text-gray-300 dark:hover:bg-white/[0.06]">搜索</button>
+          </form>
+          <div className="mt-2 flex flex-wrap items-center gap-1" aria-label="素材类型筛选">
+            {MATERIAL_KIND_OPTIONS.map((option) => (
+              <button
+                key={option.value || 'all'}
+                type="button"
+                onClick={() => { setPage(1); setKind(option.value) }}
+                aria-pressed={kind === option.value}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${kind === option.value ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-white'}`}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
-          <button type="submit" className="h-10 shrink-0 rounded-lg border border-gray-200 px-4 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-white/[0.1] dark:text-gray-300 dark:hover:bg-white/[0.06]">搜索</button>
-        </form>
+        </div>
         <button type="button" onClick={() => { setBatchMode((value) => !value); if (batchMode) setSelectedIds([]) }} aria-pressed={batchMode} className={`ml-auto h-10 shrink-0 whitespace-nowrap rounded-lg border px-4 text-sm font-medium transition ${batchMode ? 'border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900' : 'border-gray-200 text-gray-700 hover:bg-gray-50 dark:border-white/[0.1] dark:text-gray-300 dark:hover:bg-white/[0.06]'}`}>批量操作</button>
       </div>
 
       {error && <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-300">{error}</div>}
-      {loading ? (
-        <div className="py-20 text-center text-sm text-gray-400">加载素材中...</div>
-      ) : items.length === 0 ? (
-        <div className="border border-dashed border-gray-200 py-20 text-center dark:border-white/[0.12]">
-          <CloudUploadIcon className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
-          <p className="mt-3 text-sm font-medium text-gray-600 dark:text-gray-300">暂无素材</p>
-          <p className="mt-1 text-xs text-gray-400">上传图片后，它们会显示在这里</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-          {items.map((item, index) => (
+      <div {...dropZoneProps} className="relative min-h-80 rounded-lg">
+        {isDragging && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-lg border-2 border-dashed border-blue-200/80 bg-blue-400/55 text-center shadow-lg shadow-blue-500/10">
+            <div>
+              <CloudUploadIcon className="mx-auto h-8 w-8 text-white" />
+              <p className="mt-2 text-sm font-semibold text-white">松开以上传到素材库</p>
+            </div>
+          </div>
+        )}
+        {loading ? (
+          <div className="py-20 text-center text-sm text-gray-400">加载素材中...</div>
+        ) : items.length === 0 ? (
+          <div className="border border-dashed border-gray-200 py-20 text-center dark:border-white/[0.12]">
+            <CloudUploadIcon className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
+            <p className="mt-3 text-sm font-medium text-gray-600 dark:text-gray-300">暂无素材</p>
+            <p className="mt-1 text-xs text-gray-400">上传图片后，它们会显示在这里</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+            {items.map((item, index) => (
             <article
               key={getMaterialKey(item, index)}
               data-material-id={item.id}
@@ -189,7 +252,7 @@ export default function MaterialLibrary() {
                   event.preventDefault()
                   return
                 }
-                if ((event.target as HTMLElement).closest('button, video')) return
+                if ((event.target as HTMLElement).closest('button, input, video, audio')) return
                 if (batchMode || (isMac ? event.metaKey : event.ctrlKey)) {
                   event.preventDefault()
                   setBatchMode(true)
@@ -209,24 +272,55 @@ export default function MaterialLibrary() {
               <div className="aspect-square bg-gray-100 dark:bg-white/[0.04]">
                 {isVideo(item) ? (
                   <video data-no-drag-select src={item.url} controls preload="metadata" className="h-full w-full object-contain" />
+                ) : isAudio(item) ? (
+                  <div data-no-drag-select className="flex h-full items-center px-3">
+                    <audio src={item.url} controls preload="metadata" className="w-full" />
+                  </div>
                 ) : (
                   <img src={item.url} alt={item.file_name} loading="lazy" draggable={false} className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]" />
                 )}
               </div>
               <div className="p-2.5">
                 <div className="flex items-center gap-1.5">
-                  <p className="truncate text-xs font-medium text-gray-800 dark:text-gray-200" title={item.file_name}>{item.file_name}</p>
-                  <span className="shrink-0 text-[10px] uppercase text-gray-400">{isVideo(item) ? '视频' : '图片'}</span>
+                  {editingId === item.id ? (
+                    <input
+                      value={editingName}
+                      onChange={(event) => setEditingName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') event.currentTarget.blur()
+                        if (event.key === 'Escape') {
+                          setEditingId(null)
+                          setEditingName('')
+                        }
+                      }}
+                      onBlur={() => void handleRename()}
+                      onClick={(event) => event.stopPropagation()}
+                      maxLength={255}
+                      disabled={renamingId === item.id}
+                      autoFocus
+                      aria-label={`重命名${item.file_name}`}
+                      className="h-6 min-w-0 flex-1 rounded border border-blue-400/50 bg-white px-1.5 text-xs font-medium text-gray-800 outline-none focus:border-blue-500 disabled:opacity-60 dark:border-white/20 dark:bg-black/20 dark:text-gray-200 dark:focus:border-white/40"
+                    />
+                  ) : (
+                    <p className="truncate text-xs font-medium text-gray-800 dark:text-gray-200" title={item.file_name}>{item.file_name}</p>
+                  )}
+                  <span className="shrink-0 text-[10px] uppercase text-gray-400">{isVideo(item) ? '视频' : isAudio(item) ? '音频' : '图片'}</span>
                 </div>
                 <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-gray-400">
                   <span>{formatBytes(item.size_bytes)}{formatDate(item.created_at) ? ` · ${formatDate(item.created_at)}` : ''}</span>
-                  <button type="button" onClick={(event) => { event.stopPropagation(); void handleDelete(item) }} className="shrink-0 rounded p-1 text-gray-400 transition hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-400/10 dark:hover:text-red-300" aria-label={`删除${item.file_name}`} title="删除素材"><TrashIcon className="h-3.5 w-3.5" /></button>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    {editingId !== item.id && (
+                      <button type="button" onClick={(event) => { event.stopPropagation(); setEditingId(item.id); setEditingName(item.file_name) }} className="rounded p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.08] dark:hover:text-white" aria-label={`重命名${item.file_name}`} title="重命名素材"><EditIcon className="h-3.5 w-3.5" /></button>
+                    )}
+                    <button type="button" onClick={(event) => { event.stopPropagation(); void handleDelete(item) }} className="rounded p-1 text-gray-400 transition hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-400/10 dark:hover:text-red-300" aria-label={`删除${item.file_name}`} title="删除素材"><TrashIcon className="h-3.5 w-3.5" /></button>
+                  </div>
                 </div>
               </div>
             </article>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </div>
 
       {totalPages > 1 && (
         <div className="mt-7 flex items-center justify-center gap-3 text-sm">

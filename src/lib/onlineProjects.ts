@@ -168,6 +168,40 @@ export async function uploadOnlineProject(id: string, title: string, archive: Bl
   return await resp.json() as OnlineProjectResponse
 }
 
+export async function saveOnlineProjectTask(project: Project, task: TaskRecord): Promise<OnlineProjectResponse> {
+  const remoteId = project.remoteId ?? project.id
+  const projectRecord = {
+    id: remoteId,
+    title: project.title,
+    initialPrompt: project.initialPrompt,
+    storage: project.storage,
+    remoteId,
+    defaultFavoriteCollectionId: project.defaultFavoriteCollectionId,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+  }
+  const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(remoteId)}/tasks/${encodeURIComponent(task.id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_title: project.title, project: projectRecord, task }),
+  })
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => null) as { message?: string } | null
+    throw new Error(data?.message || `在线任务记录保存失败：HTTP ${resp.status}`)
+  }
+  return await resp.json() as OnlineProjectResponse
+}
+
+export async function deleteOnlineProjectTask(projectId: string, taskId: string): Promise<OnlineProjectResponse | null> {
+  const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`, { method: 'DELETE' })
+  if (resp.status === 404) return null
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => null) as { message?: string } | null
+    throw new Error(data?.message || `在线任务记录删除失败：HTTP ${resp.status}`)
+  }
+  return await resp.json() as OnlineProjectResponse
+}
+
 export async function listOnlineProjects(): Promise<OnlineProjectResponse[]> {
   const resp = await fetchOnlineProjectResource('/api/v1/projects')
   if (!resp.ok) {

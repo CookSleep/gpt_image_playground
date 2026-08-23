@@ -17,6 +17,7 @@ type InnerAPIClientProxy interface {
 	GetMaterial(ctx context.Context, req *GetMaterialRequest, opts ...client.Option) (*Material, error)
 	UploadMaterial(ctx context.Context, req *UploadMaterialRequest, opts ...client.Option) (*UploadMaterialResponse, error)
 	AddMaterialByUrl(ctx context.Context, req *AddMaterialByUrlRequest, opts ...client.Option) (*AddMaterialByUrlResponse, error)
+	RenameMaterial(ctx context.Context, req *RenameMaterialRequest, opts ...client.Option) (*Material, error)
 	DeleteMaterial(ctx context.Context, req *DeleteMaterialRequest, opts ...client.Option) (*DeleteMaterialResponse, error)
 	BatchDeleteMaterials(ctx context.Context, req *BatchDeleteMaterialsRequest, opts ...client.Option) (*BatchDeleteMaterialsResponse, error)
 }
@@ -116,6 +117,24 @@ func (c *innerAPIClientProxy) AddMaterialByUrl(ctx context.Context, req *AddMate
 	msg.WithSerializationType(codec.SerializationTypePB)
 	callOptions := append(append([]client.Option{}, c.opts...), opts...)
 	response := &AddMaterialByUrlResponse{}
+	if err := c.client.Invoke(ctx, req, response, callOptions...); err != nil {
+		return nil, err
+	}
+	codec.PutBackMessage(msg)
+	return response, nil
+}
+
+func (c *innerAPIClientProxy) RenameMaterial(ctx context.Context, req *RenameMaterialRequest, opts ...client.Option) (*Material, error) {
+	ctx, msg := codec.WithCloneMessage(ctx)
+	msg.WithClientRPCName("/sub2api.inner.v1.InnerAPI/RenameMaterial")
+	msg.WithCalleeServiceName(InnerAPIServiceName)
+	msg.WithCalleeApp("sub2api")
+	msg.WithCalleeServer("inner")
+	msg.WithCalleeService("InnerAPI")
+	msg.WithCalleeMethod("RenameMaterial")
+	msg.WithSerializationType(codec.SerializationTypePB)
+	callOptions := append(append([]client.Option{}, c.opts...), opts...)
+	response := &Material{}
 	if err := c.client.Invoke(ctx, req, response, callOptions...); err != nil {
 		return nil, err
 	}

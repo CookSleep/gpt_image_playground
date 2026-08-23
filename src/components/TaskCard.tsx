@@ -1,11 +1,12 @@
 import { useEffect, useState, useRef, type ReactNode } from 'react'
 import type { TaskRecord } from '../types'
-import { useStore, ensureImageThumbnailCached, subscribeImageThumbnail, retryTask } from '../store'
+import { useStore, ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail, retryTask } from '../store'
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
-import { CodeIcon, TransparentBgIcon } from './icons'
+import { uploadMaterialImage } from '../lib/materialApi'
+import { CloudUploadIcon, CodeIcon, TransparentBgIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 
 interface Props {
@@ -75,9 +76,11 @@ export default function TaskCard({
   const [swipeActionActive, setSwipeActionActive] = useState(false)
   const [swipeDirection, setSwipeDirection] = useState<-1 | 0 | 1>(0)
   const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
+  const [savingToMaterials, setSavingToMaterials] = useState(false)
   const toggleTaskSelection = useStore((s) => s.toggleTaskSelection)
   const settings = useStore((s) => s.settings)
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
+  const showToast = useStore((s) => s.showToast)
   const streamPreviewSrc = useStore((s) => s.streamPreviews[task.id] || '')
   const touchStartRef = useRef<{ x: number; y: number } | null>(null)
   const swipeResetTimerRef = useRef<number | null>(null)
@@ -89,6 +92,35 @@ export default function TaskCard({
   const swipeOffsetRef = useRef(0)
   const pendingSwipeOffsetRef = useRef(0)
   const swipeFrameRef = useRef<number | null>(null)
+
+  const saveOutputsToMaterials = async () => {
+    if (savingToMaterials || !task.outputImages.length) return
+    setSavingToMaterials(true)
+    let successCount = 0
+    let failCount = 0
+    for (let index = 0; index < task.outputImages.length; index++) {
+      try {
+        const dataUrl = await ensureImageCached(task.outputImages[index])
+        if (!dataUrl) throw new Error('图片已不存在')
+        const fileNameBase = task.outputImages.length > 1 ? `task-${task.id}-${index + 1}` : `task-${task.id}`
+        await uploadMaterialImage(dataUrl, fileNameBase)
+        successCount++
+      } catch (err) {
+        console.error('保存图片到素材库失败：', err)
+        failCount++
+      }
+    }
+    setSavingToMaterials(false)
+    if (successCount === 0) {
+      showToast('保存到素材库失败', 'error')
+      return
+    }
+    if (failCount > 0) {
+      showToast(`部分保存失败：成功 ${successCount}，失败 ${failCount}`, 'error')
+      return
+    }
+    showToast(successCount > 1 ? `已保存 ${successCount} 张图片到素材库` : '已保存到素材库', 'success')
+  }
 
   const updateSwipeDirection = (nextDirection: -1 | 0 | 1) => {
     if (swipeDirectionRef.current === nextDirection) return
@@ -709,6 +741,14 @@ export default function TaskCard({
                     d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
                   />
                 </svg>
+              </TaskActionButton>
+              <TaskActionButton
+                tooltip={savingToMaterials ? '正在保存到素材库' : '保存到素材库'}
+                onClick={() => void saveOutputsToMaterials()}
+                className="p-1.5 rounded-md hover:bg-blue-50 dark:hover:bg-blue-950/30 text-gray-400 hover:text-blue-500 transition disabled:cursor-wait disabled:opacity-40"
+                disabled={savingToMaterials || !task.outputImages?.length}
+              >
+                <CloudUploadIcon className={`w-4 h-4 ${savingToMaterials ? 'animate-pulse' : ''}`} />
               </TaskActionButton>
               <TaskActionButton
                 tooltip="删除任务"

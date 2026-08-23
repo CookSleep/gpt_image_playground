@@ -1,10 +1,11 @@
 import type { TaskParams } from '../types'
-import { authFetch, syncOIDCUserProfile } from '../auth/api'
+import { authFetch } from '../auth/api'
 import { dataUrlToBlob } from './canvasImage'
 import { fetchImageUrlAsDataUrl, isHttpUrl, MIME_MAP, type CallApiResult } from './imageApiShared'
 
 interface CompositeSubmitResponse {
   request_id?: unknown
+  status_url?: unknown
 }
 
 interface CompositeStatusResponse {
@@ -110,38 +111,75 @@ function getFailureMessage(status: CompositeStatusResponse) {
   return 'Composite 异步任务失败'
 }
 
-async function uploadMaterial(dataUrl: string, name: string, allowSync = true): Promise<string> {
-  if (isHttpUrl(dataUrl)) return dataUrl
+async function readCompositeTaskResult(options: {
+  apiKey: string
+  model: string
+  requestId: string
+  params: TaskParams
+}): Promise<CallApiResult | null> {
+  const modelPath = normalizeCompositeModelPath(options.model)
+  const resultPath = `/api/v1/model/${modelPath}/requests/${encodeURIComponent(options.requestId)}`
+  const status = await requestJson(`${resultPath}/status`, options.apiKey) as CompositeStatusResponse
+  const statusText = typeof status.status === 'string' ? status.status.trim().toUpperCase() : ''
+  if (!statusText) throw new Error('Composite 上游返回了无效的任务状态')
+  if (statusText === 'FAILED' || statusText === 'CANCELED') throw new Error(getFailureMessage(status))
+  if (statusText !== 'COMPLETED') return null
+
+  const result = await requestJson(resultPath, options.apiKey) as CompositeResultResponse
+  const items = Array.isArray(result.images) ? result.images : []
+  const urls = items.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const url = (item as Record<string, unknown>).url
+    return typeof url === 'string' && url.trim() ? [url] : []
+  })
+  if (urls.length === 0) throw new Error('Composite 上游没有返回图片')
+  const mime = MIME_MAP[options.params.output_format] ?? 'image/png'
+  const images = await Promise.all(urls.map((url) => fetchImageUrlAsDataUrl(url, mime)))
+  return {
+    images,
+    rawImageUrls: urls,
+    actualParams: { ...options.params, n: images.length },
+    actualParamsList: images.map(() => ({ ...options.params, n: images.length })),
+    revisedPrompts: images.map(() => undefined),
+    imagesStoredOnline: false,
+  }
+}
+
+export async function queryBackendCompositeImageTask(options: {
+  apiKey: string
+  model: string
+  requestId: string
+  params: TaskParams
+}): Promise<CallApiResult | null> {
+  return readCompositeTaskResult(options)
+}
+
+async function uploadReferenceFile(dataUrl: string, name: string): Promise<{ url: string; uploaded: boolean }> {
+  if (isHttpUrl(dataUrl)) return { url: dataUrl, uploaded: false }
   const blob = await dataUrlToBlob(dataUrl)
   const extension = blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/webp' ? 'webp' : 'png'
   const fileName = `${name}.${extension}`
   const formData = new FormData()
   formData.append('file', blob, fileName)
-  console.log('[BackendCompositeImageApi] 素材上传请求', {
-    endpoint: '/api/v1/materials',
+  console.log('[BackendCompositeImageApi] 参考文件上传请求', {
+    endpoint: '/api/v1/files',
     fileName,
     contentType: blob.type,
     size: blob.size,
   })
-  const response = await authFetch('/api/v1/materials', {
+  const response = await authFetch('/api/v1/files', {
     method: 'POST',
     body: formData,
   })
-  const data = await response.json().catch(() => null) as { file_url?: unknown; code?: unknown; message?: unknown } | null
-  console.log('[BackendCompositeImageApi] 素材上传回包', {
+  const data = await response.json().catch(() => null) as { data?: { url?: unknown }; code?: unknown; message?: unknown } | null
+  console.log('[BackendCompositeImageApi] 参考文件上传回包', {
     status: response.status,
     data: formatLogValue(data),
   })
-  if (!response.ok) {
-    if (allowSync && response.status === 409 && data?.code === 'account_id_required') {
-      const profile = await syncOIDCUserProfile()
-      if (profile?.account_id) return uploadMaterial(dataUrl, name, false)
-    }
-    throw new Error(errorMessage(data, `素材上传失败：HTTP ${response.status}`))
-  }
-  const url = typeof data?.file_url === 'string' ? data.file_url.trim() : ''
-  if (!url) throw new Error('素材上传接口未返回 file_url')
-  return url
+  if (!response.ok) throw new Error(errorMessage(data, `参考图上传失败：HTTP ${response.status}`))
+  const url = typeof data?.data?.url === 'string' ? data.data.url.trim() : ''
+  if (!url) throw new Error('File API 未返回 data.url')
+  return { url, uploaded: true }
 }
 
 export async function callBackendCompositeImageApi(options: {
@@ -150,8 +188,12 @@ export async function callBackendCompositeImageApi(options: {
   prompt: string
   params: TaskParams
   inputImageDataUrls: string[]
+  inputImageFileUrls?: Array<string | undefined>
   maskDataUrl?: string
-  onRequestCreated?: (requestId: string) => void
+  maskFileUrl?: string
+  onRequestCreated?: (request: { requestId: string; statusUrl?: string }) => void | Promise<void>
+  onReferenceUploaded?: (reference: { source: 'inputImage' | 'mask'; index: number; url: string }) => void | Promise<void>
+  onReferenceUploadFailed?: (error: Error) => void
 }): Promise<CallApiResult> {
   const modelPath = normalizeCompositeModelPath(options.model)
   const isEdit = options.inputImageDataUrls.length > 0 || Boolean(options.maskDataUrl)
@@ -168,11 +210,29 @@ export async function callBackendCompositeImageApi(options: {
     num_images: options.params.n,
     output_format: options.params.output_format,
   }
+  let uploadFailureReported = false
   if (isEdit) {
-    const [imageUrls, maskUrl] = await Promise.all([
-      Promise.all(options.inputImageDataUrls.map((dataUrl, index) => uploadMaterial(dataUrl, `reference-${index + 1}`))),
-      options.maskDataUrl ? uploadMaterial(options.maskDataUrl, 'mask') : Promise.resolve(undefined),
-    ])
+    const upload = async (dataUrl: string, name: string, source: 'inputImage' | 'mask', index: number) => {
+      try {
+        const result = await uploadReferenceFile(dataUrl, name)
+        if (result.uploaded) await options.onReferenceUploaded?.({ source, index, url: result.url })
+        return result.url
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err))
+        if (!uploadFailureReported) {
+          uploadFailureReported = true
+          options.onReferenceUploadFailed?.(error)
+        }
+        throw error
+      }
+    }
+    const imageUrls: string[] = []
+    for (let index = 0; index < options.inputImageDataUrls.length; index += 1) {
+      const dataUrl = options.inputImageFileUrls?.[index] || options.inputImageDataUrls[index]
+      imageUrls.push(await upload(dataUrl, `reference-${index + 1}`, 'inputImage', index))
+    }
+    const maskDataUrl = options.maskFileUrl || options.maskDataUrl
+    const maskUrl = maskDataUrl ? await upload(maskDataUrl, 'mask', 'mask', 0) : undefined
     payload.platform = 'composite'
     payload.image_urls = imageUrls
     if (maskUrl) payload.mask_url = maskUrl
@@ -185,35 +245,21 @@ export async function callBackendCompositeImageApi(options: {
   }) as CompositeSubmitResponse
   const requestId = typeof submitted.request_id === 'string' ? submitted.request_id.trim() : ''
   if (!requestId) throw new Error('Composite 上游未返回 request_id')
-  options.onRequestCreated?.(requestId)
+  const statusUrl = typeof submitted.status_url === 'string' ? submitted.status_url.trim() : ''
+  await options.onRequestCreated?.({
+    requestId,
+    ...(statusUrl ? { statusUrl } : {}),
+  })
 
-  const resultPath = `${requestPath}/requests/${encodeURIComponent(requestId)}`
   let intervalMs = 2000
   while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
-    const status = await requestJson(`${resultPath}/status`, options.apiKey) as CompositeStatusResponse
-    const statusText = typeof status.status === 'string' ? status.status.trim().toUpperCase() : ''
-    if (!statusText) throw new Error('Composite 上游返回了无效的任务状态')
-    if (statusText === 'FAILED' || statusText === 'CANCELED') throw new Error(getFailureMessage(status))
-    if (statusText === 'COMPLETED') {
-      const result = await requestJson(resultPath, options.apiKey) as CompositeResultResponse
-      const items = Array.isArray(result.images) ? result.images : []
-      const urls = items.flatMap((item) => {
-        if (!item || typeof item !== 'object') return []
-        const url = (item as Record<string, unknown>).url
-        return typeof url === 'string' && url.trim() ? [url] : []
-      })
-      if (urls.length === 0) throw new Error('Composite 上游没有返回图片')
-      const mime = MIME_MAP[options.params.output_format] ?? 'image/png'
-      const images = await Promise.all(urls.map((url) => fetchImageUrlAsDataUrl(url, mime)))
-      return {
-        images,
-        rawImageUrls: urls,
-        actualParams: { ...options.params, n: images.length },
-        actualParamsList: images.map(() => ({ ...options.params, n: images.length })),
-        revisedPrompts: images.map(() => undefined),
-        imagesStoredOnline: false,
-      }
-    }
+    const result = await readCompositeTaskResult({
+      apiKey: options.apiKey,
+      model: options.model,
+      requestId,
+      params: options.params,
+    })
+    if (result) return result
     await sleep(intervalMs)
     intervalMs = Math.min(intervalMs * 2, 15000)
   }

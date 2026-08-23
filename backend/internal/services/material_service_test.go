@@ -20,6 +20,7 @@ func (s materialUserStoreStub) FindByID(_ context.Context, _ string) (*models.Us
 
 type innerMaterialClientStub struct {
 	request            *innerpb.UploadMaterialRequest
+	renameRequest      *innerpb.RenameMaterialRequest
 	deleteRequest      *innerpb.DeleteMaterialRequest
 	batchDeleteRequest *innerpb.BatchDeleteMaterialsRequest
 	metadata           map[string][]byte
@@ -44,6 +45,16 @@ func (s *innerMaterialClientStub) UploadMaterial(_ context.Context, req *innerpb
 		FileUrl:  "https://materials.example/reference.png",
 		Material: &innerpb.Material{Id: "mat_public_42", FileName: "reference.png", ContentType: "image/png", SizeBytes: 3},
 	}, nil
+}
+
+func (s *innerMaterialClientStub) RenameMaterial(_ context.Context, req *innerpb.RenameMaterialRequest, opts ...client.Option) (*innerpb.Material, error) {
+	s.renameRequest = req
+	options := &client.Options{}
+	for _, option := range opts {
+		option(options)
+	}
+	s.metadata = options.MetaData
+	return &innerpb.Material{Id: req.GetId(), AccountId: req.GetAccountId(), FileName: req.GetFileName()}, nil
 }
 
 func (s *innerMaterialClientStub) DeleteMaterial(_ context.Context, req *innerpb.DeleteMaterialRequest, _ ...client.Option) (*innerpb.DeleteMaterialResponse, error) {
@@ -115,6 +126,26 @@ func TestMaterialServiceDeletesByOpaquePublicID(t *testing.T) {
 	}
 	if innerClient.deleteRequest.GetAccountId() != "acct_root_abc123" || innerClient.deleteRequest.GetId() != "mat_public_A1b2" {
 		t.Fatalf("unexpected delete request: %#v", innerClient.deleteRequest)
+	}
+}
+
+func TestMaterialServiceRenamesForOIDCAccount(t *testing.T) {
+	innerClient := &innerMaterialClientStub{}
+	service := &MaterialService{
+		users: materialUserStoreStub{user: &models.User{
+			RawClaims: []byte(`{"account_id":"acct_root_abc123"}`),
+		}},
+		client: innerClient, appToken: "inner-token",
+	}
+	result, err := service.Rename(context.Background(), "user-a", "mat_public_A1b2", "新名称.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if innerClient.renameRequest.GetAccountId() != "acct_root_abc123" || innerClient.renameRequest.GetId() != "mat_public_A1b2" || innerClient.renameRequest.GetFileName() != "新名称.png" {
+		t.Fatalf("unexpected rename request: %#v", innerClient.renameRequest)
+	}
+	if result.FileName != "新名称.png" || string(innerClient.metadata["app-token"]) != "inner-token" {
+		t.Fatalf("unexpected rename result: %#v metadata=%v", result, innerClient.metadata)
 	}
 }
 

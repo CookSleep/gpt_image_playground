@@ -128,8 +128,10 @@ func main() {
 		})
 	})
 	handlers.NewProjectHandler(projectRepo).Register(api)
+	handlers.NewProjectTaskHandler(projectRepo).Register(api)
 	handlers.NewProjectImageHandler(projectRepo).Register(api)
 	handlers.NewMaterialHandler(services.NewMaterialService(userRepo, cfg.InnerAPI)).Register(api)
+	handlers.NewFileAPIHandler(registry, cfg.FileAPI).Register(api)
 	handlers.NewCompositeModelHandler(registry).Register(api)
 	handlers.NewProjectGenerationHandler(projectRepo, registry).Register(api)
 

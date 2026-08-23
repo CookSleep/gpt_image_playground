@@ -18,6 +18,7 @@ type Config struct {
 	OIDC     OIDCConfig     `yaml:"oidc"`
 	Admin    AdminConfig    `yaml:"admin"`
 	InnerAPI InnerAPIConfig `yaml:"inner_api_rpc"`
+	FileAPI  FileAPIConfig  `yaml:"file_api"`
 }
 
 type InnerAPIConfig struct {
@@ -28,6 +29,15 @@ type InnerAPIConfig struct {
 
 func (c InnerAPIConfig) Enabled() bool {
 	return strings.TrimSpace(c.Target) != "" && strings.TrimSpace(c.AppToken) != ""
+}
+
+type FileAPIConfig struct {
+	DeveloperKey   string `yaml:"developer_key"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
+}
+
+func (c FileAPIConfig) Enabled() bool {
+	return strings.TrimSpace(c.DeveloperKey) != ""
 }
 
 // AdminConfig 管理员身份配置
@@ -189,6 +199,9 @@ func (c *Config) applyDefaults() {
 	if c.InnerAPI.TimeoutSeconds == 0 {
 		c.InnerAPI.TimeoutSeconds = 30
 	}
+	if c.FileAPI.TimeoutSeconds == 0 {
+		c.FileAPI.TimeoutSeconds = 10 * 60
+	}
 	for i := range c.OIDC.Providers {
 		p := &c.OIDC.Providers[i]
 		if len(p.Scopes) == 0 {
@@ -227,6 +240,9 @@ func (c *Config) Validate() error {
 	}
 	if c.InnerAPI.TimeoutSeconds < 1 {
 		return errors.New("inner_api_rpc.timeout_seconds must be positive")
+	}
+	if c.FileAPI.TimeoutSeconds < 1 {
+		return errors.New("file_api.timeout_seconds must be positive")
 	}
 	return nil
 }
