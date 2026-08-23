@@ -29,6 +29,7 @@ import { useGlobalClickSuppression } from './lib/clickSuppression'
 import { ChevronLeftIcon } from './components/icons'
 
 let customProviderConfigUrlImportStarted = false
+const APP_SIDEBAR_COLLAPSED_KEY = 'gpt-image-playground:sidebar-collapsed'
 
 export default function App() {
   const setSettings = useStore((s) => s.setSettings)
@@ -37,6 +38,7 @@ export default function App() {
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem(APP_SIDEBAR_COLLAPSED_KEY) === 'true')
   const [view, setView] = useState<AppView>(() => getAppViewFromUrl())
 
   const navigateView = (nextView: AppView) => {
@@ -53,6 +55,9 @@ export default function App() {
   useEffect(() => {
     setAgentPanelCollapsed(false)
   }, [activeProjectId])
+  useEffect(() => {
+    localStorage.setItem(APP_SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed))
+  }, [sidebarCollapsed])
   useDockerApiUrlMigrationNotice()
   useGlobalClickSuppression()
 
@@ -145,13 +150,13 @@ export default function App() {
   return (
     <>
       <Header view={view} onNavigate={navigateView} />
-      <AppSidebar view={view} onChange={navigateView} />
+      <AppSidebar view={view} collapsed={sidebarCollapsed} onChange={navigateView} onCollapsedChange={setSidebarCollapsed} />
       {view === 'materials' ? (
-        <div data-material-library-root data-drag-select-surface className="min-h-[calc(100vh-4rem)] pt-11 lg:pl-56 lg:pt-0">
+        <div data-material-library-root data-drag-select-surface className={`min-h-[calc(100vh-4rem)] pt-11 transition-[padding] duration-200 lg:pt-0 ${sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-56'}`}>
           <MaterialLibrary />
         </div>
       ) : (
-        <div className="pt-11 lg:pl-56 lg:pt-0">
+        <div className={`pt-11 transition-[padding] duration-200 lg:pt-0 ${sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-56'}`}>
           {activeProjectId === null ? <ProjectHome /> : (
         <div data-project-workspace data-drag-select-surface className="relative min-h-[calc(100vh-4rem)] w-full">
           <div className={`safe-area-x mx-auto grid w-full max-w-[1600px] ${agentPanelCollapsed ? 'xl:grid-cols-1' : 'xl:grid-cols-[minmax(0,1fr)_420px] xl:gap-4'}`}>
