@@ -340,7 +340,7 @@ func appendGenerationImage(writer *multipart.Writer, field, filename, value stri
 	return err
 }
 
-func createUpstreamGenerationRequest(ctx context.Context, baseURL string, req projectGenerationRequest) (*http.Request, error) {
+func createUpstreamGenerationRequest(ctx context.Context, baseURL, userAgent string, req projectGenerationRequest) (*http.Request, error) {
 	path := "/v1/images/generations"
 	var body io.Reader
 	contentType := "application/json"
@@ -388,6 +388,7 @@ func createUpstreamGenerationRequest(ctx context.Context, baseURL string, req pr
 	request.Header.Set("Authorization", "Bearer "+req.APIKey)
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Accept", "application/json")
+	request.Header.Set("User-Agent", userAgent)
 	request.Header.Set("x-client-request-id", req.RequestIDs[0])
 	return request, nil
 }
@@ -452,7 +453,7 @@ type upstreamResponsesResponse struct {
 	Output []upstreamResponsesOutput `json:"output"`
 }
 
-func createUpstreamResponsesRequest(ctx context.Context, baseURL string, req projectGenerationRequest, requestID string) (*http.Request, error) {
+func createUpstreamResponsesRequest(ctx context.Context, baseURL, userAgent string, req projectGenerationRequest, requestID string) (*http.Request, error) {
 	action := "generate"
 	if len(req.InputImages) > 0 {
 		action = "edit"
@@ -498,6 +499,7 @@ func createUpstreamResponsesRequest(ctx context.Context, baseURL string, req pro
 	request.Header.Set("Authorization", "Bearer "+req.APIKey)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
+	request.Header.Set("User-Agent", userAgent)
 	request.Header.Set("x-client-request-id", requestID)
 	return request, nil
 }
@@ -548,7 +550,7 @@ func (h *ProjectGenerationHandler) generateResponses(c *gin.Context, userID, pro
 	}, 0, req.Params.N)
 	for index := 0; index < req.Params.N; index++ {
 		requestID := req.RequestIDs[index]
-		upstreamRequest, err := createUpstreamResponsesRequest(c.Request.Context(), baseURL, req, requestID)
+		upstreamRequest, err := createUpstreamResponsesRequest(c.Request.Context(), baseURL, c.Request.UserAgent(), req, requestID)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
 			return
@@ -668,6 +670,7 @@ func (h *ProjectGenerationHandler) Status(c *gin.Context) {
 	}
 	upstreamRequest.Header.Set("Authorization", "Bearer "+req.APIKey)
 	upstreamRequest.Header.Set("Accept", "application/json")
+	upstreamRequest.Header.Set("User-Agent", c.Request.UserAgent())
 	upstreamResponse, err := h.client.Do(upstreamRequest)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "上游连接中断: " + err.Error()})
@@ -747,7 +750,7 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 		h.generateResponses(c, userID, projectID, baseURL, req)
 		return
 	}
-	upstreamRequest, err := createUpstreamGenerationRequest(c.Request.Context(), baseURL, req)
+	upstreamRequest, err := createUpstreamGenerationRequest(c.Request.Context(), baseURL, c.Request.UserAgent(), req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
 		return

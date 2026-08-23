@@ -35,6 +35,9 @@ func TestCompositeModelHandlerForwardsAsyncRequests(t *testing.T) {
 		if req.Header.Get("Authorization") != "Bearer composite-key" {
 			t.Fatalf("unexpected authorization: %q", req.Header.Get("Authorization"))
 		}
+		if req.UserAgent() != "gpt-image-playground-browser/1.0" {
+			t.Fatalf("unexpected upstream user agent: %q", req.UserAgent())
+		}
 		if requestCount == 1 {
 			if req.Method != http.MethodPost || req.URL.String() != "https://provider.example/api/v1/model/openai/gpt-image-2" {
 				t.Fatalf("unexpected submit request: %s %s", req.Method, req.URL)
@@ -55,6 +58,7 @@ func TestCompositeModelHandlerForwardsAsyncRequests(t *testing.T) {
 	submit := httptest.NewRequest(http.MethodPost, "/api/v1/model/openai/gpt-image-2", strings.NewReader(`{"prompt":"画图"}`))
 	submit.Header.Set(compositeAPIKeyHeader, "composite-key")
 	submit.Header.Set("Content-Type", "application/json")
+	submit.Header.Set("User-Agent", "gpt-image-playground-browser/1.0")
 	submitResponse := httptest.NewRecorder()
 	r.ServeHTTP(submitResponse, submit)
 	if submitResponse.Code != http.StatusAccepted || submitResponse.Body.String() != `{"request_id":"request-1"}` {
@@ -63,6 +67,7 @@ func TestCompositeModelHandlerForwardsAsyncRequests(t *testing.T) {
 
 	status := httptest.NewRequest(http.MethodGet, "/api/v1/model/openai/gpt-image-2/requests/request-1/status?verbose=true", nil)
 	status.Header.Set(compositeAPIKeyHeader, "composite-key")
+	status.Header.Set("User-Agent", "gpt-image-playground-browser/1.0")
 	statusResponse := httptest.NewRecorder()
 	r.ServeHTTP(statusResponse, status)
 	if statusResponse.Code != http.StatusBadRequest || statusResponse.Body.String() != `{"message":"invalid request"}` {

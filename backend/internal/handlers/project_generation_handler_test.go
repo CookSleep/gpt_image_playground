@@ -113,6 +113,9 @@ func TestProjectGenerationHandlerGeneratesAndSavesBeforeReturning(t *testing.T) 
 		if req.Header.Get("Authorization") != "Bearer oidc-api-key" || req.Header.Get("x-client-request-id") != "img-request-a" {
 			t.Fatalf("unexpected upstream headers: %#v", req.Header)
 		}
+		if req.UserAgent() != "gpt-image-playground-browser/1.0" {
+			t.Fatalf("unexpected upstream user agent: %q", req.UserAgent())
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     make(http.Header),
@@ -126,6 +129,7 @@ func TestProjectGenerationHandlerGeneratesAndSavesBeforeReturning(t *testing.T) 
 	r := newProjectGenerationRouter(store, transport)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8/generations", generationRequestBody(nil, ""))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "gpt-image-playground-browser/1.0")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -223,6 +227,9 @@ func TestProjectGenerationHandlerUsesResponsesAPIAndSavesImage(t *testing.T) {
 		if req.Header.Get("x-client-request-id") != "img-request-a" {
 			t.Fatalf("unexpected request id: %q", req.Header.Get("x-client-request-id"))
 		}
+		if req.UserAgent() != "gpt-image-playground-browser/1.0" {
+			t.Fatalf("unexpected upstream user agent: %q", req.UserAgent())
+		}
 		var body map[string]any
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 			t.Fatal(err)
@@ -262,6 +269,7 @@ func TestProjectGenerationHandlerUsesResponsesAPIAndSavesImage(t *testing.T) {
 	body, _ = json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8/generations", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "gpt-image-playground-browser/1.0")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -288,6 +296,9 @@ func TestProjectGenerationHandlerProxiesImageStatus(t *testing.T) {
 		if req.Header.Get("Authorization") != "Bearer oidc-api-key" {
 			t.Fatalf("unexpected authorization: %q", req.Header.Get("Authorization"))
 		}
+		if req.UserAgent() != "gpt-image-playground-browser/1.0" {
+			t.Fatalf("unexpected upstream user agent: %q", req.UserAgent())
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -299,6 +310,7 @@ func TestProjectGenerationHandlerProxiesImageStatus(t *testing.T) {
 	body := strings.NewReader(`{"api_key":"oidc-api-key","request_ids":["img-request-a","img-request-b"]}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/images/status", body)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "gpt-image-playground-browser/1.0")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

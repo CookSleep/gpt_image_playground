@@ -101,6 +101,7 @@ func (h *CompositeModelHandler) Proxy(c *gin.Context) {
 	}
 	request.Header.Set("Authorization", "Bearer "+apiKey)
 	request.Header.Set("Accept", "application/json")
+	request.Header.Set("User-Agent", c.Request.UserAgent())
 	if contentType := c.GetHeader("Content-Type"); contentType != "" {
 		request.Header.Set("Content-Type", contentType)
 	}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import type { InputImage, Project, TaskRecord } from '../types'
 import { useAuth } from '../auth/AuthContext'
-import { fetchApiKeys, type ApiKeyItem } from '../auth/oidcResource'
+import { fetchApiKeys, fetchModels, type ApiKeyItem, type ModelInfo } from '../auth/oidcResource'
 import { LOCAL_PROJECT_ID, createInputImageFromFile, deleteImageIfUnreferenced, ensureImageThumbnailCached, submitTask, useStore } from '../store'
 import { DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
 import { createLegacyProject } from '../lib/legacyProject'
@@ -12,16 +12,11 @@ import { ArrowUpIcon, CloseIcon, CollectionManageIcon, EditIcon, KeyIcon, OpenAI
 import HomePromptEditor from './HomePromptEditor'
 import MaterialPickerModal from './MaterialPickerModal'
 
-const HOME_MODEL_OPTIONS = [{
-  label: 'GPT Image 2',
-  value: DEFAULT_IMAGES_MODEL,
-  description: 'OpenAI',
-  icon: (
-    <span className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gray-950 text-white shadow-sm dark:bg-white dark:text-gray-950 sm:flex">
-      <OpenAIIcon className="h-4 w-4" />
-    </span>
-  ),
-}]
+const HOME_MODEL_ICON = (
+  <span className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gray-950 text-white shadow-sm dark:bg-white dark:text-gray-950 sm:flex">
+    <OpenAIIcon className="h-4 w-4" />
+  </span>
+)
 
 const HOME_API_KEY_ICON = (
   <span className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300 sm:flex">
@@ -176,6 +171,8 @@ export default function ProjectHome() {
   const [apiKey, setApiKey] = useState('')
   const [apiKeysLoading, setApiKeysLoading] = useState(false)
   const [apiKeysError, setApiKeysError] = useState('')
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
   const [model, setModel] = useState(DEFAULT_IMAGES_MODEL)
   const [submitting, setSubmitting] = useState(false)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
@@ -228,6 +225,19 @@ export default function ProjectHome() {
       }),
     ]
   }, [apiKeyItems, apiKeys, apiKeysError, apiKeysLoading])
+  const homeModelOptions = useMemo(() => {
+    const options = models.length > 0
+      ? models.map((item) => ({
+          label: item.id === DEFAULT_IMAGES_MODEL ? 'GPT Image 2' : item.id,
+          value: item.id,
+          ...(item.id === DEFAULT_IMAGES_MODEL ? { description: 'OpenAI', icon: HOME_MODEL_ICON } : {}),
+        }))
+      : [{ label: 'GPT Image 2', value: DEFAULT_IMAGES_MODEL, description: 'OpenAI', icon: HOME_MODEL_ICON }]
+    if (model && !options.some((option) => option.value === model)) {
+      return [{ label: model, value: model }, ...options]
+    }
+    return options
+  }, [model, models])
   const legacyProject = useMemo(() => createLegacyProject(legacyTasks, LOCAL_PROJECT_ID), [legacyTasks])
 
   useEffect(() => {
@@ -268,6 +278,42 @@ export default function ProjectHome() {
       cancelled = true
     }
   }, [user])
+
+  useEffect(() => {
+    if (!apiKey) {
+      setModels([])
+      setModelsLoading(false)
+      return
+    }
+
+    let cancelled = false
+    const controller = new AbortController()
+    setModelsLoading(true)
+    fetchModels(apiKey, { signal: controller.signal })
+      .then((res) => {
+        if (cancelled) return
+        const list = res.data || []
+        setModels(list)
+        setModel((current) => {
+          const ids = list.map((item) => item.id)
+          if (current && ids.includes(current)) return current
+          if (ids.includes(DEFAULT_IMAGES_MODEL)) return DEFAULT_IMAGES_MODEL
+          return ids[0] || DEFAULT_IMAGES_MODEL
+        })
+      })
+      .catch((err) => {
+        if (cancelled) return
+        console.error('[ProjectHome] fetchModels failed:', err)
+        setModels([])
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false)
+      })
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [apiKey])
 
   useEffect(() => {
     const platform = apiKeyItems.find((item) => item.key === apiKey)?.platform
@@ -418,7 +464,8 @@ export default function ProjectHome() {
               <Select
                 value={model}
                 onChange={(value) => setModel(String(value))}
-                options={HOME_MODEL_OPTIONS}
+                disabled={!apiKey || modelsLoading}
+                options={homeModelOptions}
                 className="h-11 rounded-xl border border-transparent bg-gray-50 px-2.5 text-sm font-semibold leading-4 text-gray-800 transition hover:border-gray-200 hover:bg-gray-100 dark:bg-white/[0.05] dark:text-gray-100 dark:hover:border-white/[0.08] dark:hover:bg-white/[0.08]"
                 menuClassName="!py-0"
               />
