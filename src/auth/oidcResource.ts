@@ -1,13 +1,13 @@
 /**
- * 直接调用 OIDC Provider 资源端点的客户端封装
+ * OIDC Provider 资源端点的客户端封装
  *
  * 设计：
- * - 用 OIDC 颁发的 access_token 直接 Bearer 调 {issuer}/oidc/resource/api-keys
- * - 用户选定某个 api_key 后，可继续用该 api_key 调 {issuer}/v1/usage 和 {issuer}/v1/models
- * - 调用方需保证 provider 已开启 CORS
+ * - API Key 与模型列表由应用后台代理，白名单也由后台过滤
+ * - 余额由应用后台通过 Inner API 获取
+ * - 计价接口继续使用所选 api_key 直接调用 Provider
  */
 
-import { clearTokens, ensureOIDCToken, getOIDCAccessToken, getOIDCIssuer, refreshOIDCToken } from './api'
+import { authFetch, clearTokens, ensureOIDCToken, getOIDCIssuer, refreshOIDCToken } from './api'
 
 export type ApiKeyItem = {
   key: string
@@ -22,11 +22,13 @@ export type ApiKeysResponse = {
   items: ApiKeyItem[]
 }
 
-export type UsageResponse = {
-  // 后端实际字段未必如此，前端尽量宽松解析
-  total_balance?: number | string
-  balance?: number | string
-  remaining?: number | string
+export type BalanceResponse = {
+  available?: boolean
+  balance?: string
+  payer_account_id?: string
+  balance_source?: string
+  organization_id?: number
+  authz_generation?: number
   [k: string]: unknown
 }
 
@@ -42,6 +44,8 @@ export type ModelsResponse = {
   object?: string
 }
 
+export type ModelScope = 'image' | 'agent'
+
 export type EstimatePricingResponse = {
   endpoint: string
   billing_mode?: string
@@ -56,7 +60,10 @@ export type EstimatePricingResponse = {
   [k: string]: unknown
 }
 
-const usageInFlight = new Map<string, Promise<UsageResponse>>()
+let balanceInFlight: Promise<BalanceResponse> | null = null
+const OIDC_ACCESS_TOKEN_HEADER = 'X-OIDC-Access-Token'
+const UPSTREAM_API_KEY_HEADER = 'X-Upstream-API-Key'
+const UPSTREAM_UNAUTHORIZED_STATUS = 424
 
 function joinUrl(base: string, path: string): string {
   const b = base.replace(/\/+$/, '')
@@ -68,12 +75,6 @@ function requireIssuer(): string {
   const issuer = getOIDCIssuer()
   if (!issuer) throw new Error('OIDC issuer 未保存，请重新登录')
   return issuer
-}
-
-function requireOIDCToken(): string {
-  const tok = getOIDCAccessToken()
-  if (!tok) throw new Error('OIDC access_token 未保存，请重新登录')
-  return tok
 }
 
 /** OIDC 会话不可恢复时：清 token 并跳回首页走重登 */
@@ -94,39 +95,40 @@ async function getActiveOIDCToken(): Promise<string> {
 
 // 模块级 Promise 缓存：解决 React StrictMode 下 useEffect 双执行导致的重复请求
 // 同步立即赋值 Promise，第二次调用直接复用同一个 Promise
-let apiKeysPromise: Promise<ApiKeysResponse> | null = null
+const apiKeysPromises = new Map<ModelScope, Promise<ApiKeysResponse>>()
 
 /** 清空 api-keys 缓存（登出、切换用户、失败重试时调用） */
 export function invalidateApiKeysCache(): void {
-  apiKeysPromise = null
+  apiKeysPromises.clear()
 }
 
-/** GET {issuer}/oidc/resource/api-keys?status=active —— 仅返回启用的 key（带模块级缓存） */
-export function fetchApiKeys(): Promise<ApiKeysResponse> {
-  if (apiKeysPromise) return apiKeysPromise
-  apiKeysPromise = _fetchApiKeys().catch((err) => {
+/** 通过应用后台获取当前用户启用的 API Key（带模块级缓存）。 */
+export function fetchApiKeys(scope: ModelScope = 'image'): Promise<ApiKeysResponse> {
+  const existing = apiKeysPromises.get(scope)
+  if (existing) return existing
+  const promise = _fetchApiKeys(scope).catch((err) => {
     // 失败清空缓存，允许下次重试
-    apiKeysPromise = null
+    apiKeysPromises.delete(scope)
     throw err
   })
-  return apiKeysPromise
+  apiKeysPromises.set(scope, promise)
+  return promise
 }
 
-async function _fetchApiKeys(): Promise<ApiKeysResponse> {
-  const issuer = requireIssuer()
-  const apiKeysUrl = joinUrl(issuer, '/oidc/resource/api-keys') + '?status=active'
+async function _fetchApiKeys(scope: ModelScope): Promise<ApiKeysResponse> {
   const doFetch = (token: string) =>
-    fetch(apiKeysUrl, {
+    authFetch(`/api/v1/api-keys?scope=${scope}`, {
       method: 'GET',
       headers: {
-        Authorization: `Bearer ${token}`,
+        [OIDC_ACCESS_TOKEN_HEADER]: token,
         Accept: 'application/json',
       },
+      cache: 'no-store',
     })
 
   let resp = await doFetch(await getActiveOIDCToken())
   // oidc_access_token 过期：用 refresh token 换新的再重试一次
-  if (resp.status === 401) {
+  if (resp.status === UPSTREAM_UNAUTHORIZED_STATUS) {
     const refreshed = await refreshOIDCToken()
     if (!refreshed) handleOIDCSessionLost()
     resp = await doFetch(refreshed as string)
@@ -138,7 +140,7 @@ async function _fetchApiKeys(): Promise<ApiKeysResponse> {
   const raw = (await resp.json()) as Record<string, unknown>
   // 调试日志：打印原始返回结构，便于核对字段名
   // eslint-disable-next-line no-console
-  console.log('[oidcResource] /oidc/resource/api-keys raw response:', raw)
+  console.log('[oidcResource] /api/v1/api-keys raw response:', raw)
   // 额外打印 items[0] 以便确认对象字段命名
   try {
     const innerForLog = (raw['data'] as Record<string, unknown> | undefined) ?? raw
@@ -255,48 +257,42 @@ async function _fetchApiKeys(): Promise<ApiKeysResponse> {
   }
 }
 
-/** GET {issuer}/v1/usage —— 用所选 api_key 作 Bearer */
-export async function fetchUsage(apiKey: string, options?: { signal?: AbortSignal }): Promise<UsageResponse> {
-  if (!apiKey) throw new Error('apiKey 不能为空')
-  const issuer = requireIssuer()
-  const cacheKey = `${issuer}:${apiKey}`
-  const existing = usageInFlight.get(cacheKey)
-  if (existing) return existing
+/** 通过应用后台的 Inner API 获取当前账户余额。 */
+export async function fetchBalance(): Promise<BalanceResponse> {
+  if (balanceInFlight) return balanceInFlight
 
   const promise = (async () => {
-    const resp = await fetch(joinUrl(issuer, '/v1/usage'), {
+    const resp = await authFetch('/api/v1/balance', {
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: 'application/json',
-      },
-      signal: options?.signal,
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
     })
     if (!resp.ok) {
       const text = await resp.text().catch(() => '')
-      throw new Error(`fetch usage failed: ${resp.status} ${text}`)
+      throw new Error(`fetch balance failed: ${resp.status} ${text}`)
     }
-    return (await resp.json()) as UsageResponse
+    return (await resp.json()) as BalanceResponse
   })()
-  usageInFlight.set(cacheKey, promise)
+  balanceInFlight = promise
   try {
     return await promise
   } finally {
-    usageInFlight.delete(cacheKey)
+    if (balanceInFlight === promise) balanceInFlight = null
   }
 }
 
-/** GET {issuer}/v1/models —— 用所选 api_key 作 Bearer */
-export async function fetchModels(apiKey: string, options?: { signal?: AbortSignal }): Promise<ModelsResponse> {
+/** 通过应用后台获取模型，后台会按场景白名单过滤。 */
+export async function fetchModels(apiKey: string, options?: { signal?: AbortSignal; scope?: ModelScope }): Promise<ModelsResponse> {
   if (!apiKey) throw new Error('apiKey 不能为空')
-  const issuer = requireIssuer()
-  const resp = await fetch(joinUrl(issuer, '/v1/models'), {
+  const scope = options?.scope === 'agent' ? 'agent' : 'image'
+  const resp = await authFetch(`/api/v1/models?scope=${scope}`, {
     method: 'GET',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      [UPSTREAM_API_KEY_HEADER]: apiKey,
       Accept: 'application/json',
     },
     signal: options?.signal,
+    cache: 'no-store',
   })
   if (!resp.ok) {
     const text = await resp.text().catch(() => '')
@@ -341,25 +337,10 @@ export async function estimateModelPricing(
   return (await resp.json()) as EstimatePricingResponse
 }
 
-/** 在 UsageResponse 里尽量提取一个可读的 balance 数值/字符串 */
-export function extractBalance(usage: UsageResponse | null | undefined): string {
-  if (!usage) return ''
-  const candidates = [
-    usage.total_balance,
-    usage.balance,
-    usage.remaining,
-    (usage as Record<string, unknown>)['total_available'],
-    (usage as Record<string, unknown>)['available'],
-  ]
-  for (const v of candidates) {
-    if (v !== undefined && v !== null && v !== '') {
-      const n = Number(v)
-      if (Number.isFinite(n)) {
-        // 最多保留 4 位小数，去掉多余的尾随零
-        return String(Number(n.toFixed(4)))
-      }
-      return String(v)
-    }
-  }
-  return ''
+/** 将 Inner API 返回的十进制余额格式化为界面文案。 */
+export function extractBalance(data: BalanceResponse | null | undefined): string {
+  if (!data || data.available === false || !data.balance) return ''
+  const value = Number(data.balance)
+  if (!Number.isFinite(value)) return data.balance
+  return String(Number(value.toFixed(4)))
 }

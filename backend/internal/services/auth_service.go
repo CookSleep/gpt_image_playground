@@ -118,15 +118,6 @@ func (s *AuthService) HandleCallback(ctx context.Context, providerName, state, c
 			log.Printf("API Key: not found in claims")
 		}
 
-		// 检查并打印balance相关claims
-		if balance, ok := allClaims["sub2api:balance"].(string); ok && balance != "" {
-			log.Printf("Balance: %s", balance)
-		} else if balance, ok := allClaims["sub2api:balance"].(float64); ok {
-			log.Printf("Balance: %.2f", balance)
-		} else {
-			log.Printf("Balance: not found in claims")
-		}
-
 		// 打印所有claims用于调试
 		log.Printf("All claims keys: ")
 		for key := range allClaims {

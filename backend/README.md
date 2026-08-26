@@ -68,6 +68,9 @@ backend/
 | POST | `/auth/oidc/refresh` | 用 OIDC refresh token 刷新 OIDC access token |
 | POST | `/auth/oidc/sync` | 使用当前 OIDC access token 重新读取 UserInfo 并回填本地 claims |
 | GET  | `/api/v1/me` | 占位示例，演示登录后的 API 访问 |
+| GET  | `/api/v1/api-keys` | 后台代理当前 OIDC 用户的可用 API Key 列表 |
+| GET  | `/api/v1/balance` | 后台根据当前用户的 `account_id` 通过 Inner API 获取账户余额 |
+| GET  | `/api/v1/models?scope=image\|agent` | 后台读取所选 API Key 的模型，并按对应场景白名单过滤 |
 | GET/POST | `/api/v1/projects` | 查询或保存在线项目 |
 | GET/PATCH/DELETE | `/api/v1/projects/:id` | 读取、重命名或删除在线项目 |
 | PUT/DELETE | `/api/v1/projects/:id/tasks/:taskId` | 异步保存或删除单条生成记录，无需重新上传项目 ZIP |
@@ -101,7 +104,7 @@ file_api:
   timeout_seconds: 600
 ```
 
-对应的内部 API App 必须授予 `materials:write` 权限。`app_token` 与 `developer_key` 都只保存在后台配置中，不会返回前端。`developer_key` 必须填写创建时一次性展示的完整密钥，不能填写 `key_prefix`。
+对应的内部 API App 必须允许调用 `GetBalance`；使用素材库时还需授予 `materials:write` 权限。`inner_api_rpc` 未配置或当前用户没有 `account_id` 时，余额接口返回 `{"available":false}`，不会影响其它功能。`app_token` 与 `developer_key` 都只保存在后台配置中，不会返回前端。`developer_key` 必须填写创建时一次性展示的完整密钥，不能填写 `key_prefix`。
 
 ### 回调 token 传递格式
 
@@ -127,6 +130,8 @@ file_api:
 - `jwt.secret_key` **必须**设为长随机串，泄漏即代表所有 token 失效
 - `jwt.expire_hours` access token 寿命，默认 24h
 - `jwt.refresh_hours` refresh token 寿命，默认 168h（7 天）
+- `model_whitelist.image` 生图模型白名单；后台只返回当前 API Key 可用模型与该列表的交集，留空全部放行
+- `model_whitelist.agent` Agent 模型白名单；规则同上，留空全部放行
 - `oidc.providers` OIDC 提供商列表，支持任意标准 OIDC discovery 协议
 
 ### 添加 OIDC 提供商

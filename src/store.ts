@@ -931,8 +931,8 @@ interface AppState {
   setSettings: (s: Partial<AppSettings>) => void
   oidcApiOverride: ApiOverride | null
   setOidcApiOverride: (apiOverride: ApiOverride | null) => void
-  agentOidcApiOverride: { model?: string } | null
-  setAgentOidcApiOverride: (apiOverride: { model?: string } | null) => void
+  agentOidcApiOverride: ApiOverride | null
+  setAgentOidcApiOverride: (apiOverride: ApiOverride | null) => void
   dismissedCodexCliPrompts: string[]
   dismissCodexCliPrompt: (key: string) => void
 
@@ -1604,7 +1604,9 @@ export const useStore = create<AppState>()(
       }),
       agentOidcApiOverride: null,
       setAgentOidcApiOverride: (apiOverride) => set({
-        agentOidcApiOverride: apiOverride?.model ? { model: apiOverride.model } : null,
+        agentOidcApiOverride: apiOverride && (apiOverride.apiKey || apiOverride.model)
+          ? { ...apiOverride }
+          : null,
       }),
       dismissedCodexCliPrompts: [],
       dismissCodexCliPrompt: (key) => set((st) => ({
@@ -2608,7 +2610,7 @@ function createSettingsForApiProfile(settings: AppSettings, profile: ApiProfile)
 
 function getAgentOidcApiOverride() {
   const state = useStore.getState()
-  const apiKey = state.oidcApiOverride?.apiKey
+  const apiKey = state.agentOidcApiOverride?.apiKey || state.oidcApiOverride?.apiKey
   const model = state.agentOidcApiOverride?.model || state.oidcApiOverride?.model
   return apiKey || model ? { ...(apiKey ? { apiKey } : {}), ...(model ? { model } : {}) } : null
 }

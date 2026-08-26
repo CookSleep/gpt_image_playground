@@ -3,9 +3,9 @@ import { createPortal } from 'react-dom'
 import { ALL_FAVORITES_COLLECTION_ID, ALL_PROJECTS_ID, LOCAL_PROJECT_ID, deleteFavoriteCollection, getFavoriteCollectionsForProject, getFavoriteScopeProjectId, getTaskFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { useAuth } from '../auth/AuthContext'
 import { getOIDCIssuer } from '../auth/api'
-import { estimateModelPricing, fetchApiKeys, fetchUsage, fetchModels, extractBalance, invalidateApiKeysCache, type ModelInfo, type ApiKeyItem } from '../auth/oidcResource'
+import { estimateModelPricing, fetchApiKeys, fetchBalance, fetchModels, extractBalance, invalidateApiKeysCache, type ModelInfo, type ApiKeyItem } from '../auth/oidcResource'
 import { DEFAULT_PARAMS, type InputImage, type TaskRecord } from '../types'
-import { readCachedApiKey, writeCachedApiKey } from '../lib/oidcApiKeySelection'
+import { readCachedApiKey, readCachedModel, writeCachedApiKey, writeCachedModel } from '../lib/oidcApiKeySelection'
 import { getActiveApiProfile, getAgentImageApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { getAtImageQuery, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, getSelectedImageMentionLabel, getSelectedTextMentionLabel, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
@@ -410,11 +410,12 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const [balanceLoading, setBalanceLoading] = useState<boolean>(false)
   const [models, setModels] = useState<ModelInfo[]>([])
   const [modelsLoading, setModelsLoading] = useState<boolean>(false)
-  const [selectedModel, setSelectedModel] = useState<string>(() => (
-    (embeddedAgent || useStore.getState().appMode === 'agent'
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    const agent = embeddedAgent || useStore.getState().appMode === 'agent'
+    return readCachedModel(user?.id, agent ? 'agent' : 'gallery') || (agent
       ? useStore.getState().agentOidcApiOverride?.model
       : useStore.getState().oidcApiOverride?.model) || 'gpt-image-2'
-  ))
+  })
   const [priceEstimate, setPriceEstimate] = useState<string>('')
   const [priceEstimateLoading, setPriceEstimateLoading] = useState(false)
   const [priceEstimateError, setPriceEstimateError] = useState('')
@@ -434,6 +435,9 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const setAgentOidcApiOverride = useStore((s) => s.setAgentOidcApiOverride)
   const appMode = useStore((s) => s.appMode)
   const inputMode = embeddedAgent ? 'agent' : appMode
+  const resourceApiKey = inputMode === 'agent'
+    ? agentOidcApiOverride?.apiKey || apiKey
+    : hideApiKeyBalance ? galleryOidcApiOverride?.apiKey || '' : apiKey
   const activeAgentConversationId = useStore((s) => s.activeAgentConversationId)
   const galleryPrompt = useStore((s) => s.prompt)
   const agentPrompt = useStore((s) => embeddedAgent && s.activeAgentConversationId
@@ -544,7 +548,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       setApiKeysError('')
       try {
         console.log('[InputBar] Fetching API keys...')
-        const res = await fetchApiKeys()
+        const res = await fetchApiKeys(inputMode === 'agent' ? 'agent' : 'image')
         if (cancelled) return
         const keys = res.sub2api_apikeys || []
         const items = res.items || []
@@ -554,8 +558,10 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
         // 选中优先级：当前已选（仍在列表中）> 本地缓存的上次选中 > 列表第一个
         setApiKey((prev) => {
           if (keys.length === 0) return ''
+          const preferred = inputMode === 'agent' ? agentOidcApiOverride?.apiKey : ''
+          if (preferred && keys.includes(preferred)) return preferred
           if (prev && keys.includes(prev)) return prev
-          const cached = readCachedApiKey(user?.id)
+          const cached = readCachedApiKey(user?.id, inputMode === 'agent' ? 'agent' : 'gallery')
           if (cached && keys.includes(cached)) return cached
           return keys[0]
         })
@@ -576,12 +582,26 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     return () => {
       cancelled = true
     }
-  }, [user])
+  }, [agentOidcApiOverride?.apiKey, inputMode, user])
 
   useEffect(() => {
-    if (!apiKey) {
+    if (inputMode !== 'agent' || !apiKey) return
+    const current = useStore.getState().agentOidcApiOverride
+    const platform = apiKeyItems.find((item) => item.key === apiKey)?.platform
+    if (current?.apiKey === apiKey && current?.platform === platform) return
+    setAgentOidcApiOverride({
+      ...(current?.model ? { model: current.model } : {}),
+      apiKey,
+      ...(platform ? { platform } : {}),
+    })
+  }, [apiKey, apiKeyItems, inputMode, setAgentOidcApiOverride])
+
+  useEffect(() => {
+    if (!resourceApiKey) {
       setBalance('')
       setModels([])
+      setBalanceLoading(false)
+      setModelsLoading(false)
       return
     }
     
@@ -593,31 +613,38 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     const controller = new AbortController()
     
     Promise.allSettled([
-      fetchUsage(apiKey, { signal: controller.signal }),
-      fetchModels(apiKey, { signal: controller.signal })
+      fetchBalance(),
+      fetchModels(resourceApiKey, { signal: controller.signal, scope: inputMode === 'agent' ? 'agent' : 'image' })
     ]).then((results) => {
       if (cancelled) return
-      const [usageRes, modelsRes] = results
-      if (usageRes.status === 'fulfilled') {
-        setBalance(extractBalance(usageRes.value))
+      const [balanceRes, modelsRes] = results
+      if (balanceRes.status === 'fulfilled') {
+        setBalance(extractBalance(balanceRes.value))
       } else {
-        console.error('[InputBar] fetchUsage failed:', usageRes.reason)
+        console.error('[InputBar] fetchBalance failed:', balanceRes.reason)
         setBalance('')
       }
       if (modelsRes.status === 'fulfilled') {
         const list = modelsRes.value.data || []
         setModels(list)
-        // 保留当前输入栏的模型；不可用时优先回落到 gpt-image-2。
+        // 优先恢复上次选择；失效时改写为 Key 与白名单交集中的可用模型。
         setSelectedModel((prev) => {
           const ids = list.map((m) => m.id)
-          if (prev && ids.includes(prev)) return prev
-          if (ids.includes('gpt-image-2')) return 'gpt-image-2'
-          if (ids.length > 0) return ids[0]
-          return 'gpt-image-2'
+          const cached = readCachedModel(user?.id, inputMode === 'agent' ? 'agent' : 'gallery')
+          const next = cached && ids.includes(cached)
+            ? cached
+            : prev && ids.includes(prev)
+              ? prev
+              : ids.includes('gpt-image-2')
+                ? 'gpt-image-2'
+                : ids[0] || ''
+          writeCachedModel(user?.id, next, inputMode === 'agent' ? 'agent' : 'gallery')
+          return next
         })
       } else {
         console.error('[InputBar] fetchModels failed:', modelsRes.reason)
         setModels([])
+        setSelectedModel('')
       }
       setBalanceLoading(false)
       setModelsLoading(false)
@@ -632,11 +659,16 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       cancelled = true
       controller.abort()
     }
-  }, [apiKey])
+  }, [inputMode, resourceApiKey, user?.id])
 
   useEffect(() => {
     if (inputMode !== 'agent' || !selectedModel || agentOidcApiOverride?.model === selectedModel) return
-    setAgentOidcApiOverride({ model: selectedModel })
+    const current = useStore.getState().agentOidcApiOverride
+    setAgentOidcApiOverride({
+      ...(current?.apiKey ? { apiKey: current.apiKey } : {}),
+      model: selectedModel,
+      ...(current?.platform ? { platform: current.platform } : {}),
+    })
   }, [agentOidcApiOverride?.model, inputMode, selectedModel, setAgentOidcApiOverride])
 
   useEffect(() => {
@@ -663,7 +695,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const balanceRefreshInitializedRef = useRef(false)
   const balanceRefreshSeqRef = useRef<number>(0)
   useEffect(() => {
-    if (!apiKey) return
+    if (!resourceApiKey) return
     const latestFinishedAt = tasks.reduce(
       (latest, t) => t.finishedAt && t.finishedAt > latest ? t.finishedAt : latest,
       0,
@@ -676,15 +708,15 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     if (latestFinishedAt <= lastSeenFinishedAtRef.current) return
     lastSeenFinishedAtRef.current = latestFinishedAt
     const seq = ++balanceRefreshSeqRef.current
-    fetchUsage(apiKey)
-      .then((usage) => {
+    fetchBalance()
+      .then((data) => {
         if (seq !== balanceRefreshSeqRef.current) return
-        setBalance(extractBalance(usage))
+        setBalance(extractBalance(data))
       })
       .catch((err) => {
-        console.error('[InputBar] refresh balance after task done failed:', err)
+        console.error('[InputBar] fetchBalance after task done failed:', err)
       })
-  }, [tasks, apiKey])
+  }, [tasks, resourceApiKey])
 
   // 兼容旧用法：保留 user 变量引用，避免未使用告警
   void user
@@ -996,19 +1028,24 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       : normalizeSettings({ ...settings, activeProfileId: activeProfile.id })
   ), [activeProfile.id, settingsActiveProfile.id, settings])
   // 项目页的图片模型只使用当前下拉框选择，避免回退到 Agent 的文本模型配置。
-  const submitApiKey = galleryOidcApiOverride?.apiKey || apiKey
-  const submitPlatform = galleryOidcApiOverride?.apiKey === submitApiKey
-    ? galleryOidcApiOverride?.platform
-    : apiKeyItems.find((item) => item.key === submitApiKey)?.platform
+  const submitApiKey = inputMode === 'agent'
+    ? agentOidcApiOverride?.apiKey || apiKey
+    : galleryOidcApiOverride?.apiKey || apiKey
+  const submitPlatform = inputMode === 'agent'
+    ? agentOidcApiOverride?.platform || apiKeyItems.find((item) => item.key === submitApiKey)?.platform
+    : galleryOidcApiOverride?.apiKey === submitApiKey
+      ? galleryOidcApiOverride?.platform
+      : apiKeyItems.find((item) => item.key === submitApiKey)?.platform
   const submitModel = selectedModel
-  const hasSubmitApiConfig = Boolean((submitApiKey && submitModel) || activeProfile.apiKey)
+  const hasSubmitApiConfig = Boolean(submitApiKey ? submitModel : activeProfile.apiKey)
+  const missingSubmitConfigText = submitApiKey ? '当前 API Key 没有可用模型' : '请先选择 API Key'
   const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !activeAgentIsRunning)
   const submitButtonAriaLabel = activeAgentIsRunning
     ? '停止生成'
     : hasSubmitApiConfig
     ? inputMode === 'agent' ? '发送给 Agent' : maskDraft ? '遮罩编辑' : '生成图像'
-    : '请先选择 API Key'
-  const submitTooltipText = activeAgentIsRunning ? '停止生成' : '请先选择 API Key'
+    : missingSubmitConfigText
+  const submitTooltipText = activeAgentIsRunning ? '停止生成' : missingSubmitConfigText
   const promptPlaceholder = inputMode === 'agent'
     ? '向 Agent 描述你的需求，可输入 @ 来指定参考图...'
     : '描述你想生成的图片，可输入 @ 来指定参考图...'
@@ -1058,8 +1095,12 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const displaySize = isFalTextToImage && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
     : normalizeImageSize(params.size) || DEFAULT_PARAMS.size
-  const estimateApiKey = galleryOidcApiOverride?.apiKey || apiKey
-  const estimateModel = galleryOidcApiOverride?.model || selectedModel
+  const estimateApiKey = inputMode === 'agent'
+    ? agentOidcApiOverride?.apiKey || apiKey
+    : galleryOidcApiOverride?.apiKey || apiKey
+  const estimateModel = inputMode === 'agent'
+    ? agentOidcApiOverride?.model || selectedModel
+    : galleryOidcApiOverride?.model || selectedModel
 
   useEffect(() => {
     if (!estimateApiKey || !estimateModel || inputMode === 'agent') {
@@ -1110,24 +1151,52 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       ]
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
   const modelOptions = useMemo(() => {
-    const list = models.length > 0
-      ? models.map((m) => ({
-          label: m.id === 'gpt-image-2' ? 'GPT Image 2' : m.id,
-          value: m.id,
-          ...(m.id === 'gpt-image-2' ? { description: 'OpenAI', icon: MODEL_ICON } : {}),
-        }))
-      : [{ label: 'GPT Image 2', value: 'gpt-image-2', description: 'OpenAI', icon: MODEL_ICON }]
-    if (selectedModel && !list.some((option) => option.value === selectedModel)) {
-      return [{ label: selectedModel, value: selectedModel }, ...list]
+    if (models.length > 0) {
+      return models.map((m) => ({
+        label: m.id === 'gpt-image-2' ? 'GPT Image 2' : m.id,
+        value: m.id,
+        ...(m.id === 'gpt-image-2' ? { description: 'OpenAI', icon: MODEL_ICON } : {}),
+      }))
     }
-    return list
-  }, [models, selectedModel])
+    if (resourceApiKey) return [{ label: '当前 Key 没有可用模型', value: '' }]
+    return [{ label: selectedModel || 'GPT Image 2', value: selectedModel || 'gpt-image-2', description: 'OpenAI', icon: MODEL_ICON }]
+  }, [models, resourceApiKey, selectedModel])
+  const handleApiKeyChange = useCallback((value: string) => {
+    const next = String(value)
+    setApiKey(next)
+    writeCachedApiKey(user?.id, next, inputMode === 'agent' ? 'agent' : 'gallery')
+    const platform = apiKeyItems.find((item) => item.key === next)?.platform
+    if (inputMode === 'agent') {
+      const current = useStore.getState().agentOidcApiOverride
+      setAgentOidcApiOverride(next
+        ? {
+            ...(current?.model ? { model: current.model } : {}),
+            apiKey: next,
+            ...(platform ? { platform } : {}),
+          }
+        : current?.model ? { model: current.model } : null)
+      return
+    }
+    const current = useStore.getState().oidcApiOverride
+    setOidcApiOverride(next
+      ? {
+          ...(current?.model ? { model: current.model } : {}),
+          apiKey: next,
+          ...(platform ? { platform } : {}),
+        }
+      : current?.model ? { model: current.model } : null)
+  }, [apiKeyItems, inputMode, setAgentOidcApiOverride, setOidcApiOverride, user?.id])
   const handleModelChange = useCallback((value: string) => {
     const next = String(value)
     setSelectedModel(next)
-    if (!hideApiKeyBalance) return
+    writeCachedModel(user?.id, next, inputMode === 'agent' ? 'agent' : 'gallery')
     if (inputMode === 'agent') {
-      setAgentOidcApiOverride({ model: next })
+      const current = useStore.getState().agentOidcApiOverride
+      setAgentOidcApiOverride({
+        ...(current?.apiKey ? { apiKey: current.apiKey } : {}),
+        model: next,
+        ...(current?.platform ? { platform: current.platform } : {}),
+      })
       return
     }
     const current = useStore.getState().oidcApiOverride
@@ -1136,7 +1205,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       model: next,
       ...(current?.platform ? { platform: current.platform } : {}),
     })
-  }, [hideApiKeyBalance, inputMode, setAgentOidcApiOverride, setOidcApiOverride])
+  }, [inputMode, setAgentOidcApiOverride, setOidcApiOverride, user?.id])
   const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加` : '上传图片'
   const transparentOutputHint = useHintTooltip()
   const handleTransparentOutputMenuOpenChange = useCallback((open: boolean) => {
@@ -2308,6 +2377,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       <Select
         value={selectedModel}
         onChange={(value) => handleModelChange(String(value))}
+        disabled={Boolean(resourceApiKey) && (modelsLoading || models.length === 0)}
         options={modelOptions}
         className="h-11 rounded-xl border border-transparent bg-gray-50 px-2.5 text-sm font-semibold leading-4 text-gray-800 transition hover:border-gray-200 hover:bg-gray-100 dark:bg-white/[0.05] dark:text-gray-100 dark:hover:border-white/[0.08] dark:hover:bg-white/[0.08]"
         menuClassName="!py-0"
@@ -2454,11 +2524,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                   <div className="min-w-0 w-fit max-w-full sm:max-w-[420px]">
                     <Select
                       value={apiKey}
-                      onChange={(val) => {
-                        const next = String(val)
-                        setApiKey(next)
-                        writeCachedApiKey(user?.id, next)
-                      }}
+                      onChange={(val) => handleApiKeyChange(String(val))}
                       options={apiKeys.map((k) => {
                         const item = apiKeyItems.find((it) => it.key === k)
                         const keyPreview = k.length > 20 ? `${k.slice(0, 8)}…${k.slice(-8)}` : k
@@ -2500,9 +2566,9 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                           className={`${selectClass} font-mono`}
                         />
                       </div>}
-                      {!moveModelToAttachment && <span className={`${inputMode === 'agent' ? 'hidden' : ''} inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 shadow-sm dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200`}>
-                        <span className="font-mono">
-                          {priceEstimateLoading ? '预估中...' : priceEstimate ? `≈ $${priceEstimate}` : priceEstimateError || '预估 --'}
+                      {!moveModelToAttachment && <span className={`${inputMode === 'agent' ? 'hidden' : ''} inline-flex min-w-[7.5rem] shrink-0 items-center justify-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 shadow-sm dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200`}>
+                        <span className="min-w-0 flex-1 truncate text-center font-mono tabular-nums">
+                          {priceEstimateLabel}
                         </span>
                         <span className="relative inline-flex" {...priceEstimateTooltip.handlers}>
                           <button
@@ -2660,7 +2726,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                 >
                   <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig) && submitHover} text={submitTooltipText} />
                   <button
-                    onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : showToast('请先选择 API Key', 'error')}
+                    onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : showToast(missingSubmitConfigText, 'error')}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
                     className={`inline-flex min-w-max flex-nowrap items-center justify-center whitespace-nowrap p-2.5 rounded-xl transition-all shadow-sm hover:shadow ${
                       activeAgentIsRunning
@@ -2671,7 +2737,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                     }`}
                     aria-label={submitButtonAriaLabel}
                   >
-                    {moveModelToAttachment && inputMode === 'gallery' && <span className="mr-1 shrink-0 text-sm font-semibold">{priceEstimateLabel}</span>}
+                    {moveModelToAttachment && inputMode === 'gallery' && <span className="mr-1 inline-block w-[5.5rem] shrink-0 truncate text-center text-sm font-semibold tabular-nums">{priceEstimateLabel}</span>}
                     {activeAgentIsRunning ? (
                       <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                         <rect x="7" y="7" width="10" height="10" rx="1.5" />
@@ -2785,7 +2851,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                 >
                   <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig) && submitHover} text={submitTooltipText} />
                   <button
-                    onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : showToast('请先选择 API Key', 'error')}
+                    onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : showToast(missingSubmitConfigText, 'error')}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
                     aria-label={submitButtonAriaLabel}
                     className={`flex w-full min-w-0 flex-nowrap items-center justify-center gap-2 whitespace-nowrap py-2.5 rounded-xl text-sm font-medium transition-all shadow-sm ${
@@ -2805,7 +2871,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                       </svg>
                     )}
-                    {moveModelToAttachment && inputMode === 'gallery' && <span className="ml-1 shrink-0 text-sm font-semibold">{priceEstimateLabel}</span>}
+                    {moveModelToAttachment && inputMode === 'gallery' && <span className="ml-1 inline-block w-[5.5rem] shrink-0 truncate text-center text-sm font-semibold tabular-nums">{priceEstimateLabel}</span>}
                     {activeAgentIsRunning ? '停止生成' : inputMode === 'agent' ? '发送' : maskDraft ? '遮罩编辑' : '生成图像'}
                   </button>
                 </div>

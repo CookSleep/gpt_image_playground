@@ -13,6 +13,7 @@ import (
 const InnerAPIServiceName = "sub2api.inner.v1.InnerAPI"
 
 type InnerAPIClientProxy interface {
+	GetBalance(ctx context.Context, req *GetBalanceRequest, opts ...client.Option) (*GetBalanceResponse, error)
 	ListMaterials(ctx context.Context, req *ListMaterialsRequest, opts ...client.Option) (*ListMaterialsResponse, error)
 	GetMaterial(ctx context.Context, req *GetMaterialRequest, opts ...client.Option) (*Material, error)
 	UploadMaterial(ctx context.Context, req *UploadMaterialRequest, opts ...client.Option) (*UploadMaterialResponse, error)
@@ -29,6 +30,24 @@ type innerAPIClientProxy struct {
 
 func NewInnerAPIClientProxy(opts ...client.Option) InnerAPIClientProxy {
 	return &innerAPIClientProxy{client: client.DefaultClient, opts: opts}
+}
+
+func (c *innerAPIClientProxy) GetBalance(ctx context.Context, req *GetBalanceRequest, opts ...client.Option) (*GetBalanceResponse, error) {
+	ctx, msg := codec.WithCloneMessage(ctx)
+	msg.WithClientRPCName("/sub2api.inner.v1.InnerAPI/GetBalance")
+	msg.WithCalleeServiceName(InnerAPIServiceName)
+	msg.WithCalleeApp("sub2api")
+	msg.WithCalleeServer("inner")
+	msg.WithCalleeService("InnerAPI")
+	msg.WithCalleeMethod("GetBalance")
+	msg.WithSerializationType(codec.SerializationTypePB)
+	callOptions := append(append([]client.Option{}, c.opts...), opts...)
+	response := &GetBalanceResponse{}
+	if err := c.client.Invoke(ctx, req, response, callOptions...); err != nil {
+		return nil, err
+	}
+	codec.PutBackMessage(msg)
+	return response, nil
 }
 
 func (c *innerAPIClientProxy) ListMaterials(ctx context.Context, req *ListMaterialsRequest, opts ...client.Option) (*ListMaterialsResponse, error) {

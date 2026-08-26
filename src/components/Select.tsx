@@ -26,9 +26,13 @@ interface SelectProps {
   className?: string
   menuClassName?: string
   onOpenChange?: (isOpen: boolean) => void
+  iconOnly?: boolean
+  iconOnlyIcon?: ReactNode
+  iconOnlyLabel?: string
+  ariaLabel?: string
 }
 
-export default function Select({ value, onChange, onReorder, options, disabled, className, menuClassName, onOpenChange }: SelectProps) {
+export default function Select({ value, onChange, onReorder, options, disabled, className, menuClassName, onOpenChange, iconOnly = false, iconOnlyIcon, iconOnlyLabel, ariaLabel }: SelectProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [menuMaxHeight, setMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [placement, setPlacement] = useState<'bottom' | 'top'>('bottom')
@@ -163,18 +167,30 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
       <div
         ref={triggerRef}
         onClick={handleToggle}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return
+          e.preventDefault()
+          setIsOpen((open) => !open)
+        }}
+        role="button"
+        aria-label={ariaLabel}
+        aria-expanded={isOpen}
+        title={ariaLabel}
+        tabIndex={disabled ? -1 : 0}
         className={`flex items-center justify-between gap-1 w-full cursor-pointer select-none ${className ?? ''} ${
           disabled ? '!opacity-50 !cursor-not-allowed !bg-gray-100/50 dark:!bg-white/[0.05]' : ''
         }`}
       >
-        <span className="flex min-w-0 flex-1 items-center gap-2.5">
-          {selectedOption?.icon}
-          <span className="min-w-0 flex-1">
+        <span className={iconOnly ? 'flex min-w-0 flex-1 items-center gap-1.5' : 'flex min-w-0 flex-1 items-center gap-2.5'}>
+          {iconOnly ? (iconOnlyIcon ?? selectedOption?.icon) : selectedOption?.icon}
+          {iconOnly
+            ? iconOnlyLabel && <span className="flex h-full min-w-0 flex-1 items-center truncate text-left leading-none">{iconOnlyLabel}</span>
+            : <span className="min-w-0 flex-1">
             <span className="block truncate">{selectedOption?.label ?? value}</span>
             {selectedOption?.description && <span className="block truncate text-[10px] font-normal leading-3 text-gray-400 dark:text-gray-500">{selectedOption.description}</span>}
-          </span>
+          </span>}
         </span>
-        <ChevronDownIcon className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDownIcon className={`w-3.5 h-3.5 flex-shrink-0 transition-transform duration-200 ${iconOnly ? 'text-current' : 'text-gray-400 dark:text-gray-500'} ${isOpen ? 'rotate-180' : ''}`} />
       </div>
 
       {isOpen && (

@@ -38,6 +38,7 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const activeProject = projects.find((project) => project.id === activeProjectId)
   const activeProjectTitle = activeProjectId === LOCAL_PROJECT_ID ? '本地数据' : activeProject?.title
+  const isProjectPage = view === 'workspace' && activeProjectId !== null
   const favoriteCollectionTitle = useFavoriteCollectionTitle()
   const showFavoriteCollectionTitle = appMode === 'gallery' && Boolean(activeFavoriteCollectionId)
   const { hasUpdate, latestRelease, dismiss } = useVersionCheck()
@@ -147,7 +148,7 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
   return (
     <>
       <header data-no-drag-select className={`safe-area-top fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-gray-950/80 backdrop-blur border-b border-gray-200 dark:border-white/[0.08] transition-transform duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? '-translate-y-full sm:translate-y-0' : 'translate-y-0'}`}>
-        <div className="safe-area-x safe-header-inner max-w-7xl mx-auto flex items-center justify-between relative">
+        <div className={`safe-area-x safe-header-inner flex items-center justify-between relative ${isProjectPage ? 'w-full max-w-none' : 'max-w-7xl mx-auto'}`}>
           <div className="flex-1 min-w-0 pr-2 flex items-center gap-2">
             <h1 className="inline-flex min-w-0 items-center relative mr-2 gap-2">
               <img src="/logo.png" alt="" className="h-6 w-6 shrink-0 rounded-md object-cover sm:h-7 sm:w-7" />

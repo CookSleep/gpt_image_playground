@@ -32,8 +32,17 @@ admin:
   emails: []
     # - admin@example.com
 
-# 素材库管理使用该内部 RPC；app 必须具有 materials:write 权限。
-# 不使用素材库时可整体留空。
+# 模型展示白名单。后台只返回“当前 API Key 可用模型”和对应列表的交集。
+# 某个列表留空时，该场景不限制模型。
+model_whitelist:
+  image: []
+    # - gpt-image-2
+    # - fal-ai/flux/dev
+  agent: []
+    # - gpt-5.2
+
+# 账户余额与素材库管理使用该内部 RPC；app 需要开放对应的 GetBalance/素材权限。
+# 未配置时余额显示为不可用；不使用余额和素材库时可整体留空。
 inner_api_rpc:
   target: ""                    # 例如 ip://10.0.0.5:9100
   app_token: ""                 # 内部 API App 页面创建后仅展示一次

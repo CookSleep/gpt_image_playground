@@ -106,7 +106,7 @@ export function clearTokens() {
   }
 }
 
-/** 取 OIDC 提供商的原始 access_token，用于直接调用 provider 的资源端点 */
+/** 取 OIDC 提供商的原始 access_token，用于经应用后台代理 OIDC 资源端点 */
 export function getOIDCAccessToken(): string | null {
   try {
     return localStorage.getItem(OIDC_ACCESS_TOKEN_KEY)
@@ -115,7 +115,7 @@ export function getOIDCAccessToken(): string | null {
   }
 }
 
-/** 取 OIDC issuer URL，用于拼接 /oidc/resource/api-keys 等资源端点 */
+/** 取 OIDC issuer URL，用于拼接仍由浏览器直连的计价端点。 */
 export function getOIDCIssuer(): string | null {
   try {
     return localStorage.getItem(OIDC_ISSUER_KEY)
@@ -358,7 +358,7 @@ export function consumeAuthHash(): boolean {
     token_type: params.get('token_type') || 'Bearer',
   })
 
-  // 额外保存 OIDC access_token 与 issuer，供前端直接调 provider 的资源端点
+  // 额外保存 OIDC access_token 与 issuer，供资源代理及仍需直连的 usage、计价接口使用
   try {
     const oidcAccessToken = params.get('oidc_access_token')
     const oidcRefreshToken = params.get('oidc_refresh_token')

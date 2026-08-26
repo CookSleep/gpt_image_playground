@@ -6,7 +6,7 @@ import { LOCAL_PROJECT_ID, createInputImageFromFile, deleteImageIfUnreferenced, 
 import { DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
 import { createLegacyProject } from '../lib/legacyProject'
 import { updateProjectUrl } from '../lib/projectRoute'
-import { readCachedApiKey, writeCachedApiKey } from '../lib/oidcApiKeySelection'
+import { readCachedApiKey, readCachedModel, writeCachedApiKey, writeCachedModel } from '../lib/oidcApiKeySelection'
 import Select from './Select'
 import { ArrowUpIcon, CloseIcon, CollectionManageIcon, EditIcon, KeyIcon, OpenAIIcon, PlusIcon, TrashIcon } from './icons'
 import HomePromptEditor from './HomePromptEditor'
@@ -173,7 +173,7 @@ export default function ProjectHome() {
   const [apiKeysError, setApiKeysError] = useState('')
   const [models, setModels] = useState<ModelInfo[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
-  const [model, setModel] = useState(DEFAULT_IMAGES_MODEL)
+  const [model, setModel] = useState(() => readCachedModel(user?.id) || DEFAULT_IMAGES_MODEL)
   const [submitting, setSubmitting] = useState(false)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -226,18 +226,15 @@ export default function ProjectHome() {
     ]
   }, [apiKeyItems, apiKeys, apiKeysError, apiKeysLoading])
   const homeModelOptions = useMemo(() => {
-    const options = models.length > 0
-      ? models.map((item) => ({
-          label: item.id === DEFAULT_IMAGES_MODEL ? 'GPT Image 2' : item.id,
-          value: item.id,
-          ...(item.id === DEFAULT_IMAGES_MODEL ? { description: 'OpenAI', icon: HOME_MODEL_ICON } : {}),
-        }))
-      : [{ label: 'GPT Image 2', value: DEFAULT_IMAGES_MODEL, description: 'OpenAI', icon: HOME_MODEL_ICON }]
-    if (model && !options.some((option) => option.value === model)) {
-      return [{ label: model, value: model }, ...options]
+    if (models.length === 0) {
+      return [{ label: apiKey ? '当前 Key 没有可用的生图模型' : '请先选择 API Key', value: '' }]
     }
-    return options
-  }, [model, models])
+    return models.map((item) => ({
+      label: item.id === DEFAULT_IMAGES_MODEL ? 'GPT Image 2' : item.id,
+      value: item.id,
+      ...(item.id === DEFAULT_IMAGES_MODEL ? { description: 'OpenAI', icon: HOME_MODEL_ICON } : {}),
+    }))
+  }, [apiKey, models])
   const legacyProject = useMemo(() => createLegacyProject(legacyTasks, LOCAL_PROJECT_ID), [legacyTasks])
 
   useEffect(() => {
@@ -255,7 +252,7 @@ export default function ProjectHome() {
       setApiKeysLoading(true)
       setApiKeysError('')
       try {
-        const res = await fetchApiKeys()
+        const res = await fetchApiKeys('image')
         if (cancelled) return
         const keys = res.sub2api_apikeys || []
         setApiKeys(keys)
@@ -289,22 +286,30 @@ export default function ProjectHome() {
     let cancelled = false
     const controller = new AbortController()
     setModelsLoading(true)
-    fetchModels(apiKey, { signal: controller.signal })
+    fetchModels(apiKey, { signal: controller.signal, scope: 'image' })
       .then((res) => {
         if (cancelled) return
         const list = res.data || []
         setModels(list)
         setModel((current) => {
           const ids = list.map((item) => item.id)
-          if (current && ids.includes(current)) return current
-          if (ids.includes(DEFAULT_IMAGES_MODEL)) return DEFAULT_IMAGES_MODEL
-          return ids[0] || DEFAULT_IMAGES_MODEL
+          const cached = readCachedModel(user?.id)
+          const next = cached && ids.includes(cached)
+            ? cached
+            : current && ids.includes(current)
+              ? current
+              : ids.includes(DEFAULT_IMAGES_MODEL)
+                ? DEFAULT_IMAGES_MODEL
+                : ids[0] || ''
+          writeCachedModel(user?.id, next)
+          return next
         })
       })
       .catch((err) => {
         if (cancelled) return
         console.error('[ProjectHome] fetchModels failed:', err)
         setModels([])
+        setModel('')
       })
       .finally(() => {
         if (!cancelled) setModelsLoading(false)
@@ -313,7 +318,7 @@ export default function ProjectHome() {
       cancelled = true
       controller.abort()
     }
-  }, [apiKey])
+  }, [apiKey, user?.id])
 
   useEffect(() => {
     const platform = apiKeyItems.find((item) => item.key === apiKey)?.platform
@@ -325,6 +330,11 @@ export default function ProjectHome() {
     writeCachedApiKey(user?.id, value)
     const platform = apiKeyItems.find((item) => item.key === value)?.platform
     useStore.getState().setOidcApiOverride(value ? { apiKey: value, model, ...(platform ? { platform } : {}) } : { model })
+  }
+
+  const setHomeModel = (value: string) => {
+    setModel(value)
+    writeCachedModel(user?.id, value)
   }
 
   const handleAttachmentChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -369,6 +379,10 @@ export default function ProjectHome() {
     if (!value || submitting) return
     if (apiKey === '') {
       useStore.getState().showToast('请先选择 API Key', 'error')
+      return
+    }
+    if (model === '') {
+      useStore.getState().showToast('当前 API Key 没有可用的生图模型', 'error')
       return
     }
 
@@ -463,8 +477,8 @@ export default function ProjectHome() {
             <div className="min-w-0 sm:w-48 sm:max-w-full sm:shrink-0">
               <Select
                 value={model}
-                onChange={(value) => setModel(String(value))}
-                disabled={!apiKey || modelsLoading}
+                onChange={(value) => setHomeModel(String(value))}
+                disabled={!apiKey || modelsLoading || models.length === 0}
                 options={homeModelOptions}
                 className="h-11 rounded-xl border border-transparent bg-gray-50 px-2.5 text-sm font-semibold leading-4 text-gray-800 transition hover:border-gray-200 hover:bg-gray-100 dark:bg-white/[0.05] dark:text-gray-100 dark:hover:border-white/[0.08] dark:hover:bg-white/[0.08]"
                 menuClassName="!py-0"

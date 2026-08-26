@@ -8,6 +8,7 @@ import { collectWebSearchCalls, getAgentRoundOutputItems, getWebSearchStatusForC
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { downloadImageEntriesAsZip, downloadImageIds, getImageZipEntries } from '../lib/downloadImages'
 import TaskCard from './TaskCard'
+import { ProjectApiKeySelect } from './ProjectApiControls'
 import MarkdownRenderer from './MarkdownRenderer'
 import { TooltipButton as AgentActionButton } from './TooltipButton'
 import HistoryModal from './HistoryModal'
@@ -862,6 +863,7 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
             >
               <ChevronDownIcon className="h-4 w-4" />
             </button>
+            <ProjectApiKeySelect scope="agent" iconOnly />
             {showHistoryModal && (
               <HistoryModal
                 onClose={() => setShowHistoryModal(false)}

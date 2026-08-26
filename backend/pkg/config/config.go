@@ -12,13 +12,20 @@ import (
 
 // Config 应用配置（来自 YAML 文件）
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Database DatabaseConfig `yaml:"database"`
-	JWT      JWTConfig      `yaml:"jwt"`
-	OIDC     OIDCConfig     `yaml:"oidc"`
-	Admin    AdminConfig    `yaml:"admin"`
-	InnerAPI InnerAPIConfig `yaml:"inner_api_rpc"`
-	FileAPI  FileAPIConfig  `yaml:"file_api"`
+	Server         ServerConfig         `yaml:"server"`
+	Database       DatabaseConfig       `yaml:"database"`
+	JWT            JWTConfig            `yaml:"jwt"`
+	OIDC           OIDCConfig           `yaml:"oidc"`
+	Admin          AdminConfig          `yaml:"admin"`
+	ModelWhitelist ModelWhitelistConfig `yaml:"model_whitelist"`
+	InnerAPI       InnerAPIConfig       `yaml:"inner_api_rpc"`
+	FileAPI        FileAPIConfig        `yaml:"file_api"`
+}
+
+// ModelWhitelistConfig 控制前端按使用场景展示的模型。空列表表示不限制。
+type ModelWhitelistConfig struct {
+	Image []string `yaml:"image"`
+	Agent []string `yaml:"agent"`
 }
 
 type InnerAPIConfig struct {
@@ -202,6 +209,8 @@ func (c *Config) applyDefaults() {
 	if c.FileAPI.TimeoutSeconds == 0 {
 		c.FileAPI.TimeoutSeconds = 10 * 60
 	}
+	c.ModelWhitelist.Image = normalizeModelWhitelist(c.ModelWhitelist.Image)
+	c.ModelWhitelist.Agent = normalizeModelWhitelist(c.ModelWhitelist.Agent)
 	for i := range c.OIDC.Providers {
 		p := &c.OIDC.Providers[i]
 		if len(p.Scopes) == 0 {
@@ -211,6 +220,23 @@ func (c *Config) applyDefaults() {
 			p.DisplayName = p.Name
 		}
 	}
+}
+
+func normalizeModelWhitelist(models []string) []string {
+	seen := make(map[string]struct{}, len(models))
+	result := make([]string, 0, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		result = append(result, model)
+	}
+	return result
 }
 
 // Validate 校验关键字段

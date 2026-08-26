@@ -130,6 +130,8 @@ func main() {
 	handlers.NewProjectHandler(projectRepo).Register(api)
 	handlers.NewProjectTaskHandler(projectRepo).Register(api)
 	handlers.NewProjectImageHandler(projectRepo).Register(api)
+	handlers.NewOIDCResourceHandler(registry, cfg.ModelWhitelist).Register(api)
+	handlers.NewBalanceHandler(services.NewBalanceService(userRepo, cfg.InnerAPI)).Register(api)
 	handlers.NewMaterialHandler(services.NewMaterialService(userRepo, cfg.InnerAPI)).Register(api)
 	handlers.NewFileAPIHandler(registry, cfg.FileAPI).Register(api)
 	handlers.NewCompositeModelHandler(registry).Register(api)
@@ -193,7 +195,7 @@ func buildCORS(origins []string) gin.HandlerFunc {
 	return cors.New(cors.Config{
 		AllowOrigins:     origins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Upstream-API-Key"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-OIDC-Access-Token", "X-Upstream-API-Key"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
