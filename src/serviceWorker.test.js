@@ -55,6 +55,13 @@ describe('service worker fetch 缓存范围', () => {
     handleFetch({ request: new Request('https://img.opentk.ai/api/v1/projects'), respondWith: projectRespondWith })
     expect(projectRespondWith).not.toHaveBeenCalled()
 
+    const statusRespondWith = vi.fn()
+    handleFetch({
+      request: new Request('https://img.opentk.ai/api/v1/model/openai/gpt-image-2/requests/request-1/status'),
+      respondWith: statusRespondWith,
+    })
+    expect(statusRespondWith).not.toHaveBeenCalled()
+
     const assetRespondWith = vi.fn()
     handleFetch({ request: new Request('https://img.opentk.ai/assets/index-abc.js'), respondWith: assetRespondWith })
     expect(assetRespondWith).toHaveBeenCalledOnce()
