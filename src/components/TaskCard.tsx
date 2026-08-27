@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, type ReactNode } from 'react'
 import type { TaskRecord } from '../types'
 import { useStore, ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail, retryTask } from '../store'
 import { formatImageRatio } from '../lib/size'
+import { formatActualCost } from '../lib/cost'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
@@ -77,6 +78,8 @@ export default function TaskCard({
   const [swipeDirection, setSwipeDirection] = useState<-1 | 0 | 1>(0)
   const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
   const [savingToMaterials, setSavingToMaterials] = useState(false)
+  const [actualCostHovered, setActualCostHovered] = useState(false)
+  const [actualCostOpen, setActualCostOpen] = useState(false)
   const toggleTaskSelection = useStore((s) => s.toggleTaskSelection)
   const settings = useStore((s) => s.settings)
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
@@ -92,6 +95,20 @@ export default function TaskCard({
   const swipeOffsetRef = useRef(0)
   const pendingSwipeOffsetRef = useRef(0)
   const swipeFrameRef = useRef<number | null>(null)
+  const actualCostRef = useRef<HTMLSpanElement>(null)
+  const actualCostVisible = actualCostHovered || actualCostOpen
+
+  useEffect(() => {
+    if (!actualCostOpen) return
+
+    const closeActualCost = (e: PointerEvent) => {
+      if (e.target instanceof Node && actualCostRef.current?.contains(e.target)) return
+      setActualCostOpen(false)
+    }
+
+    document.addEventListener('pointerdown', closeActualCost, true)
+    return () => document.removeEventListener('pointerdown', closeActualCost, true)
+  }, [actualCostOpen])
 
   const saveOutputsToMaterials = async () => {
     if (savingToMaterials || !task.outputImages.length) return
@@ -583,79 +600,113 @@ export default function TaskCard({
           </div>
           <div className="mt-auto flex flex-col gap-1.5">
             {/* 参数与信息：横向滚动 */}
-            <div 
-              data-tag-scroll-area
-              className="flex overflow-x-auto hide-scrollbar pt-0.5 gap-1.5 whitespace-nowrap mask-edge-r min-w-0 pr-2"
-              onTouchStart={(e) => e.stopPropagation()}
-              onTouchMove={(e) => e.stopPropagation()}
-              onTouchEnd={(e) => e.stopPropagation()}
-              onTouchCancel={(e) => e.stopPropagation()}
-            >
-              {/* API Name */}
-              {(task.apiProfileName || task.apiProvider) && (
-                <span 
-                  className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-gray-600 dark:text-gray-300 text-xs flex-shrink-0"
-                  title={task.apiProfileName || task.apiProvider}
-                >
-                  <CodeIcon className="w-3 h-3 flex-shrink-0 text-gray-400" />
-                  <span className="truncate max-w-[8rem]">
-                    {task.apiProfileName || task.apiProvider}
+            <div className="flex min-w-0 items-center gap-1.5 pt-0.5">
+              <div
+                data-tag-scroll-area
+                className="flex min-w-0 flex-1 overflow-x-auto hide-scrollbar gap-1.5 whitespace-nowrap mask-edge-r pr-2"
+                onTouchStart={(e) => e.stopPropagation()}
+                onTouchMove={(e) => e.stopPropagation()}
+                onTouchEnd={(e) => e.stopPropagation()}
+                onTouchCancel={(e) => e.stopPropagation()}
+              >
+                {/* API Name */}
+                {(task.apiProfileName || task.apiProvider) && (
+                  <span
+                    className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-gray-600 dark:text-gray-300 text-xs flex-shrink-0"
+                    title={task.apiProfileName || task.apiProvider}
+                  >
+                    <CodeIcon className="w-3 h-3 flex-shrink-0 text-gray-400" />
+                    <span className="truncate max-w-[8rem]">
+                      {task.apiProfileName || task.apiProvider}
+                    </span>
                   </span>
-                </span>
-              )}
-              {/* Model */}
-              {showModel && (
-                <span 
-                  className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-gray-600 dark:text-gray-300 text-xs flex-shrink-0"
-                  title={task.apiModel}
-                >
-                  <svg className="w-3 h-3 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-                  </svg>
-                  <span className="truncate max-w-[8rem]">
-                    {task.apiModel}
+                )}
+                {/* Model */}
+                {showModel && (
+                  <span
+                    className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-gray-600 dark:text-gray-300 text-xs flex-shrink-0"
+                    title={task.apiModel}
+                  >
+                    <svg className="w-3 h-3 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                    </svg>
+                    <span className="truncate max-w-[8rem]">
+                      {task.apiModel}
+                    </span>
                   </span>
-                </span>
-              )}
-              {/* Mask */}
-              {task.maskImageId && (
-                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs flex-shrink-0">
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                  </svg>
-                  局部重绘
-                </span>
-              )}
-              {/* Transparent background */}
-              {showTransparentOutput && (
-                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs flex-shrink-0">
-                  <TransparentBgIcon className="w-3 h-3 flex-shrink-0" />
-                  透明背景
-                </span>
-              )}
-              {/* Params: only show if not default or mismatch */}
-              {showQuality && (
-                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
-                  <span className="text-gray-400 dark:text-gray-500">质量</span>
-                  {qualityDisplay.isMismatch ? <ActualValueBadge value={qualityDisplay.displayValue} className="px-1 rounded-sm" /> : <span className="text-gray-600 dark:text-gray-300">{qualityDisplay.displayValue}</span>}
-                </span>
-              )}
-              {showSize && (
-                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
-                  <span className="text-gray-400 dark:text-gray-500">尺寸</span>
-                  {sizeDisplay.isMismatch ? <ActualValueBadge value={sizeDisplay.displayValue} className="px-1 rounded-sm" /> : <span className="text-gray-600 dark:text-gray-300">{sizeDisplay.displayValue}</span>}
-                </span>
-              )}
-              {showFormat && (
-                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
-                  <span className="text-gray-400 dark:text-gray-500">格式</span>
-                  {formatDisplay.isMismatch ? <ActualValueBadge value={formatDisplay.displayValue} className="px-1 rounded-sm" /> : <span className="text-gray-600 dark:text-gray-300">{formatDisplay.displayValue}</span>}
-                </span>
-              )}
-              {showN && (
-                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
-                  <span className="text-gray-400 dark:text-gray-500">数量</span>
-                  {nDisplay.isMismatch ? <ActualValueBadge value={nDisplay.displayValue} className="px-1 rounded-sm" /> : <span className="text-gray-600 dark:text-gray-300">{nDisplay.displayValue}</span>}
+                )}
+                {/* Mask */}
+                {task.maskImageId && (
+                  <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs flex-shrink-0">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                    局部重绘
+                  </span>
+                )}
+                {/* Transparent background */}
+                {showTransparentOutput && (
+                  <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs flex-shrink-0">
+                    <TransparentBgIcon className="w-3 h-3 flex-shrink-0" />
+                    透明背景
+                  </span>
+                )}
+                {/* Params: only show if not default or mismatch */}
+                {showQuality && (
+                  <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
+                    <span className="text-gray-400 dark:text-gray-500">质量</span>
+                    {qualityDisplay.isMismatch ? <ActualValueBadge value={qualityDisplay.displayValue} className="px-1 rounded-sm" /> : <span className="text-gray-600 dark:text-gray-300">{qualityDisplay.displayValue}</span>}
+                  </span>
+                )}
+                {showSize && (
+                  <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
+                    <span className="text-gray-400 dark:text-gray-500">尺寸</span>
+                    {sizeDisplay.isMismatch ? <ActualValueBadge value={sizeDisplay.displayValue} className="px-1 rounded-sm" /> : <span className="text-gray-600 dark:text-gray-300">{sizeDisplay.displayValue}</span>}
+                  </span>
+                )}
+                {showFormat && (
+                  <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
+                    <span className="text-gray-400 dark:text-gray-500">格式</span>
+                    {formatDisplay.isMismatch ? <ActualValueBadge value={formatDisplay.displayValue} className="px-1 rounded-sm" /> : <span className="text-gray-600 dark:text-gray-300">{formatDisplay.displayValue}</span>}
+                  </span>
+                )}
+                {showN && (
+                  <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
+                    <span className="text-gray-400 dark:text-gray-500">数量</span>
+                    {nDisplay.isMismatch ? <ActualValueBadge value={nDisplay.displayValue} className="px-1 rounded-sm" /> : <span className="text-gray-600 dark:text-gray-300">{nDisplay.displayValue}</span>}
+                  </span>
+                )}
+              </div>
+              {task.actualCost !== undefined && (
+                <span
+                  ref={actualCostRef}
+                  data-tag-scroll-area
+                  className="relative inline-flex shrink-0"
+                  onMouseEnter={() => setActualCostHovered(true)}
+                  onMouseLeave={() => setActualCostHovered(false)}
+                  onFocus={() => setActualCostHovered(true)}
+                  onBlur={() => setActualCostHovered(false)}
+                >
+                  <button
+                    type="button"
+                    className="flex h-5 w-5 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                    aria-label="查看实际费用"
+                    aria-expanded={actualCostVisible}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setActualCostOpen((open) => !open)
+                    }}
+                    onTouchStart={(e) => e.stopPropagation()}
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                      <circle cx="12" cy="12" r="9" strokeWidth="1.8" />
+                      <path strokeLinecap="round" strokeWidth="1.8" d="M12 10.5V16" />
+                      <circle cx="12" cy="7.5" r="1" fill="currentColor" stroke="none" />
+                    </svg>
+                  </button>
+                  <ViewportTooltip visible={actualCostVisible} className="whitespace-nowrap">
+                    实际费用 {formatActualCost(task.actualCost)}
+                  </ViewportTooltip>
                 </span>
               )}
             </div>

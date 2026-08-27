@@ -229,11 +229,14 @@ export default function ProjectHome() {
     if (models.length === 0) {
       return [{ label: apiKey ? '当前 Key 没有可用的生图模型' : '请先选择 API Key', value: '' }]
     }
-    return models.map((item) => ({
-      label: item.id === DEFAULT_IMAGES_MODEL ? 'GPT Image 2' : item.id,
-      value: item.id,
-      ...(item.id === DEFAULT_IMAGES_MODEL ? { description: 'OpenAI', icon: HOME_MODEL_ICON } : {}),
-    }))
+    return models.map((item) => {
+      const isOpenAIModel = /^(openai|gpt)/i.test(item.id)
+      return {
+        label: item.id === DEFAULT_IMAGES_MODEL ? 'GPT Image 2' : item.id,
+        value: item.id,
+        ...(isOpenAIModel ? { description: 'OpenAI', icon: HOME_MODEL_ICON } : {}),
+      }
+    })
   }, [apiKey, models])
   const legacyProject = useMemo(() => createLegacyProject(legacyTasks, LOCAL_PROJECT_ID), [legacyTasks])
 

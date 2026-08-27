@@ -40,6 +40,10 @@ export interface CallApiResult {
   imagesStoredOnline?: boolean
   /** 后端写入在线项目后的图片 ID */
   imageIds?: string[]
+  /** 任务记录已交由项目后台异步保存 */
+  taskRecordQueued?: boolean
+  /** 上游返回的实际费用（美元） */
+  actualCost?: number
 }
 
 export function isHttpUrl(value: unknown): value is string {

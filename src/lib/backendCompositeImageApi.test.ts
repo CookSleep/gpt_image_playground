@@ -18,7 +18,7 @@ describe('callBackendCompositeImageApi', () => {
         request_id: 'request-1',
         status_url: 'https://provider.example/api/v1/model/openai/gpt-image-2/requests/request-1/status',
       }), { status: 202 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED', actual_cost: 0.0375 }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         images: [{ url: 'data:image/png;base64,AAECAw==' }],
       }), { status: 200 }))
@@ -50,12 +50,13 @@ describe('callBackendCompositeImageApi', () => {
       images: ['data:image/png;base64,AAECAw=='],
       rawImageUrls: ['data:image/png;base64,AAECAw=='],
       imagesStoredOnline: false,
+      actualCost: 0.0375,
     })
   })
 
   it('queries a persisted Composite request without submitting it again', async () => {
     vi.mocked(authFetch)
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED', actual_cost: '0.125' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         images: [{ url: 'data:image/png;base64,AAECAw==' }],
       }), { status: 200 }))
@@ -72,6 +73,7 @@ describe('callBackendCompositeImageApi', () => {
       '/api/v1/model/openai/gpt-image-2/requests/persisted-request',
     ])
     expect(result?.images).toEqual(['data:image/png;base64,AAECAw=='])
+    expect(result?.actualCost).toBe(0.125)
   })
 
   it('uploads edit files and reports their persistent URLs before submitting', async () => {

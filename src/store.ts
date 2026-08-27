@@ -2169,10 +2169,23 @@ function getPersistableTask(task: TaskRecord): TaskRecord {
   return rawResponsePayload === task.rawResponsePayload ? task : { ...task, rawResponsePayload }
 }
 
-function putTask(task: TaskRecord): Promise<IDBValidKey> {
+function isBackendManagedGenerationTask(task: TaskRecord, project = task.projectId
+  ? useStore.getState().projects.find((item) => item.id === task.projectId)
+  : undefined) {
+  return Boolean(
+    project?.storage === 'online' &&
+    project.remoteId &&
+    (task.apiProvider ?? 'openai') === 'openai' &&
+    task.apiOverride?.apiKey &&
+    task.apiOverride?.platform?.trim().toLowerCase() !== 'composite' &&
+    !task.transparentOutput,
+  )
+}
+
+function putTask(task: TaskRecord, syncOnline = true): Promise<IDBValidKey> {
   const persistable = getPersistableTask(task)
   return dbPutTask(persistable).then((key) => {
-    queueOnlineTaskSync(persistable)
+    if (syncOnline) queueOnlineTaskSync(persistable)
     return key
   })
 }
@@ -2481,7 +2494,7 @@ function usesConcurrentOpenAIImageRequests(profile: ApiProfile, params: TaskPara
   return profile.apiMode === 'images' && (profile.codexCli || profile.streamImages)
 }
 
-function addImageStatusRequestIdToTask(taskId: string, requestId: string) {
+function addImageStatusRequestIdToTask(taskId: string, requestId: string, syncOnline = true) {
   const task = useStore.getState().tasks.find((item) => item.id === taskId)
   if (!task) return
   const imageStatusRequestIds = task.imageStatusRequestIds?.includes(requestId)
@@ -2490,7 +2503,7 @@ function addImageStatusRequestIdToTask(taskId: string, requestId: string) {
   updateTaskInStore(taskId, {
     imageStatusRequestIds,
     imageStatusRecoverable: false,
-  })
+  }, syncOnline)
 }
 
 function addImageStatusRequestIdToAgentRound(conversationId: string, roundId: string, requestId: string, profileId?: string) {
@@ -2944,7 +2957,7 @@ async function completeRecoveredCompositeTask(task: TaskRecord, result: Awaited<
   if (!latest || latest.status === 'done') return
 
   const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
-  const actualParamsList = await resolveImageSizeParamsList(outputDataUrls, result.actualParamsList, outputImageSizes)
+  const actualParamsList = await resolveImageSizeParamsList(outputDataUrls, undefined, outputImageSizes)
 
   updateTaskInStore(task.id, {
     outputImages: outputIds,
@@ -2952,10 +2965,11 @@ async function completeRecoveredCompositeTask(task: TaskRecord, result: Awaited<
     rawImageUrls: result.rawImageUrls?.length ? result.rawImageUrls : undefined,
     actualParams: {
       ...result.actualParams,
-      size: result.actualParams?.size ?? firstActualParams(actualParamsList)?.size,
+      size: firstActualParams(actualParamsList)?.size ?? result.actualParams?.size,
       n: outputIds.length,
     },
     actualParamsByImage: mapActualParamsByImage(outputIds, actualParamsList),
+    ...(result.actualCost !== undefined ? { actualCost: result.actualCost } : {}),
     status: 'done',
     error: null,
     compositeRecoverable: false,
@@ -4166,7 +4180,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
 
   const latestTasks = useStore.getState().tasks
   useStore.getState().setTasks([task, ...latestTasks])
-  await putTask(task)
+  await putTask(task, !isBackendManagedGenerationTask(task))
   touchProject(projectId, false)
   useStore.getState().showToast('任务已提交', 'success')
 
@@ -6121,6 +6135,14 @@ async function executeTask(taskId: string) {
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
   const taskProvider = task.apiProvider ?? activeProfile.provider
   const isCompositeRequest = task.apiOverride?.platform?.trim().toLowerCase() === 'composite' && Boolean(task.apiOverride.apiKey)
+  const project = task.projectId
+    ? useStore.getState().projects.find((item) => item.id === task.projectId)
+    : undefined
+  const backendRequest = project?.storage === 'online' && project.remoteId && taskProvider === 'openai' && task.apiOverride?.apiKey && !isCompositeRequest
+    ? { project, apiKey: task.apiOverride.apiKey }
+    : null
+  const backendManagesTaskRecord = Boolean(backendRequest && !task.transparentOutput)
+  const updateExecutingTask = (patch: Partial<TaskRecord>) => updateTaskInStore(taskId, patch, !backendManagesTaskRecord)
   let falRequestInfo: { requestId: string; endpoint: string } | null = task.falRequestId && task.falEndpoint
         ? { requestId: task.falRequestId, endpoint: task.falEndpoint }
     : null
@@ -6132,6 +6154,7 @@ async function executeTask(taskId: string) {
     : null
 
   if (
+    !backendRequest &&
     taskProvider !== 'fal' &&
     !isCompositeRequest &&
     !isAsyncCustomProviderTask(requestSettings, taskProvider, task.inputImageIds.length > 0) &&
@@ -6171,12 +6194,6 @@ async function executeTask(taskId: string) {
       : task.prompt
 
     const prompt = replaceImageMentionsForApi(requestPrompt, inputDataUrls.length)
-    const project = task.projectId
-      ? useStore.getState().projects.find((item) => item.id === task.projectId)
-      : undefined
-    const backendRequest = project?.storage === 'online' && project.remoteId && taskProvider === 'openai' && task.apiOverride?.apiKey
-      ? { projectId: project.remoteId, projectTitle: project.title, apiKey: task.apiOverride.apiKey }
-      : null
     const result = isCompositeRequest
       ? await callBackendCompositeImageApi({
           apiKey: task.apiOverride?.apiKey ?? '',
@@ -6189,7 +6206,7 @@ async function executeTask(taskId: string) {
           maskFileUrl: compositeMaskFileUrl,
           onRequestCreated: async (request) => {
             compositeRequestInfo = request
-            await updateTaskInStore(taskId, {
+            await updateExecutingTask({
               compositeRequestId: request.requestId,
               compositeStatusUrl: request.statusUrl,
               compositeRecoverable: false,
@@ -6219,7 +6236,7 @@ async function executeTask(taskId: string) {
             const latestTask = useStore.getState().tasks.find((item) => item.id === taskId)
             if (!latestTask || latestTask.status !== 'running') return
             useStore.getState().setTaskStreamPreview(taskId)
-            updateTaskInStore(taskId, {
+            updateExecutingTask({
               status: 'error',
               error: error.message,
               falRecoverable: false,
@@ -6234,9 +6251,9 @@ async function executeTask(taskId: string) {
         })
       : backendRequest
       ? await callBackendImageApi({
-          projectId: backendRequest.projectId,
-          projectTitle: backendRequest.projectTitle,
-          taskId: task.id,
+          project: backendRequest.project,
+          task,
+          manageTaskRecord: backendManagesTaskRecord,
           apiKey: backendRequest.apiKey,
           provider: 'openai',
           model: activeProfile.model,
@@ -6248,7 +6265,7 @@ async function executeTask(taskId: string) {
           inputImageDataUrls: inputDataUrls,
           maskDataUrl,
           onImageStatusRequestCreated: (request) => {
-            addImageStatusRequestIdToTask(taskId, request.requestId)
+            addImageStatusRequestIdToTask(taskId, request.requestId, !backendManagesTaskRecord)
           },
         })
       : await callImageApi({
@@ -6259,7 +6276,7 @@ async function executeTask(taskId: string) {
           maskDataUrl,
           onFalRequestEnqueued: (request) => {
             falRequestInfo = request
-            updateTaskInStore(taskId, {
+            updateExecutingTask({
               falRequestId: request.requestId,
               falEndpoint: request.endpoint,
               falRecoverable: false,
@@ -6267,13 +6284,13 @@ async function executeTask(taskId: string) {
           },
           onCustomTaskEnqueued: (request) => {
             customTaskInfo = request
-            updateTaskInStore(taskId, {
+            updateExecutingTask({
               customTaskId: request.taskId,
               customRecoverable: false,
             })
           },
           onImageStatusRequestCreated: (request) => {
-            addImageStatusRequestIdToTask(taskId, request.requestId)
+            addImageStatusRequestIdToTask(taskId, request.requestId, !backendManagesTaskRecord)
           },
           onPartialImage: (partial) => {
             useStore.getState().setTaskStreamPreview(taskId, partial.image, partial.requestIndex)
@@ -6294,7 +6311,7 @@ async function executeTask(taskId: string) {
     const isAsyncCustomTask = taskProvider !== 'fal' && taskProvider !== 'openai' && Boolean(customTaskInfo)
     const actualParamsList = await resolveImageSizeParamsList(
       outputDataUrls,
-      isAsyncCustomTask ? undefined : result.actualParamsList,
+      isAsyncCustomTask || isCompositeRequest ? undefined : result.actualParamsList,
       outputImageSizes,
     )
     const actualParams = (() => {
@@ -6303,7 +6320,7 @@ async function executeTask(taskId: string) {
       const firstParams = firstActualParams(actualParamsList)
       return {
         ...result.actualParams,
-        size: result.actualParams?.size ?? firstParams?.size,
+        size: isCompositeRequest ? firstParams?.size ?? result.actualParams?.size : result.actualParams?.size ?? firstParams?.size,
         n: outputIds.length,
       }
     })()
@@ -6335,7 +6352,7 @@ async function executeTask(taskId: string) {
     const partialImageIdsToClean = latestBeforeUpdate.streamPartialImageIds || []
     clearOpenAIWatchdogTimer(taskId)
     useStore.getState().setTaskStreamPreview(taskId)
-    updateTaskInStore(taskId, {
+    updateExecutingTask({
       outputImages: outputIds,
       transparentOriginalImages: transparentOriginalImageIds,
       outputErrors: result.failedRequests?.length ? result.failedRequests : undefined,
@@ -6344,6 +6361,7 @@ async function executeTask(taskId: string) {
       actualParams,
       actualParamsByImage,
       revisedPromptByImage: revisedPromptByImage && Object.keys(revisedPromptByImage).length > 0 ? revisedPromptByImage : undefined,
+      ...(result.actualCost !== undefined ? { actualCost: result.actualCost } : {}),
       status: 'done',
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
@@ -6352,6 +6370,17 @@ async function executeTask(taskId: string) {
       compositeRecoverable: false,
       imageStatusRecoverable: false,
     })
+    if (backendManagesTaskRecord && result.taskRecordQueued && project?.syncPending) {
+      const current = useStore.getState().projects.find((item) => item.id === project.id)
+      if (current) {
+        const hasArchiveSync = onlineProjectSyncTimers.has(current.id) || onlineProjectSyncQueues.has(current.id)
+        const updated = { ...current, syncPending: hasArchiveSync ? current.syncPending : false }
+        useStore.setState((state) => ({
+          projects: state.projects.map((item) => item.id === current.id ? updated : item),
+        }))
+        queueProjectSave(updated)
+      }
+    }
     void deleteUnreferencedImageIds(partialImageIdsToClean)
 
     const failedCount = result.failedRequests?.length ?? 0
@@ -6382,7 +6411,7 @@ async function executeTask(taskId: string) {
       ? { requestId: latestTask.compositeRequestId, statusUrl: latestTask.compositeStatusUrl }
       : null)
     if (latestTask.apiProvider === 'fal' && latestFalRequestInfo && isFalConnectionRecoverableError(err)) {
-      updateTaskInStore(taskId, {
+      updateExecutingTask({
         status: 'error',
         error: '与 fal.ai 的连接已断开，之后会继续查询任务结果。',
         falRequestId: latestFalRequestInfo.requestId,
@@ -6393,7 +6422,7 @@ async function executeTask(taskId: string) {
       })
       scheduleFalRecovery(taskId)
     } else if ((latestTask.apiProvider ?? 'openai') !== 'fal' && latestTask.imageStatusRequestIds?.length && isFalConnectionRecoverableError(err)) {
-      updateTaskInStore(taskId, {
+      updateExecutingTask({
         status: 'error',
         error: '请求连接已断开，之后会继续查询图片状态。',
         imageStatusRecoverable: true,
@@ -6402,7 +6431,7 @@ async function executeTask(taskId: string) {
       })
       scheduleImageStatusRecovery(taskId)
     } else if (isCompositeRequest && latestCompositeRequestInfo && isFalConnectionRecoverableError(err)) {
-      updateTaskInStore(taskId, {
+      updateExecutingTask({
         status: 'error',
         error: 'Composite 请求连接已断开，之后会继续查询任务结果。',
         compositeRequestId: latestCompositeRequestInfo.requestId,
@@ -6413,7 +6442,7 @@ async function executeTask(taskId: string) {
       })
       scheduleCompositeRecovery(taskId)
     } else if (latestCustomTaskInfo && isFalConnectionRecoverableError(err)) {
-      updateTaskInStore(taskId, {
+      updateExecutingTask({
         status: 'error',
         error: '与自定义异步任务的连接已断开，之后会继续查询任务结果。',
         customTaskId: latestCustomTaskInfo.taskId,
@@ -6438,7 +6467,7 @@ async function executeTask(taskId: string) {
       if (networkErrorHint && !errorMessage.includes(IMAGE_FETCH_CORS_HINT)) {
         errorMessage += `\n${networkErrorHint}`
       }
-      updateTaskInStore(taskId, {
+      updateExecutingTask({
         status: 'error',
         error: errorMessage,
         ...getRawErrorPayload(err),
@@ -6475,7 +6504,7 @@ function normalizeFavoritePatch(task: TaskRecord, patch: Partial<TaskRecord>, de
   return patch
 }
 
-export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
+export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>, syncOnline = true) {
   const state = useStore.getState()
   const { tasks, setTasks } = state
   const updated = tasks.map((t) =>
@@ -6484,7 +6513,7 @@ export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
   const task = updated.find((t) => t.id === taskId)
   setTasks(updated)
   maybeOpenSupportPrompt(tasks, updated, taskId)
-  return task ? putTask(task) : undefined
+  return task ? putTask(task, syncOnline) : undefined
 }
 
 function normalizeFavoriteCollectionIds(ids: unknown) {

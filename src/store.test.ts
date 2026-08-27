@@ -754,6 +754,7 @@ describe('mask draft lifecycle in store actions', () => {
       actualParamsList: [{ size: '1024x1024', output_format: 'png', n: 1 }],
       revisedPrompts: ['后端改写'],
       imagesStoredOnline: true,
+      taskRecordQueued: true,
     })
     try {
       const settings = normalizeSettings(useStore.getState().settings)
@@ -777,9 +778,9 @@ describe('mask draft lifecycle in store actions', () => {
       await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
       const generatedTask = useStore.getState().tasks[0]
       expect(callBackendImageApi).toHaveBeenCalledWith(expect.objectContaining({
-        projectId,
-        projectTitle: '后端在线生成',
-        taskId: generatedTask.id,
+        project: expect.objectContaining({ id: projectId, title: '后端在线生成' }),
+        task: expect.objectContaining({ id: generatedTask.id, status: 'running' }),
+        manageTaskRecord: true,
         apiKey: 'oidc-key',
         provider: 'openai',
         model: 'gpt-image-2',
@@ -788,10 +789,7 @@ describe('mask draft lifecycle in store actions', () => {
       }))
       expect(callImageApi).not.toHaveBeenCalled()
       expect(uploadOnlineProjectImage).not.toHaveBeenCalled()
-      await vi.waitFor(() => expect(saveOnlineProjectTask).toHaveBeenLastCalledWith(
-        expect.objectContaining({ id: projectId }),
-        expect.objectContaining({ id: generatedTask.id, status: 'done' }),
-      ))
+      expect(saveOnlineProjectTask).not.toHaveBeenCalled()
       expect(uploadOnlineProject).not.toHaveBeenCalled()
       expect(useStore.getState().projects.find((item) => item.id === projectId)?.syncPending).toBe(false)
       expect(generatedTask.outputImages).toHaveLength(1)
@@ -816,6 +814,7 @@ describe('mask draft lifecycle in store actions', () => {
       return {
         images: ['data:image/png;base64,Y29tcG9zaXRl'],
         imagesStoredOnline: false,
+        actualCost: 0.0375,
       }
     })
     try {
@@ -840,6 +839,7 @@ describe('mask draft lifecycle in store actions', () => {
       expect(useStore.getState().tasks[0]).toMatchObject({
         compositeRequestId: 'composite-request-1',
         compositeStatusUrl: 'https://provider.example/status/composite-request-1',
+        actualCost: 0.0375,
       })
     } finally {
       authState.accessToken = null
@@ -935,6 +935,7 @@ describe('mask draft lifecycle in store actions', () => {
         actualParamsList: [{ output_format: 'png', n: 1 }],
         revisedPrompts: [],
         imagesStoredOnline: true,
+        taskRecordQueued: true,
       }
     })
     try {
@@ -952,7 +953,9 @@ describe('mask draft lifecycle in store actions', () => {
 
       await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
       expect(callBackendImageApi).toHaveBeenCalledWith(expect.objectContaining({
-        projectId,
+        project: expect.objectContaining({ id: projectId }),
+        task: expect.objectContaining({ projectId, status: 'running' }),
+        manageTaskRecord: true,
         apiMode: 'images',
         apiKey: 'oidc-key',
         model: 'gpt-image-2',
@@ -1555,6 +1558,7 @@ describe('interrupted OpenAI running tasks', () => {
       actualParamsList: [{ ...DEFAULT_PARAMS }],
       revisedPrompts: [],
       imagesStoredOnline: false,
+      actualCost: 0.125,
     })
     useStore.setState({
       settings: normalizeSettings(DEFAULT_SETTINGS),
@@ -1577,6 +1581,7 @@ describe('interrupted OpenAI running tasks', () => {
       error: null,
       rawImageUrls: ['https://images.example/recovered.png'],
       compositeRecoverable: false,
+      actualCost: 0.125,
     })
   })
 })

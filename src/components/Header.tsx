@@ -67,6 +67,11 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
     setEditingProjectName(false)
   }
 
+  const cancelProjectName = () => {
+    setProjectName(activeProject?.title ?? '')
+    setEditingProjectName(false)
+  }
+
   const openHome = () => {
     onNavigate?.('workspace')
     setActiveProjectId(null)
@@ -168,22 +173,43 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
                   {activeProject ? (
                     <div className="flex min-w-0 items-center gap-1 sm:hidden">
                       {editingProjectName ? (
-                        <input
-                          autoFocus
-                          value={projectName}
-                          maxLength={36}
-                          onChange={(event) => setProjectName(event.target.value)}
-                          onBlur={commitProjectName}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') commitProjectName()
-                            if (event.key === 'Escape') {
-                              setProjectName(activeProject.title)
-                              setEditingProjectName(false)
-                            }
-                          }}
-                          className="h-8 min-w-0 max-w-40 rounded border border-gray-300 bg-white px-2 text-sm font-semibold text-gray-900 outline-none dark:border-white/[0.16] dark:bg-gray-900 dark:text-gray-100"
-                          aria-label="项目名称"
-                        />
+                        <div className="flex min-w-0 flex-1 items-center gap-1">
+                          <input
+                            autoFocus
+                            value={projectName}
+                            maxLength={36}
+                            onChange={(event) => setProjectName(event.target.value)}
+                            onBlur={commitProjectName}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') commitProjectName()
+                              if (event.key === 'Escape') cancelProjectName()
+                            }}
+                            className="h-8 min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 text-sm font-semibold text-gray-900 outline-none dark:border-white/[0.16] dark:bg-gray-900 dark:text-gray-100"
+                            aria-label="项目名称"
+                          />
+                          <div className="flex shrink-0 items-center gap-0.5">
+                            <button
+                              type="button"
+                              data-project-name-action
+                              onPointerDown={(event) => event.preventDefault()}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={commitProjectName}
+                              className="rounded px-1.5 py-1 text-xs font-medium text-green-600 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-500/10"
+                            >
+                              确定
+                            </button>
+                            <button
+                              type="button"
+                              data-project-name-action
+                              onPointerDown={(event) => event.preventDefault()}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={cancelProjectName}
+                              className="rounded px-1.5 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/[0.08]"
+                            >
+                              取消
+                            </button>
+                          </div>
+                        </div>
                       ) : (
                         <span className="max-w-36 truncate text-[17px] font-bold text-gray-800 dark:text-gray-100" title={activeProject.title}>{activeProject.title}</span>
                       )}
@@ -249,22 +275,43 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
           {activeProjectTitle && !showFavoriteCollectionTitle && (
             <div className="absolute left-1/2 top-1/2 hidden max-w-[30%] -translate-x-1/2 -translate-y-1/2 sm:flex">
               {activeProject && editingProjectName ? (
-                <input
-                  autoFocus
-                  value={projectName}
-                  maxLength={36}
-                  onChange={(event) => setProjectName(event.target.value)}
-                  onBlur={commitProjectName}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') commitProjectName()
-                    if (event.key === 'Escape') {
-                      setProjectName(activeProject.title)
-                      setEditingProjectName(false)
-                    }
-                  }}
-                  className="h-8 min-w-48 rounded border border-gray-300 bg-white px-2 text-center text-sm font-semibold text-gray-900 outline-none dark:border-white/[0.16] dark:bg-gray-900 dark:text-gray-100"
-                  aria-label="项目名称"
-                />
+                <div className="flex max-w-full items-center gap-1">
+                  <input
+                    autoFocus
+                    value={projectName}
+                    maxLength={36}
+                    onChange={(event) => setProjectName(event.target.value)}
+                    onBlur={commitProjectName}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') commitProjectName()
+                      if (event.key === 'Escape') cancelProjectName()
+                    }}
+                    className="h-8 min-w-0 w-48 flex-1 rounded border border-gray-300 bg-white px-2 text-center text-sm font-semibold text-gray-900 outline-none dark:border-white/[0.16] dark:bg-gray-900 dark:text-gray-100"
+                    aria-label="项目名称"
+                  />
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <button
+                      type="button"
+                      data-project-name-action
+                      onPointerDown={(event) => event.preventDefault()}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={commitProjectName}
+                      className="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-500/10"
+                    >
+                      确定
+                    </button>
+                    <button
+                      type="button"
+                      data-project-name-action
+                      onPointerDown={(event) => event.preventDefault()}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={cancelProjectName}
+                      className="rounded px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/[0.08]"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <div className="flex min-w-0 items-center gap-1">
                   <div className="truncate rounded px-2 py-1 text-sm font-semibold text-gray-700 dark:text-gray-300" title={activeProjectTitle}>

@@ -4,6 +4,7 @@ import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
 import { formatImageRatio } from '../lib/size'
+import { formatActualCost } from '../lib/cost'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyImageSourceToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
@@ -1028,6 +1029,13 @@ export default function DetailModal() {
                   <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
                     <DetailParamValue task={task} paramKey="n" className="font-medium" />
                   </div>
+                </div>
+              )}
+              {task.actualCost !== undefined && (
+                <div className="bg-amber-50 dark:bg-amber-400/10 rounded-lg px-3 py-2 min-w-0 overflow-hidden">
+                  <span className="text-amber-700/70 dark:text-amber-300/70">实际费用</span>
+                  <br />
+                  <span className="font-mono font-medium tabular-nums text-amber-800 dark:text-amber-200">{formatActualCost(task.actualCost)}</span>
                 </div>
               )}
             </div>

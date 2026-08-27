@@ -1,6 +1,8 @@
+import { useRef } from 'react'
 import type { ApiProfile, TaskParams } from '../../types'
 import { dismissAllTooltips } from '../../lib/tooltipDismiss'
 import Select from '../Select'
+import SizePickerModal from '../SizePickerModal'
 import ButtonTooltip from './buttonTooltip'
 
 interface HintTooltipState {
@@ -51,7 +53,10 @@ export default function InputParamsPanel({
   streamConcurrentHint,
   sizeHint,
   qualityHint,
-  onOpenSizePicker,
+  showSizePicker,
+  onToggleSizePicker,
+  onCloseSizePicker,
+  onPreviewSizeChange,
 }: {
   cols: string
   params: TaskParams
@@ -92,11 +97,16 @@ export default function InputParamsPanel({
   streamConcurrentHint: HintTooltipState
   sizeHint: HintTooltipState
   qualityHint: HintTooltipState
-  onOpenSizePicker: () => void
+  showSizePicker: boolean
+  onToggleSizePicker: () => void
+  onCloseSizePicker: () => void
+  onPreviewSizeChange: (size: string) => void
 }) {
+  const sizeButtonRef = useRef<HTMLButtonElement>(null)
+
   return (
     <div className={`grid ${cols} gap-2 text-xs flex-1`}>
-      <label
+      <div
         className="relative flex flex-col gap-0.5"
         onMouseEnter={sizeHint.show}
         onMouseLeave={sizeHint.hide}
@@ -107,18 +117,29 @@ export default function InputParamsPanel({
       >
         <span className="text-gray-400 dark:text-gray-500 ml-1">尺寸</span>
         <button
+          ref={sizeButtonRef}
           type="button"
-          onClick={() => { dismissAllTooltips(); onOpenSizePicker() }}
+          onClick={() => { dismissAllTooltips(); onToggleSizePicker() }}
           className="px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] focus:outline-none text-xs text-left transition-all duration-200 shadow-sm font-mono"
           title="选择尺寸"
         >
           {displaySize}
         </button>
+        {showSizePicker && (
+          <SizePickerModal
+            anchorRef={sizeButtonRef}
+            currentSize={displaySize}
+            onSelect={(size) => setParams({ size })}
+            onPreviewSizeChange={onPreviewSizeChange}
+            onClose={onCloseSizePicker}
+            allowAuto={!isFalTextToImage}
+          />
+        )}
         <ButtonTooltip
           visible={isFalTextToImage && sizeHint.visible}
           text={<>fal.ai 的文生图模式不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 参数</>}
         />
-      </label>
+      </div>
       <label
         className="relative flex flex-col gap-0.5"
         onMouseEnter={qualityHint.show}

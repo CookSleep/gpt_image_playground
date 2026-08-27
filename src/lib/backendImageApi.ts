@@ -1,12 +1,15 @@
-import type { TaskParams } from '../types'
+import type { Project, TaskParams, TaskRecord } from '../types'
 import { authFetch } from '../auth/api'
 import { createImageStatusRequestId, type CallApiResult } from './imageApiShared'
+import { getOnlineProjectRecord } from './onlineProjects'
 
 interface BackendGenerationResponse {
   images?: unknown
   image_ids?: unknown
   actual_params?: unknown
+  actual_params_list?: unknown
   revised_prompts?: unknown
+  task_record_queued?: unknown
 }
 
 const IMAGE_LOG_PREVIEW_CHARS = 120
@@ -47,9 +50,9 @@ function formatImageApiLogValue(value: unknown, key = ''): unknown {
 }
 
 export async function callBackendImageApi(options: {
-  projectId: string
-  projectTitle: string
-  taskId: string
+  project: Project
+  task: TaskRecord
+  manageTaskRecord?: boolean
   apiKey: string
   provider: 'openai'
   model: string
@@ -79,8 +82,16 @@ export async function callBackendImageApi(options: {
     ? '/v1/images/edits'
     : '/v1/images/generations'
   const requestBody = {
-    task_id: options.taskId,
-    project_title: options.projectTitle,
+    task_id: options.task.id,
+    project_title: options.project.title,
+    ...(options.manageTaskRecord ? {
+      project: getOnlineProjectRecord(options.project),
+      task: {
+        ...options.task,
+        imageStatusRequestIds: requestIds,
+        imageStatusRecoverable: false,
+      },
+    } : {}),
     api_key: options.apiKey,
     provider: options.provider,
     model: options.model,
@@ -94,11 +105,11 @@ export async function callBackendImageApi(options: {
     mask: options.maskDataUrl,
   }
   console.log('[BackendImageApi] 请求内容', {
-    endpoint: `/api/v1/projects/${encodeURIComponent(options.projectId)}/${endpointType}`,
+    endpoint: `/api/v1/projects/${encodeURIComponent(options.project.remoteId ?? options.project.id)}/${endpointType}`,
     upstreamPath,
     body: formatImageApiLogValue(requestBody),
   })
-  const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(options.projectId)}/${endpointType}`, {
+  const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(options.project.remoteId ?? options.project.id)}/${endpointType}`, {
     method: 'POST',
     body: JSON.stringify(requestBody),
   })
@@ -116,6 +127,9 @@ export async function callBackendImageApi(options: {
   const actualParams = data?.actual_params && typeof data.actual_params === 'object'
     ? data.actual_params as Partial<TaskParams>
     : undefined
+  const actualParamsList = Array.isArray(data?.actual_params_list)
+    ? data.actual_params_list.map((item) => item && typeof item === 'object' ? item as Partial<TaskParams> : undefined)
+    : images.map(() => actualParams)
   const revisedPrompts = Array.isArray(data?.revised_prompts)
     ? data.revised_prompts.map((item) => typeof item === 'string' ? item : undefined)
     : undefined
@@ -126,9 +140,10 @@ export async function callBackendImageApi(options: {
   return {
     images,
     actualParams,
-    actualParamsList: images.map(() => actualParams),
+    actualParamsList,
     revisedPrompts,
     imagesStoredOnline: true,
     imageIds,
+    taskRecordQueued: data?.task_record_queued === true,
   }
 }
