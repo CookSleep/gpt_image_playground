@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -25,6 +26,16 @@ type projectGenerationStoreStub struct {
 	projectTitle string
 	image        models.ProjectImage
 	data         []byte
+	taskRecords  chan savedGenerationTaskRecord
+}
+
+type savedGenerationTaskRecord struct {
+	userID       string
+	projectID    string
+	projectTitle string
+	taskID       string
+	project      json.RawMessage
+	task         json.RawMessage
 }
 
 func (s *projectGenerationStoreStub) Ensure(_ context.Context, userID, id, title string) error {
@@ -41,6 +52,16 @@ func (s *projectGenerationStoreStub) SaveImage(_ context.Context, userID string,
 	s.image = image
 	s.data = append([]byte(nil), data...)
 	return &image, nil
+}
+
+func (s *projectGenerationStoreStub) SaveTaskRecord(_ context.Context, userID, id, title, taskID string, project, task json.RawMessage) (*models.OnlineProject, error) {
+	if s.taskRecords != nil {
+		s.taskRecords <- savedGenerationTaskRecord{
+			userID: userID, projectID: id, projectTitle: title, taskID: taskID,
+			project: append(json.RawMessage(nil), project...), task: append(json.RawMessage(nil), task...),
+		}
+	}
+	return &models.OnlineProject{}, nil
 }
 
 type imageProviderRegistryStub struct {
@@ -72,13 +93,23 @@ func newProjectGenerationRouter(store projectGenerationStore, transport http.Rou
 }
 
 func generationRequestBody(inputImages []string, mask string) io.Reader {
+	projectID := "86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8"
 	data, _ := json.Marshal(map[string]any{
 		"task_id":       "task-a",
 		"project_title": "在线项目",
-		"api_key":       "oidc-api-key",
-		"model":         "gpt-image-2",
-		"request_ids":   []string{"img-request-a"},
-		"prompt":        "画一张图",
+		"project": map[string]any{
+			"id": projectID, "title": "在线项目", "storage": "online", "remoteId": projectID,
+		},
+		"task": map[string]any{
+			"id": "task-a", "projectId": projectID, "prompt": "画一张图",
+			"params":        map[string]any{"size": "1024x1024", "quality": "medium", "output_format": "png", "moderation": "auto", "n": 1},
+			"inputImageIds": []string{}, "outputImages": []string{}, "status": "running",
+			"error": nil, "createdAt": 1000, "finishedAt": nil, "elapsed": nil,
+		},
+		"api_key":     "oidc-api-key",
+		"model":       "gpt-image-2",
+		"request_ids": []string{"img-request-a"},
+		"prompt":      "画一张图",
 		"params": map[string]any{
 			"size": "1024x1024", "quality": "medium", "output_format": "png", "moderation": "auto", "n": 1,
 		},
@@ -103,8 +134,27 @@ func TestSanitizeGenerationLogValueRedactsSecretsAndImageData(t *testing.T) {
 	}
 }
 
+func TestBuildGenerationTaskRecordStoresFailure(t *testing.T) {
+	req := projectGenerationRequest{
+		TaskID:     "task-a",
+		Task:       json.RawMessage(`{"id":"task-a","status":"running","error":null,"createdAt":1000,"finishedAt":null,"elapsed":null}`),
+		RequestIDs: []string{"request-a"},
+	}
+	record, err := buildGenerationTaskRecord(req, nil, http.StatusBadGateway, "provider failed", time.UnixMilli(2500))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var task map[string]any
+	if err := json.Unmarshal(record, &task); err != nil {
+		t.Fatal(err)
+	}
+	if task["status"] != "error" || task["error"] != "provider failed" || task["elapsed"] != float64(1500) {
+		t.Fatalf("unexpected failure task: %s", record)
+	}
+}
+
 func TestProjectGenerationHandlerGeneratesAndSavesBeforeReturning(t *testing.T) {
-	store := &projectGenerationStoreStub{}
+	store := &projectGenerationStoreStub{taskRecords: make(chan savedGenerationTaskRecord, 1)}
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		store.events = append(store.events, "upstream")
 		if req.URL.String() != "https://provider.example/v1/images/generations" {
@@ -153,6 +203,27 @@ func TestProjectGenerationHandlerGeneratesAndSavesBeforeReturning(t *testing.T) 
 	}
 	if !strings.Contains(w.Body.String(), `"images":["`+dataURL+`"]`) || !strings.Contains(w.Body.String(), `"revised_prompts":["rewritten"]`) {
 		t.Fatalf("unexpected response body: %s", w.Body.String())
+	}
+	select {
+	case saved := <-store.taskRecords:
+		if saved.userID != "user-a" || saved.projectID != "86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8" || saved.projectTitle != "在线项目" || saved.taskID != "task-a" {
+			t.Fatalf("unexpected task metadata: %#v", saved)
+		}
+		var task map[string]any
+		if err := json.Unmarshal(saved.task, &task); err != nil {
+			t.Fatal(err)
+		}
+		outputImages, _ := task["outputImages"].([]any)
+		actualParamsByImage, _ := task["actualParamsByImage"].(map[string]any)
+		revisedPromptByImage, _ := task["revisedPromptByImage"].(map[string]any)
+		if task["status"] != "done" || task["error"] != nil || len(outputImages) != 1 || outputImages[0] != expectedID {
+			t.Fatalf("unexpected saved task: %s", saved.task)
+		}
+		if actualParamsByImage[expectedID] == nil || revisedPromptByImage[expectedID] != "rewritten" {
+			t.Fatalf("missing per-image generation metadata: %s", saved.task)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("generation task record was not saved asynchronously")
 	}
 }
 

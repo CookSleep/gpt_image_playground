@@ -35,6 +35,20 @@ export interface OnlineProjectImageResponse {
   updated_at: string
 }
 
+export function getOnlineProjectRecord(project: Project) {
+  const remoteId = project.remoteId ?? project.id
+  return {
+    id: remoteId,
+    title: project.title,
+    initialPrompt: project.initialPrompt,
+    storage: project.storage,
+    remoteId,
+    defaultFavoriteCollectionId: project.defaultFavoriteCollectionId,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+  }
+}
+
 export function getTaskReferencedImageIds(task: TaskRecord) {
   return [
     ...task.inputImageIds,
@@ -170,20 +184,10 @@ export async function uploadOnlineProject(id: string, title: string, archive: Bl
 
 export async function saveOnlineProjectTask(project: Project, task: TaskRecord): Promise<OnlineProjectResponse> {
   const remoteId = project.remoteId ?? project.id
-  const projectRecord = {
-    id: remoteId,
-    title: project.title,
-    initialPrompt: project.initialPrompt,
-    storage: project.storage,
-    remoteId,
-    defaultFavoriteCollectionId: project.defaultFavoriteCollectionId,
-    createdAt: project.createdAt,
-    updatedAt: project.updatedAt,
-  }
   const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(remoteId)}/tasks/${encodeURIComponent(task.id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ project_title: project.title, project: projectRecord, task }),
+    body: JSON.stringify({ project_title: project.title, project: getOnlineProjectRecord(project), task }),
   })
   if (!resp.ok) {
     const data = await resp.json().catch(() => null) as { message?: string } | null

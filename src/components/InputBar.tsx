@@ -16,7 +16,6 @@ import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { useHintTooltip } from '../hooks/useHintTooltip'
 import { useTooltip } from '../hooks/useTooltip'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getTaskOutputImageZipEntries } from '../lib/downloadImages'
-import SizePickerModal from './SizePickerModal'
 import Select from './Select'
 import ViewportTooltip from './ViewportTooltip'
 import { CloseIcon, CollectionManageIcon, OpenAIIcon } from './icons'
@@ -943,6 +942,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const [imageHintId, setImageHintId] = useState<string | null>(null)
   const [mobileCollapsed, setMobileCollapsed] = useState(false)
   const [showSizePicker, setShowSizePicker] = useState(false)
+  const [sizePickerPreview, setSizePickerPreview] = useState<string | null>(null)
   const [showMobileUploadMenu, setShowMobileUploadMenu] = useState(false)
   const [showMaterialPicker, setShowMaterialPicker] = useState(false)
   const [maskPreviewUrl, setMaskPreviewUrl] = useState('')
@@ -1111,8 +1111,9 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     }
 
     const controller = new AbortController()
+    const pricingSize = sizePickerPreview || displaySize
     const body: Record<string, unknown> = {
-      image_size: displaySize === 'auto' ? '1024x1024' : displaySize,
+      image_size: pricingSize === 'auto' ? '1024x1024' : pricingSize,
       num_images: Math.max(1, Math.min(outputImageLimit, Number(params.n) || 1)),
     }
     if (params.quality !== 'auto') body.quality = params.quality
@@ -1135,7 +1136,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       })
 
     return () => controller.abort()
-  }, [estimateApiKey, estimateModel, inputMode, displaySize, outputImageLimit, params.n, params.quality])
+  }, [estimateApiKey, estimateModel, inputMode, displaySize, sizePickerPreview, outputImageLimit, params.n, params.quality])
 
   const qualityOptions = isFalProvider
     ? [
@@ -1152,14 +1153,22 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
   const modelOptions = useMemo(() => {
     if (models.length > 0) {
-      return models.map((m) => ({
-        label: m.id === 'gpt-image-2' ? 'GPT Image 2' : m.id,
-        value: m.id,
-        ...(m.id === 'gpt-image-2' ? { description: 'OpenAI', icon: MODEL_ICON } : {}),
-      }))
+      return models.map((m) => {
+        const isOpenAIModel = /^(openai|gpt)/i.test(m.id)
+        return {
+          label: m.id === 'gpt-image-2' ? 'GPT Image 2' : m.id,
+          value: m.id,
+          ...(isOpenAIModel ? { description: 'OpenAI', icon: MODEL_ICON } : {}),
+        }
+      })
     }
     if (resourceApiKey) return [{ label: '当前 Key 没有可用模型', value: '' }]
-    return [{ label: selectedModel || 'GPT Image 2', value: selectedModel || 'gpt-image-2', description: 'OpenAI', icon: MODEL_ICON }]
+    const fallbackModel = selectedModel || 'gpt-image-2'
+    return [{
+      label: fallbackModel === 'gpt-image-2' ? 'GPT Image 2' : fallbackModel,
+      value: fallbackModel,
+      ...(/^(openai|gpt)/i.test(fallbackModel) ? { description: 'OpenAI', icon: MODEL_ICON } : {}),
+    }]
   }, [models, resourceApiKey, selectedModel])
   const handleApiKeyChange = useCallback((value: string) => {
     const next = String(value)
@@ -2327,7 +2336,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     )
   }
 
-  const renderParams = (cols: string) => (
+  const renderParams = (cols: string, mobileLayout = false) => (
     <InputParamsPanel
       cols={cols}
       params={params}
@@ -2368,7 +2377,16 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       streamConcurrentHint={streamConcurrentHint}
       sizeHint={sizeHint}
       qualityHint={qualityHint}
-      onOpenSizePicker={() => setShowSizePicker(true)}
+      showSizePicker={showSizePicker && mobileLayout === isMobile}
+      onToggleSizePicker={() => {
+        setSizePickerPreview(null)
+        setShowSizePicker((value) => !value)
+      }}
+      onCloseSizePicker={() => {
+        setSizePickerPreview(null)
+        setShowSizePicker(false)
+      }}
+      onPreviewSizeChange={setSizePickerPreview}
     />
   )
 
@@ -2385,10 +2403,10 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
     </div>
   )
 
-  const priceEstimateLabel = priceEstimateLoading
-    ? '预估中...'
-    : priceEstimate
+  const priceEstimateLabel = priceEstimate
     ? `≈ $${priceEstimate}`
+    : priceEstimateLoading
+    ? '预估中...'
     : priceEstimateError || '预估 --'
 
   const showFavoriteCollectionBatchBar = inputMode !== 'agent' && inCollectionOverview && selectedFavoriteCollectionIds.length > 0
@@ -2397,15 +2415,6 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   return (
     <>
       <DragUploadOverlay visible={isDragging} atImageLimit={atImageLimit} maxImages={API_MAX_IMAGES} />
-
-      {showSizePicker && (
-        <SizePickerModal
-          currentSize={isFalTextToImage && params.size === 'auto' ? DEFAULT_FAL_IMAGE_SIZE : params.size}
-          onSelect={(size) => setParams({ size })}
-          onClose={() => setShowSizePicker(false)}
-          allowAuto={!isFalTextToImage}
-        />
-      )}
 
       <div
         data-input-bar
@@ -2726,6 +2735,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                 >
                   <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig) && submitHover} text={submitTooltipText} />
                   <button
+                    data-submit-button
                     onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : showToast(missingSubmitConfigText, 'error')}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
                     className={`inline-flex min-w-max flex-nowrap items-center justify-center whitespace-nowrap p-2.5 rounded-xl transition-all shadow-sm hover:shadow ${
@@ -2756,7 +2766,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
             <div className="sm:hidden flex flex-col gap-2">
               <div className={`collapse-section${mobileCollapsed ? ' collapsed' : ''}`}>
                 <div className="collapse-inner">
-                  {inputMode === 'gallery' && renderParams('grid-cols-2')}
+                  {inputMode === 'gallery' && renderParams('grid-cols-2', true)}
                   <div className="h-2" />
                 </div>
               </div>
@@ -2851,6 +2861,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                 >
                   <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig) && submitHover} text={submitTooltipText} />
                   <button
+                    data-submit-button
                     onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : showToast(missingSubmitConfigText, 'error')}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
                     aria-label={submitButtonAriaLabel}

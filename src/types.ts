@@ -207,6 +207,8 @@ export interface TaskRecord {
   compositeStatusUrl?: string
   /** Composite 任务连接断开后是否等待自动恢复 */
   compositeRecoverable?: boolean
+  /** 上游状态接口返回的实际费用（美元） */
+  actualCost?: number
   /** 图片状态查询 request_id 列表，用于重启后继续查询结果 */
   imageStatusRequestIds?: string[]
   /** 图片状态任务是否等待自动恢复 */

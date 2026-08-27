@@ -12,6 +12,7 @@ interface CompositeStatusResponse {
   status?: unknown
   message?: unknown
   error?: unknown
+  actual_cost?: unknown
 }
 
 interface CompositeResultResponse {
@@ -111,6 +112,11 @@ function getFailureMessage(status: CompositeStatusResponse) {
   return 'Composite 异步任务失败'
 }
 
+function getActualCost(value: unknown) {
+  const cost = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
+  return Number.isFinite(cost) && cost >= 0 ? cost : undefined
+}
+
 async function readCompositeTaskResult(options: {
   apiKey: string
   model: string
@@ -121,6 +127,7 @@ async function readCompositeTaskResult(options: {
   const resultPath = `/api/v1/model/${modelPath}/requests/${encodeURIComponent(options.requestId)}`
   const status = await requestJson(`${resultPath}/status`, options.apiKey) as CompositeStatusResponse
   const statusText = typeof status.status === 'string' ? status.status.trim().toUpperCase() : ''
+  const actualCost = getActualCost(status.actual_cost)
   if (!statusText) throw new Error('Composite 上游返回了无效的任务状态')
   if (statusText === 'FAILED' || statusText === 'CANCELED') throw new Error(getFailureMessage(status))
   if (statusText !== 'COMPLETED') return null
@@ -142,6 +149,7 @@ async function readCompositeTaskResult(options: {
     actualParamsList: images.map(() => ({ ...options.params, n: images.length })),
     revisedPrompts: images.map(() => undefined),
     imagesStoredOnline: false,
+    ...(actualCost !== undefined ? { actualCost } : {}),
   }
 }
 

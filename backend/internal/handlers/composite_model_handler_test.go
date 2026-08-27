@@ -51,7 +51,7 @@ func TestCompositeModelHandlerForwardsAsyncRequests(t *testing.T) {
 		if req.Method != http.MethodGet || req.URL.String() != "https://provider.example/api/v1/model/openai/gpt-image-2/requests/request-1/status?verbose=true" {
 			t.Fatalf("unexpected status request: %s %s", req.Method, req.URL)
 		}
-		return &http.Response{StatusCode: http.StatusBadRequest, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"message":"invalid request"}`)), Request: req}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"status":"COMPLETED","actual_cost":0.0375}`)), Request: req}, nil
 	})
 	r := newCompositeModelRouter(transport, true)
 
@@ -70,7 +70,7 @@ func TestCompositeModelHandlerForwardsAsyncRequests(t *testing.T) {
 	status.Header.Set("User-Agent", "gpt-image-playground-browser/1.0")
 	statusResponse := httptest.NewRecorder()
 	r.ServeHTTP(statusResponse, status)
-	if statusResponse.Code != http.StatusBadRequest || statusResponse.Body.String() != `{"message":"invalid request"}` {
+	if statusResponse.Code != http.StatusOK || statusResponse.Body.String() != `{"status":"COMPLETED","actual_cost":0.0375}` {
 		t.Fatalf("unexpected status response: status=%d body=%s", statusResponse.Code, statusResponse.Body.String())
 	}
 }

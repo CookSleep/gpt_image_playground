@@ -1,11 +1,39 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_PARAMS } from '../types'
+import { DEFAULT_PARAMS, type Project, type TaskRecord } from '../types'
 import { authFetch } from '../auth/api'
 import { callBackendImageApi } from './backendImageApi'
 
 vi.mock('../auth/api', () => ({
   authFetch: vi.fn(),
 }))
+
+function project(): Project {
+  return {
+    id: 'project/a',
+    title: '项目 A',
+    initialPrompt: '画一张图',
+    storage: 'online',
+    remoteId: 'project/a',
+    createdAt: 1,
+    updatedAt: 1,
+  }
+}
+
+function task(): TaskRecord {
+  return {
+    id: 'task-a',
+    projectId: 'project/a',
+    prompt: '画一张图',
+    params: { ...DEFAULT_PARAMS },
+    inputImageIds: [],
+    outputImages: [],
+    status: 'running',
+    error: null,
+    createdAt: 1,
+    finishedAt: null,
+    elapsed: null,
+  }
+}
 
 describe('callBackendImageApi', () => {
   beforeEach(() => {
@@ -17,14 +45,16 @@ describe('callBackendImageApi', () => {
       images: ['data:image/png;base64,AAECAw=='],
       image_ids: ['image-a'],
       actual_params: { size: '1024x1024', output_format: 'png', n: 1 },
+      actual_params_list: [{ size: '1024x1024', output_format: 'png', n: 1 }],
       revised_prompts: ['rewritten'],
+      task_record_queued: true,
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
 
     const requests: Array<{ requestId: string; requestIndex?: number }> = []
     const result = await callBackendImageApi({
-      projectId: 'project/a',
-      projectTitle: '项目 A',
-      taskId: 'task-a',
+      project: project(),
+      task: task(),
+      manageTaskRecord: true,
       apiKey: 'oidc-key',
       provider: 'openai',
       model: 'gpt-image-2',
@@ -53,11 +83,14 @@ describe('callBackendImageApi', () => {
       request_ids: [requests[0].requestId],
       prompt: '画一张图',
       input_images: [],
+      project: expect.objectContaining({ id: 'project/a' }),
+      task: expect.objectContaining({ id: 'task-a', status: 'running' }),
     })
     expect(requests).toHaveLength(1)
     expect(requests[0].requestId).toMatch(/^img_/)
     expect(result).toMatchObject({
       imagesStoredOnline: true,
+      taskRecordQueued: true,
       imageIds: ['image-a'],
       actualParams: { size: '1024x1024', output_format: 'png', n: 1 },
       revisedPrompts: ['rewritten'],
@@ -73,9 +106,9 @@ describe('callBackendImageApi', () => {
     const image = 'data:image/png;base64,aW1hZ2U='
     const mask = 'data:image/png;base64,bWFzaw=='
     await callBackendImageApi({
-      projectId: 'project/a',
-      projectTitle: '项目 A',
-      taskId: 'task-a',
+      project: project(),
+      task: task(),
+      manageTaskRecord: true,
       apiKey: 'oidc-key',
       provider: 'openai',
       model: 'gpt-image-2',
@@ -107,9 +140,9 @@ describe('callBackendImageApi', () => {
     }))
 
     await expect(callBackendImageApi({
-      projectId: 'project-a',
-      projectTitle: '项目 A',
-      taskId: 'task-a',
+      project: { ...project(), id: 'project-a', remoteId: 'project-a' },
+      task: { ...task(), projectId: 'project-a' },
+      manageTaskRecord: true,
       apiKey: 'oidc-key',
       provider: 'openai',
       model: 'gpt-image-2',

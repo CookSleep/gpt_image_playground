@@ -158,6 +158,7 @@ func logGenerationUpstream(method, endpoint string, attempt, status int, body []
 type projectGenerationStore interface {
 	Ensure(ctx context.Context, userID, id, title string) error
 	SaveImage(ctx context.Context, userID string, image models.ProjectImage, data []byte) (*models.ProjectImage, error)
+	SaveTaskRecord(ctx context.Context, userID, id, title, taskID string, project, task json.RawMessage) (*models.OnlineProject, error)
 }
 
 type imageProviderRegistry interface {
@@ -201,6 +202,8 @@ type projectGenerationParams struct {
 type projectGenerationRequest struct {
 	TaskID       string                  `json:"task_id"`
 	ProjectTitle string                  `json:"project_title"`
+	Project      json.RawMessage         `json:"project"`
+	Task         json.RawMessage         `json:"task"`
 	APIKey       string                  `json:"api_key"`
 	Provider     string                  `json:"provider"`
 	Model        string                  `json:"model"`
@@ -231,10 +234,12 @@ type upstreamImageResponse struct {
 }
 
 type projectGenerationResponse struct {
-	Images         []string                `json:"images"`
-	ImageIDs       []string                `json:"image_ids"`
-	ActualParams   projectGenerationParams `json:"actual_params"`
-	RevisedPrompts []string                `json:"revised_prompts"`
+	Images           []string                  `json:"images"`
+	ImageIDs         []string                  `json:"image_ids"`
+	ActualParams     projectGenerationParams   `json:"actual_params"`
+	ActualParamsList []projectGenerationParams `json:"actual_params_list,omitempty"`
+	RevisedPrompts   []string                  `json:"revised_prompts"`
+	TaskRecordQueued bool                      `json:"task_record_queued"`
 }
 
 func validateProjectGenerationRequest(req projectGenerationRequest) error {
@@ -243,6 +248,12 @@ func validateProjectGenerationRequest(req projectGenerationRequest) error {
 	}
 	if strings.TrimSpace(req.ProjectTitle) == "" || utf8.RuneCountInString(req.ProjectTitle) > 120 {
 		return errors.New("project title must be 1-120 characters")
+	}
+	if (len(req.Project) == 0) != (len(req.Task) == 0) {
+		return errors.New("project and task records must be provided together")
+	}
+	if len(req.Task) > 0 && (rawRecordID(req.Project) == "" || rawRecordID(req.Task) != req.TaskID) {
+		return errors.New("valid project and task records required")
 	}
 	if strings.TrimSpace(req.APIKey) == "" || strings.TrimSpace(req.Model) == "" || strings.TrimSpace(req.Prompt) == "" {
 		return errors.New("api_key, model and prompt are required")
@@ -271,6 +282,72 @@ func validateProjectGenerationRequest(req projectGenerationRequest) error {
 		return errors.New("unsupported output format")
 	}
 	return nil
+}
+
+func buildGenerationTaskRecord(req projectGenerationRequest, result *projectGenerationResponse, status int, message string, finishedAt time.Time) (json.RawMessage, error) {
+	var task map[string]any
+	if err := json.Unmarshal(req.Task, &task); err != nil {
+		return nil, fmt.Errorf("decode generation task record: %w", err)
+	}
+	finishedAtMillis := finishedAt.UnixMilli()
+	task["finishedAt"] = finishedAtMillis
+	if createdAt, ok := task["createdAt"].(float64); ok {
+		task["elapsed"] = max(0, finishedAtMillis-int64(createdAt))
+	}
+	task["imageStatusRequestIds"] = req.RequestIDs
+	task["falRecoverable"] = false
+	task["customRecoverable"] = false
+	task["compositeRecoverable"] = false
+	task["imageStatusRecoverable"] = false
+
+	if status < http.StatusOK || status >= http.StatusMultipleChoices || result == nil {
+		task["status"] = "error"
+		task["error"] = message
+		return json.Marshal(task)
+	}
+
+	task["outputImages"] = result.ImageIDs
+	task["actualParams"] = result.ActualParams
+	actualParamsByImage := make(map[string]projectGenerationParams, len(result.ImageIDs))
+	for index, imageID := range result.ImageIDs {
+		params := result.ActualParams
+		if index < len(result.ActualParamsList) {
+			params = result.ActualParamsList[index]
+		}
+		actualParamsByImage[imageID] = params
+	}
+	task["actualParamsByImage"] = actualParamsByImage
+	revisedPromptByImage := make(map[string]string, len(result.ImageIDs))
+	for index, imageID := range result.ImageIDs {
+		if index < len(result.RevisedPrompts) && strings.TrimSpace(result.RevisedPrompts[index]) != "" {
+			revisedPromptByImage[imageID] = result.RevisedPrompts[index]
+		}
+	}
+	if len(revisedPromptByImage) > 0 {
+		task["revisedPromptByImage"] = revisedPromptByImage
+	} else {
+		delete(task, "revisedPromptByImage")
+	}
+	task["status"] = "done"
+	task["error"] = nil
+	return json.Marshal(task)
+}
+
+func (h *ProjectGenerationHandler) saveGenerationTaskRecordAsync(requestCtx context.Context, userID, projectID string, req projectGenerationRequest, result *projectGenerationResponse, status int, message string) {
+	task, err := buildGenerationTaskRecord(req, result, status, message, time.Now())
+	if err != nil {
+		log.Error().Err(err).Str("project_id", projectID).Str("task_id", req.TaskID).Msg("build generation task record failed")
+		return
+	}
+	project := append(json.RawMessage(nil), req.Project...)
+	ctx := context.WithoutCancel(requestCtx)
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if _, err := h.projects.SaveTaskRecord(ctx, userID, projectID, strings.TrimSpace(req.ProjectTitle), req.TaskID, project, task); err != nil {
+			log.Error().Err(err).Str("project_id", projectID).Str("task_id", req.TaskID).Msg("save generation task record failed")
+		}
+	}()
 }
 
 func validateImageStatusRequest(req imageStatusRequest) error {
@@ -543,7 +620,7 @@ func (h *ProjectGenerationHandler) saveGeneratedImage(ctx context.Context, userI
 	return dataURL, imageID, nil
 }
 
-func (h *ProjectGenerationHandler) generateResponses(c *gin.Context, userID, projectID, baseURL string, req projectGenerationRequest) {
+func (h *ProjectGenerationHandler) generateResponses(c *gin.Context, userID, projectID, baseURL string, req projectGenerationRequest) *projectGenerationResponse {
 	items := make([]struct {
 		image  upstreamImageItem
 		params projectGenerationParams
@@ -553,30 +630,30 @@ func (h *ProjectGenerationHandler) generateResponses(c *gin.Context, userID, pro
 		upstreamRequest, err := createUpstreamResponsesRequest(c.Request.Context(), baseURL, c.Request.UserAgent(), req, requestID)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
-			return
+			return nil
 		}
 		logGenerationUpstreamRequest(upstreamRequest.Method, upstreamRequest.URL.String(), 1, nil)
 		upstreamResponse, err := h.client.Do(upstreamRequest)
 		if err != nil {
 			logGenerationUpstream(upstreamRequest.Method, upstreamRequest.URL.String(), 1, 0, nil, err)
 			c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "上游连接中断: " + err.Error()})
-			return
+			return nil
 		}
 		responseData, readErr := io.ReadAll(upstreamResponse.Body)
 		upstreamResponse.Body.Close()
 		logGenerationUpstream(upstreamRequest.Method, upstreamRequest.URL.String(), 1, upstreamResponse.StatusCode, responseData, readErr)
 		if readErr != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "read image provider response failed"})
-			return
+			return nil
 		}
 		if upstreamResponse.StatusCode < http.StatusOK || upstreamResponse.StatusCode >= http.StatusMultipleChoices {
 			c.Data(upstreamResponse.StatusCode, "application/json", responseData)
-			return
+			return nil
 		}
 		var upstream upstreamResponsesResponse
 		if json.Unmarshal(responseData, &upstream) != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "invalid responses API payload"})
-			return
+			return nil
 		}
 		for _, output := range upstream.Output {
 			if output.Type != "image_generation_call" {
@@ -611,11 +688,13 @@ func (h *ProjectGenerationHandler) generateResponses(c *gin.Context, userID, pro
 	}
 	if len(items) == 0 {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "responses API returned no images"})
-		return
+		return nil
 	}
 	result := projectGenerationResponse{
 		Images: make([]string, 0, len(items)), ImageIDs: make([]string, 0, len(items)),
-		RevisedPrompts: make([]string, 0, len(items)), ActualParams: items[0].params,
+		ActualParamsList: make([]projectGenerationParams, 0, len(items)),
+		RevisedPrompts:   make([]string, 0, len(items)), ActualParams: items[0].params,
+		TaskRecordQueued: len(req.Task) > 0,
 	}
 	result.ActualParams.N = len(items)
 	mimeTypes := map[string]string{"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}
@@ -625,13 +704,15 @@ func (h *ProjectGenerationHandler) generateResponses(c *gin.Context, userID, pro
 		dataURL, imageID, err := h.saveGeneratedImage(c.Request.Context(), userID, projectID, req.TaskID, mimeType, width, height, item.image)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError, "message": err.Error()})
-			return
+			return nil
 		}
 		result.Images = append(result.Images, dataURL)
 		result.ImageIDs = append(result.ImageIDs, imageID)
+		result.ActualParamsList = append(result.ActualParamsList, item.params)
 		result.RevisedPrompts = append(result.RevisedPrompts, item.image.RevisedPrompt)
 	}
 	c.JSON(http.StatusOK, result)
+	return &result
 }
 
 // Status POST /api/v1/images/status，保持前端原有恢复时机，仅代理状态查询。
@@ -693,6 +774,10 @@ func (h *ProjectGenerationHandler) Status(c *gin.Context) {
 func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 	responseWriter := &generationLogResponseWriter{ResponseWriter: c.Writer}
 	c.Writer = responseWriter
+	var recordReq *projectGenerationRequest
+	var recordResult *projectGenerationResponse
+	var userID string
+	var projectID string
 	defer func() {
 		log.Info().
 			Str("method", c.Request.Method).
@@ -700,11 +785,22 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 			Int("status", c.Writer.Status()).
 			Interface("body", generationLogPayload(responseWriter.body.Bytes(), responseWriter.truncated)).
 			Msg("generation response")
+		if recordReq == nil {
+			return
+		}
+		message := http.StatusText(c.Writer.Status())
+		var payload struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(responseWriter.body.Bytes(), &payload) == nil && strings.TrimSpace(payload.Message) != "" {
+			message = payload.Message
+		}
+		h.saveGenerationTaskRecordAsync(c.Request.Context(), userID, projectID, *recordReq, recordResult, c.Writer.Status(), message)
 	}()
 
-	userID := c.GetString(middleware.ContextKeyUserID)
+	userID = c.GetString(middleware.ContextKeyUserID)
 	providerName := c.GetString(middleware.ContextKeyProvider)
-	projectID := strings.TrimSpace(c.Param("id"))
+	projectID = strings.TrimSpace(c.Param("id"))
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "unauthenticated"})
 		return
@@ -733,6 +829,10 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
 		return
 	}
+	if len(req.Project) > 0 && rawRecordID(req.Project) != projectID {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "project record id mismatch"})
+		return
+	}
 	baseURL, ok := h.providers.ResourceBaseURL(providerName)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "image provider unavailable"})
@@ -746,8 +846,11 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 		c.JSON(status, gin.H{"code": status, "message": err.Error()})
 		return
 	}
+	if len(req.Task) > 0 {
+		recordReq = &req
+	}
 	if req.APIMode == "responses" {
-		h.generateResponses(c, userID, projectID, baseURL, req)
+		recordResult = h.generateResponses(c, userID, projectID, baseURL, req)
 		return
 	}
 	upstreamRequest, err := createUpstreamGenerationRequest(c.Request.Context(), baseURL, c.Request.UserAgent(), req)
@@ -781,10 +884,12 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 	mimeTypes := map[string]string{"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}
 	mimeType := mimeTypes[req.Params.OutputFormat]
 	result := projectGenerationResponse{
-		Images:         make([]string, 0, len(upstream.Data)),
-		ImageIDs:       make([]string, 0, len(upstream.Data)),
-		RevisedPrompts: make([]string, 0, len(upstream.Data)),
-		ActualParams:   req.Params,
+		Images:           make([]string, 0, len(upstream.Data)),
+		ImageIDs:         make([]string, 0, len(upstream.Data)),
+		ActualParamsList: make([]projectGenerationParams, 0, len(upstream.Data)),
+		RevisedPrompts:   make([]string, 0, len(upstream.Data)),
+		ActualParams:     req.Params,
+		TaskRecordQueued: len(req.Task) > 0,
 	}
 	if upstream.Size != "" {
 		result.ActualParams.Size = upstream.Size
@@ -811,8 +916,10 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 		}
 		result.Images = append(result.Images, dataURL)
 		result.ImageIDs = append(result.ImageIDs, imageID)
+		result.ActualParamsList = append(result.ActualParamsList, result.ActualParams)
 		result.RevisedPrompts = append(result.RevisedPrompts, item.RevisedPrompt)
 	}
+	recordResult = &result
 	c.JSON(http.StatusOK, result)
 }
 
