@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import { readFileSync } from 'fs'
 import { normalizeDevProxyConfig } from './src/lib/devProxy'
 
-const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
+const appVersion = readFileSync('./backend/cmd/server/VERSION', 'utf-8').trim()
 
 function loadDevProxyConfig() {
   try {
@@ -24,7 +24,7 @@ export default defineConfig(({ command }) => {
     plugins: [react()],
     base: './',
     define: {
-      __APP_VERSION__: JSON.stringify(pkg.version),
+      __APP_VERSION__: JSON.stringify(appVersion),
       __DEV_PROXY_CONFIG__: JSON.stringify(devProxyConfig),
     },
     server: {

@@ -20,6 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Sync version from tag
+        if: github.ref_type == 'tag'
+        run: printf '%s\n' "${GITHUB_REF_NAME#v}" > backend/cmd/server/VERSION
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
