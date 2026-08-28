@@ -40,13 +40,6 @@ func (s *projectImageStoreStub) ListImages(_ context.Context, userID, projectID 
 	return s.images, nil
 }
 
-func (s *projectImageStoreStub) GetImage(_ context.Context, userID, projectID, imageID string) (*models.ProjectImage, []byte, error) {
-	s.userID = userID
-	s.projectID = projectID
-	s.imageID = imageID
-	return s.image, s.data, nil
-}
-
 func (s *projectImageStoreStub) DeleteImage(_ context.Context, userID, projectID, imageID string) error {
 	s.userID = userID
 	s.projectID = projectID
@@ -119,20 +112,5 @@ func TestProjectImageHandlerSave(t *testing.T) {
 	}
 	if !bytes.Equal(store.data, data) || len(store.image.SHA256) != 64 {
 		t.Fatal("image bytes or sha256 was not saved")
-	}
-}
-
-func TestProjectImageHandlerGet(t *testing.T) {
-	data := []byte("generated-image")
-	store := &projectImageStoreStub{
-		image: &models.ProjectImage{ImageID: "image-a", MIMEType: "image/png", SHA256: "sha256"},
-		data:  data,
-	}
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8/images/image-a", nil)
-	newProjectImageRouter(store).ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "image/png" || !bytes.Equal(w.Body.Bytes(), data) {
-		t.Fatalf("unexpected image response: status=%d type=%q body=%q", w.Code, w.Header().Get("Content-Type"), w.Body.Bytes())
 	}
 }

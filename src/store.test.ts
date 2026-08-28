@@ -181,7 +181,6 @@ vi.mock('./lib/onlineProjects', () => ({
     created_at: '2026-08-16T00:00:00Z',
     updated_at: '2026-08-16T00:00:00Z',
   })),
-  downloadOnlineProjectImage: vi.fn(),
   deleteOnlineProjectImage: vi.fn(async () => undefined),
   downloadOnlineProject: vi.fn(async () => new Uint8Array()),
   deleteOnlineProject: vi.fn(async () => undefined),
@@ -290,7 +289,7 @@ import { queryImageStatuses } from './lib/imageStatusApi'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { callBackendImageApi } from './lib/backendImageApi'
 import { callBackendCompositeImageApi, queryBackendCompositeImageTask } from './lib/backendCompositeImageApi'
-import { buildLegacyProjectArchive, clearLegacyProjectUploadId, deleteOnlineProject, downloadOnlineProject, downloadOnlineProjectImage, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectTask, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
+import { buildLegacyProjectArchive, clearLegacyProjectUploadId, deleteOnlineProject, downloadOnlineProject, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectTask, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
 import { LOCAL_PROJECT_ID, cleanStaleAgentInputDrafts, clearFailedTasks, createFavoriteCollection, deleteAgentRoundFromConversation, deleteFavoriteCollection, editOutputs, getActiveAgentRounds, getActiveDefaultFavoriteCollectionId, getActiveFavoriteCollections, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, renameFavoriteCollection, reuseConfig, retryTask, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
@@ -1012,12 +1011,6 @@ describe('mask draft lifecycle in store actions', () => {
       created_at: '2026-08-16T00:00:00Z',
       updated_at: '2026-08-16T01:00:00Z',
     }])
-    vi.mocked(downloadOnlineProjectImage).mockResolvedValueOnce({
-      id: 'remote-image',
-      dataUrl: 'data:image/png;base64,AAECAw==',
-      source: 'generated',
-      createdAt: 1,
-    })
     try {
       await initStore()
 

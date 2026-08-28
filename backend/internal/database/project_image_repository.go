@@ -103,39 +103,6 @@ func (r *ProjectRepository) ListImages(ctx context.Context, userID, projectID st
 	return images, nil
 }
 
-// GetImage 返回项目图片元数据和二进制。
-func (r *ProjectRepository) GetImage(ctx context.Context, userID, projectID, imageID string) (*models.ProjectImage, []byte, error) {
-	const q = `
-		SELECT i.project_id, i.image_id, COALESCE(i.task_id, ''), COALESCE(i.source, ''), i.mime_type,
-			i.width, i.height, i.image_size, i.image_sha256, i.created_at, i.updated_at, i.image_data
-		FROM project_images i
-		JOIN online_projects p ON p.id = i.project_id
-		WHERE i.project_id = $1 AND i.image_id = $2 AND p.user_id = $3 AND p.deleted_at IS NULL`
-	var image models.ProjectImage
-	var data []byte
-	err := r.db.QueryRowContext(ctx, q, projectID, imageID, userID).Scan(
-		&image.ProjectID,
-		&image.ImageID,
-		&image.TaskID,
-		&image.Source,
-		&image.MIMEType,
-		&image.Width,
-		&image.Height,
-		&image.ImageSize,
-		&image.SHA256,
-		&image.CreatedAt,
-		&image.UpdatedAt,
-		&data,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil, ErrProjectNotFound
-	}
-	if err != nil {
-		return nil, nil, fmt.Errorf("get project image: %w", err)
-	}
-	return &image, data, nil
-}
-
 // DeleteImage 删除当前用户项目中的一张图片。
 func (r *ProjectRepository) DeleteImage(ctx context.Context, userID, projectID, imageID string) error {
 	const q = `

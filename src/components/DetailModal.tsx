@@ -12,7 +12,7 @@ import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { downloadImageEntriesAsZip, downloadImageIds, getImageZipEntries } from '../lib/downloadImages'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { replaceImageMentionsForApi } from '../lib/promptImageMentions'
-import { ChevronDownIcon, CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
+import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
 
 import ViewportTooltip from './ViewportTooltip'
 
@@ -36,13 +36,16 @@ export default function DetailModal() {
   const [imageSizes, setImageSizes] = useState<Record<string, string>>({})
   const [maskPreviewSrc, setMaskPreviewSrc] = useState('')
   const [now, setNow] = useState(Date.now())
+  const [showDebugInfoModal, setShowDebugInfoModal] = useState(false)
   const [showRawUrlsModal, setShowRawUrlsModal] = useState(false)
   const [showRawResponseModal, setShowRawResponseModal] = useState(false)
   const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
   const modalRef = useRef<HTMLDivElement>(null)
+  const debugInfoModalRef = useRef<HTMLDivElement>(null)
   const rawUrlsModalRef = useRef<HTMLDivElement>(null)
   const rawResponseModalRef = useRef<HTMLDivElement>(null)
 
+  const debugInfoBackdropPointerDownRef = useRef(false)
   const rawUrlsBackdropPointerDownRef = useRef(false)
   const rawResponseBackdropPointerDownRef = useRef(false)
 
@@ -54,6 +57,7 @@ export default function DetailModal() {
   const downloadImageTooltip = useTooltip()
   const downloadOriginalImageTooltip = useTooltip()
   const downloadAllTooltip = useTooltip()
+  const debugInfoTooltip = useTooltip()
 
   const clearTextSelection = () => {
     const selection = window.getSelection()
@@ -98,11 +102,13 @@ export default function DetailModal() {
   }, [imageIndex, streamPreviewItems.length, task, task?.status])
 
   useCloseOnEscape(Boolean(task), () => setDetailTaskId(null))
-  usePreventBackgroundScroll(Boolean(task), [modalRef, rawUrlsModalRef, rawResponseModalRef])
+  useCloseOnEscape(showDebugInfoModal, () => setShowDebugInfoModal(false))
+  usePreventBackgroundScroll(Boolean(task), [modalRef, debugInfoModalRef, rawUrlsModalRef, rawResponseModalRef])
 
   // Reset index when task changes
   useEffect(() => {
     setImageIndex(0)
+    setShowDebugInfoModal(false)
   }, [detailTaskId])
 
   useEffect(() => {
@@ -496,9 +502,29 @@ export default function DetailModal() {
 
         {/* 左侧：图片 */}
         <div className="md:w-1/2 w-full h-64 md:h-auto bg-gray-100 dark:bg-black/20 relative flex items-center justify-center flex-shrink-0 min-h-[16rem]">
-          {task.status === 'done' && outputLen > 0 && (currentOutputImageId || task.outputImages.length > 0) && (
+          {(task.requestId || taskIds.length > 0 || (task.status === 'done' && outputLen > 0 && (currentOutputImageId || task.outputImages.length > 0))) && (
             <div className="absolute right-3 top-[15px] z-20 flex items-center gap-1.5">
-              {currentOutputImageId && (
+              {(task.requestId || taskIds.length > 0) && (
+                <div className="relative group flex">
+                  <button
+                    type="button"
+                    {...debugInfoTooltip.handlers}
+                    onClick={() => {
+                      debugInfoTooltip.handlers.onClick()
+                      dismissAllTooltips()
+                      setShowDebugInfoModal(true)
+                    }}
+                    className="flex items-center justify-center rounded bg-black/50 px-1.5 py-0.5 text-white backdrop-blur-sm transition hover:bg-black/70 focus:outline-none focus:ring-1 focus:ring-white/50"
+                    aria-label="调试信息"
+                  >
+                    <CodeIcon className="h-4 w-4" />
+                  </button>
+                  <ViewportTooltip visible={debugInfoTooltip.visible} className="whitespace-nowrap">
+                    调试信息
+                  </ViewportTooltip>
+                </div>
+              )}
+              {task.status === 'done' && currentOutputImageId && (
                 <div className="relative group flex">
                   <button
                     type="button"
@@ -517,7 +543,7 @@ export default function DetailModal() {
                   </ViewportTooltip>
                 </div>
               )}
-              {task.outputImages.length > 1 && (
+              {task.status === 'done' && task.outputImages.length > 1 && (
                 <div className="relative group flex">
                   <button
                     type="button"
@@ -1066,61 +1092,6 @@ export default function DetailModal() {
               )}
             </div>
 
-            {(task.requestId || taskIds.length > 0) && (
-              <details key={task.id} className="group mb-4 min-w-0 border-y border-gray-100 dark:border-white/[0.07]">
-                <summary className="flex cursor-pointer list-none items-center justify-between py-2 text-xs font-medium text-gray-400 transition hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 dark:text-gray-500 dark:hover:text-gray-300 [&::-webkit-details-marker]:hidden">
-                  <span>调试信息</span>
-                  <ChevronDownIcon className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
-                </summary>
-                <dl className="border-t border-gray-100 pb-1 pt-0.5 dark:border-white/[0.07]">
-                  {task.requestId && (
-                    <div className="grid min-h-8 grid-cols-[4.75rem_minmax(0,1fr)_1.75rem] items-center gap-1.5 py-0.5">
-                      <dt className="font-mono text-[10px] font-semibold uppercase text-gray-400 dark:text-gray-500">
-                        request_id
-                      </dt>
-                      <dd className="min-w-0">
-                        <code className="block select-text truncate text-[11px] font-medium text-gray-700 dark:text-gray-300" title={task.requestId}>
-                          {task.requestId}
-                        </code>
-                      </dd>
-                      <button
-                        type="button"
-                        onClick={handleCopyRequestId}
-                        className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
-                        title="复制 request_id"
-                        aria-label="复制 request_id"
-                      >
-                        <CopyIcon className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  )}
-                  {taskIds.length > 0 && (
-                    <div className="grid min-h-8 grid-cols-[4.75rem_minmax(0,1fr)_1.75rem] items-center gap-1.5 py-0.5">
-                      <dt className="font-mono text-[10px] font-semibold uppercase text-gray-400 dark:text-gray-500">
-                        task_id
-                      </dt>
-                      <dd className="min-w-0 space-y-1 py-1">
-                        {taskIds.map((id) => (
-                          <code key={id} className="block select-text truncate text-[11px] font-medium text-gray-700 dark:text-gray-300" title={id}>
-                            {id}
-                          </code>
-                        ))}
-                      </dd>
-                      <button
-                        type="button"
-                        onClick={handleCopyTaskIds}
-                        className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
-                        title={taskIds.length === 1 ? '复制 task_id' : '复制全部 task_id'}
-                        aria-label={taskIds.length === 1 ? '复制 task_id' : '复制全部 task_id'}
-                      >
-                        <CopyIcon className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </dl>
-              </details>
-            )}
-
             {/* 时间 */}
             <div className="text-xs text-gray-400 dark:text-gray-500 mb-4">
               <span>创建于 {formatTime(task.createdAt)}</span>
@@ -1170,6 +1141,78 @@ export default function DetailModal() {
           </div>
         </div>
       </div>
+
+      {showDebugInfoModal && (task.requestId || taskIds.length > 0) && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm sm:p-6"
+          onPointerDown={(e) => {
+            debugInfoBackdropPointerDownRef.current = e.target === e.currentTarget
+          }}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (debugInfoBackdropPointerDownRef.current && e.target === e.currentTarget) setShowDebugInfoModal(false)
+            debugInfoBackdropPointerDownRef.current = false
+          }}
+        >
+          <div
+            ref={debugInfoModalRef}
+            className="flex w-full max-w-2xl max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-white shadow-xl dark:bg-[#1c1c1e]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-white/[0.08] shrink-0">
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white">调试信息</h3>
+              <button
+                type="button"
+                onClick={() => setShowDebugInfoModal(false)}
+                className="rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-300"
+                aria-label="关闭调试信息"
+              >
+                <CloseIcon className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto bg-gray-50/50 p-5 dark:bg-black/20 overscroll-contain">
+              <dl className="divide-y divide-gray-100 rounded-xl border border-gray-100 bg-white dark:divide-white/[0.07] dark:border-white/[0.06] dark:bg-[#1c1c1e]">
+                {task.requestId && (
+                  <div className="grid min-h-12 grid-cols-[5.5rem_minmax(0,1fr)_2rem] items-center gap-3 px-4 py-2">
+                    <dt className="font-mono text-[10px] font-semibold uppercase text-gray-400 dark:text-gray-500">request_id</dt>
+                    <dd className="min-w-0">
+                      <code className="block select-text break-all text-xs font-medium text-gray-700 dark:text-gray-300">{task.requestId}</code>
+                    </dd>
+                    <button
+                      type="button"
+                      onClick={handleCopyRequestId}
+                      className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                      title="复制 request_id"
+                      aria-label="复制 request_id"
+                    >
+                      <CopyIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+                {taskIds.length > 0 && (
+                  <div className="grid min-h-12 grid-cols-[5.5rem_minmax(0,1fr)_2rem] items-center gap-3 px-4 py-2">
+                    <dt className="font-mono text-[10px] font-semibold uppercase text-gray-400 dark:text-gray-500">task_id</dt>
+                    <dd className="min-w-0 space-y-1">
+                      {taskIds.map((id) => (
+                        <code key={id} className="block select-text break-all text-xs font-medium text-gray-700 dark:text-gray-300">{id}</code>
+                      ))}
+                    </dd>
+                    <button
+                      type="button"
+                      onClick={handleCopyTaskIds}
+                      className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                      title={taskIds.length === 1 ? '复制 task_id' : '复制全部 task_id'}
+                      aria-label={taskIds.length === 1 ? '复制 task_id' : '复制全部 task_id'}
+                    >
+                      <CopyIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+              </dl>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showRawUrlsModal && rawImageUrls.length > 0 && (
         <div

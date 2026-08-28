@@ -1,7 +1,6 @@
 import type { AgentConversation, AppSettings, FavoriteCollection, Project, StoredImage, StoredImageThumbnail, TaskRecord } from '../types'
 import { authFetch } from '../auth/api'
 import { dataUrlToBlob } from './canvasImage'
-import { blobToDataUrl } from './dataUrl'
 import { buildExportZip, readExportZip, readExportZipFileAsDataUrl } from './exportZip'
 import { getAgentConversationProjectId } from './agentConversationScope'
 
@@ -264,22 +263,6 @@ export async function listOnlineProjectImages(projectId: string): Promise<Online
     const sourceValid = record.source === undefined || record.source === 'upload' || record.source === 'generated' || record.source === 'mask'
     return typeof record.project_id === 'string' && typeof record.image_id === 'string' && sourceValid && typeof record.mime_type === 'string' && typeof record.image_size === 'number' && typeof record.image_sha256 === 'string' && typeof record.created_at === 'string' && typeof record.updated_at === 'string'
   })
-}
-
-export async function downloadOnlineProjectImage(projectId: string, image: OnlineProjectImageResponse): Promise<StoredImage> {
-  const resp = await fetchOnlineProjectResource(`/api/v1/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(image.image_id)}`)
-  if (!resp.ok) {
-    const data = await resp.json().catch(() => null) as { message?: string } | null
-    throw new Error(data?.message || `项目图片加载失败：HTTP ${resp.status}`)
-  }
-  return {
-    id: image.image_id,
-    dataUrl: await blobToDataUrl(await resp.blob(), image.mime_type),
-    source: image.source,
-    width: image.width,
-    height: image.height,
-    createdAt: Date.parse(image.created_at) || undefined,
-  }
 }
 
 export async function deleteOnlineProjectImage(projectId: string, imageId: string) {

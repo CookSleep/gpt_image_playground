@@ -31,9 +31,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # ---- Stage 3: 运行时（单二进制）----
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates && \
+    addgroup -S app && \
+    adduser -S -G app app
 WORKDIR /app
 COPY --from=backend /out/server /app/server
+
+USER app
 
 # 监听端口（config 默认 8080）
 EXPOSE 8080

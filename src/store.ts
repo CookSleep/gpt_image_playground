@@ -54,7 +54,7 @@ import {
   storeImageWithSize,
 } from './lib/db'
 import { createRequestId, getAccessToken, isAuthEnabled } from './auth/api'
-import { buildLegacyProjectArchive, buildOnlineProjectArchive, clearLegacyProjectUploadId, createOnlineProject, deleteOnlineProject, deleteOnlineProjectImage, deleteOnlineProjectTask, downloadOnlineProject, downloadOnlineProjectImage, getAgentConversationReferencedImageIds, getLegacyProjectUploadId, getTaskReferencedImageIds, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectTask, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
+import { buildLegacyProjectArchive, buildOnlineProjectArchive, clearLegacyProjectUploadId, createOnlineProject, deleteOnlineProject, deleteOnlineProjectImage, deleteOnlineProjectTask, downloadOnlineProject, getAgentConversationReferencedImageIds, getLegacyProjectUploadId, getTaskReferencedImageIds, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectTask, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
 import { callImageApi } from './lib/api'
 import { callBackendImageApi } from './lib/backendImageApi'
 import { callBackendCompositeImageApi, queryBackendCompositeImageTask } from './lib/backendCompositeImageApi'
@@ -3706,13 +3706,8 @@ async function loadOnlineProjectCache(localProjects: Project[], localTasks: Task
     }
     if (shouldLoadContents) {
       try {
-        const remoteImages = await listOnlineProjectImages(response.id)
-        for (const remoteImage of remoteImages) {
-          if (availableImageIds.has(remoteImage.image_id)) continue
-          const image = await downloadOnlineProjectImage(response.id, remoteImage)
-          images.push(image)
-          availableImageIds.add(image.id)
-        }
+        // 仅读取图片元数据，图片二进制不再通过项目接口下载。
+        await listOnlineProjectImages(response.id)
       } catch (err) {
         console.warn(`在线项目 ${response.id} 图片加载失败：`, err)
       }

@@ -25,7 +25,6 @@ var projectImageIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,200}$`)
 type projectImageStore interface {
 	SaveImage(ctx context.Context, userID string, image models.ProjectImage, data []byte) (*models.ProjectImage, error)
 	ListImages(ctx context.Context, userID, projectID string) ([]models.ProjectImage, error)
-	GetImage(ctx context.Context, userID, projectID, imageID string) (*models.ProjectImage, []byte, error)
 	DeleteImage(ctx context.Context, userID, projectID, imageID string) error
 }
 
@@ -40,7 +39,6 @@ func NewProjectImageHandler(images projectImageStore) *ProjectImageHandler {
 
 func (h *ProjectImageHandler) Register(api *gin.RouterGroup) {
 	api.GET("/projects/:id/images", h.List)
-	api.GET("/projects/:id/images/:imageId", h.Get)
 	api.POST("/projects/:id/images", h.Save)
 	api.DELETE("/projects/:id/images/:imageId", h.Delete)
 }
@@ -72,30 +70,6 @@ func (h *ProjectImageHandler) List(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, images)
-}
-
-// Get GET /api/v1/projects/:id/images/:imageId，返回图片二进制。
-func (h *ProjectImageHandler) Get(c *gin.Context) {
-	userID := c.GetString(middleware.ContextKeyUserID)
-	projectID, imageID, ok := projectImageRequestIDs(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "unauthenticated"})
-		return
-	}
-	if !ok {
-		return
-	}
-	image, data, err := h.images.GetImage(c.Request.Context(), userID, projectID, imageID)
-	if errors.Is(err, database.ErrProjectNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "message": err.Error()})
-		return
-	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError, "message": err.Error()})
-		return
-	}
-	c.Header("ETag", `"`+image.SHA256+`"`)
-	c.Data(http.StatusOK, image.MIMEType, data)
 }
 
 func parseImageDimension(value string) (*int, error) {
