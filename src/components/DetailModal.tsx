@@ -12,7 +12,7 @@ import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { downloadImageEntriesAsZip, downloadImageIds, getImageZipEntries } from '../lib/downloadImages'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { replaceImageMentionsForApi } from '../lib/promptImageMentions'
-import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
+import { ChevronDownIcon, CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
 
 import ViewportTooltip from './ViewportTooltip'
 
@@ -1066,44 +1066,59 @@ export default function DetailModal() {
               )}
             </div>
 
-            {task.requestId && (
-              <div className="mb-4 flex min-w-0 items-center gap-2 text-xs">
-                <span className="shrink-0 text-gray-400 dark:text-gray-500">request_id</span>
-                <div className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap hide-scrollbar mask-edge-r pr-2">
-                  <span className="select-text font-mono font-medium text-gray-700 dark:text-gray-300">
-                    {task.requestId}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleCopyRequestId}
-                  className="shrink-0 rounded p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
-                  title="复制 request_id"
-                  aria-label="复制 request_id"
-                >
-                  <CopyIcon className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
-
-            {taskIds.length > 0 && (
-              <div className="mb-4 flex min-w-0 items-center gap-2 text-xs">
-                <span className="shrink-0 text-gray-400 dark:text-gray-500">task_id</span>
-                <div className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap hide-scrollbar mask-edge-r pr-2">
-                  <span className="select-text font-mono font-medium text-gray-700 dark:text-gray-300">
-                    {taskIds.join(', ')}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleCopyTaskIds}
-                  className="shrink-0 rounded p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
-                  title={taskIds.length === 1 ? '复制 task_id' : '复制全部 task_id'}
-                  aria-label={taskIds.length === 1 ? '复制 task_id' : '复制全部 task_id'}
-                >
-                  <CopyIcon className="h-3.5 w-3.5" />
-                </button>
-              </div>
+            {(task.requestId || taskIds.length > 0) && (
+              <details key={task.id} className="group mb-4 min-w-0 border-y border-gray-100 dark:border-white/[0.07]">
+                <summary className="flex cursor-pointer list-none items-center justify-between py-2 text-xs font-medium text-gray-400 transition hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 dark:text-gray-500 dark:hover:text-gray-300 [&::-webkit-details-marker]:hidden">
+                  <span>调试信息</span>
+                  <ChevronDownIcon className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                </summary>
+                <dl className="border-t border-gray-100 pb-1 pt-0.5 dark:border-white/[0.07]">
+                  {task.requestId && (
+                    <div className="grid min-h-8 grid-cols-[4.75rem_minmax(0,1fr)_1.75rem] items-center gap-1.5 py-0.5">
+                      <dt className="font-mono text-[10px] font-semibold uppercase text-gray-400 dark:text-gray-500">
+                        request_id
+                      </dt>
+                      <dd className="min-w-0">
+                        <code className="block select-text truncate text-[11px] font-medium text-gray-700 dark:text-gray-300" title={task.requestId}>
+                          {task.requestId}
+                        </code>
+                      </dd>
+                      <button
+                        type="button"
+                        onClick={handleCopyRequestId}
+                        className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                        title="复制 request_id"
+                        aria-label="复制 request_id"
+                      >
+                        <CopyIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  {taskIds.length > 0 && (
+                    <div className="grid min-h-8 grid-cols-[4.75rem_minmax(0,1fr)_1.75rem] items-center gap-1.5 py-0.5">
+                      <dt className="font-mono text-[10px] font-semibold uppercase text-gray-400 dark:text-gray-500">
+                        task_id
+                      </dt>
+                      <dd className="min-w-0 space-y-1 py-1">
+                        {taskIds.map((id) => (
+                          <code key={id} className="block select-text truncate text-[11px] font-medium text-gray-700 dark:text-gray-300" title={id}>
+                            {id}
+                          </code>
+                        ))}
+                      </dd>
+                      <button
+                        type="button"
+                        onClick={handleCopyTaskIds}
+                        className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                        title={taskIds.length === 1 ? '复制 task_id' : '复制全部 task_id'}
+                        aria-label={taskIds.length === 1 ? '复制 task_id' : '复制全部 task_id'}
+                      >
+                        <CopyIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </dl>
+              </details>
             )}
 
             {/* 时间 */}
