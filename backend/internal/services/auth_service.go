@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"gpt-image-backend/internal/auth"
 	"gpt-image-backend/internal/database"
@@ -104,26 +106,22 @@ func (s *AuthService) HandleCallback(ctx context.Context, providerName, state, c
 		return nil, err
 	}
 
-	// 解析并打印自定义claims（现在包含userinfo数据）
+	// 记录 claims 结构用于排查映射问题，但不写入 API Key 等敏感值。
 	var allClaims map[string]interface{}
 	if err := json.Unmarshal(claims.RawJSON, &allClaims); err == nil {
-		log.Printf("=== OIDC Callback Complete Claims ===")
-		log.Printf("Provider: %s", providerName)
-		log.Printf("User: %s (%s)", claims.Name, claims.Email)
-
-		// 检查并打印apikey相关claims
-		if apikey, ok := allClaims["sub2api:apikey"].(string); ok && apikey != "" {
-			log.Printf("API Key: %s", apikey)
-		} else {
-			log.Printf("API Key: not found in claims")
-		}
-
-		// 打印所有claims用于调试
-		log.Printf("All claims keys: ")
+		claimKeys := make([]string, 0, len(allClaims))
 		for key := range allClaims {
-			log.Printf("  - %s", key)
+			claimKeys = append(claimKeys, key)
 		}
-		log.Printf("====================================")
+		sort.Strings(claimKeys)
+		apiKey, _ := allClaims["sub2api:apikey"].(string)
+		log.Ctx(ctx).Info().
+			Str("provider", providerName).
+			Str("user_name", claims.Name).
+			Str("user_email", claims.Email).
+			Bool("has_api_key", apiKey != "").
+			Strs("claim_keys", claimKeys).
+			Msg("OIDC callback claims received")
 	}
 
 	user, err := s.users.UpsertFromOIDC(ctx, &models.User{

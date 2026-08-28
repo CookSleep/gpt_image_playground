@@ -951,6 +951,7 @@ describe('callImageApi', () => {
         }],
         activeProfileId: 'profile-custom',
       },
+      requestId: 'frontend-request-custom',
       prompt: 'prompt',
       params: { ...DEFAULT_PARAMS },
       inputImageDataUrls: [],
@@ -966,6 +967,56 @@ describe('callImageApi', () => {
       images: ['data:image/png;base64,aW1hZ2U='],
     })
     expect(fetchMock).toHaveBeenCalledTimes(3)
+    for (const call of fetchMock.mock.calls) {
+      expect(((call[1] as RequestInit).headers as Record<string, string>)['X-Request-ID']).toBe('frontend-request-custom')
+    }
+  })
+
+  it('rejects async task statuses outside configured pending values', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ task_id: 'task-1' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'RETRYING' }), { status: 200 }))
+
+    await expect(callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        baseUrl: 'https://api.example.com/v1',
+        customProviders: [{
+          id: 'custom-strict-status',
+          name: 'Custom Strict Status',
+          template: 'http-image',
+          submit: {
+            path: 'images/generations',
+            method: 'POST',
+            contentType: 'json',
+            body: { prompt: '$prompt' },
+            taskIdPath: 'task_id',
+          },
+          poll: {
+            path: 'images/tasks/{task_id}',
+            method: 'GET',
+            statusPath: 'status',
+            successValues: ['COMPLETED'],
+            failureValues: ['FAILED', 'CANCELED'],
+            pendingValues: ['IN_QUEUE', 'IN_PROGRESS'],
+            result: { imageUrlPaths: ['images.*.url'] },
+          },
+        }],
+        profiles: [{
+          ...DEFAULT_SETTINGS.profiles[0],
+          id: 'profile-strict-status',
+          provider: 'custom-strict-status',
+          baseUrl: 'https://api.example.com/v1',
+          apiKey: 'test-key',
+          model: 'model',
+        }],
+        activeProfileId: 'profile-strict-status',
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    })).rejects.toThrow('异步任务返回未知状态：RETRYING')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('does not apply submit timeout to custom async polling after receiving a task id', async () => {

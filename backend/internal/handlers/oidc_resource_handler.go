@@ -76,7 +76,7 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "OIDC provider unavailable"})
 		return
 	}
-	log.Info().
+	log.Ctx(c.Request.Context()).Info().
 		Str("user_id", userID).
 		Str("provider", provider).
 		Str("scope", scope).
@@ -90,6 +90,7 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", c.Request.UserAgent())
+	middleware.SetRequestIDHeader(request)
 
 	response, err := h.client.Do(request)
 	if err != nil {
@@ -102,7 +103,7 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "读取 API Key 上游回包失败"})
 		return
 	}
-	log.Info().
+	log.Ctx(c.Request.Context()).Info().
 		Str("user_id", userID).
 		Str("provider", provider).
 		Str("scope", scope).
@@ -121,7 +122,7 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 	}
 	candidates, err := parseAPIKeyCandidates(data)
 	if err != nil {
-		log.Warn().Err(err).
+		log.Ctx(c.Request.Context()).Warn().Err(err).
 			Str("user_id", userID).
 			Str("provider", provider).
 			Str("scope", scope).
@@ -151,7 +152,7 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 					sort.Strings(dataFields)
 				}
 			}
-			log.Warn().
+			log.Ctx(c.Request.Context()).Warn().
 				Str("user_id", userID).
 				Str("provider", provider).
 				Str("scope", scope).
@@ -160,7 +161,7 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 				Msg("API Key upstream response contains no parseable candidates")
 		}
 	}
-	log.Info().
+	log.Ctx(c.Request.Context()).Info().
 		Str("user_id", userID).
 		Str("provider", provider).
 		Str("scope", scope).
@@ -169,7 +170,7 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 		Msg("API Key candidates parsed")
 	items, err := h.filterAPIKeys(c.Request.Context(), baseURL, candidates, allowed)
 	if err != nil {
-		log.Error().Err(err).
+		log.Ctx(c.Request.Context()).Error().Err(err).
 			Str("user_id", userID).
 			Str("provider", provider).
 			Str("scope", scope).
@@ -177,7 +178,7 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "检查 API Key 模型失败: " + err.Error()})
 		return
 	}
-	log.Info().
+	log.Ctx(c.Request.Context()).Info().
 		Str("user_id", userID).
 		Str("provider", provider).
 		Str("scope", scope).
@@ -326,7 +327,7 @@ func (h *OIDCResourceHandler) filterAPIKeys(ctx context.Context, baseURL string,
 				}
 				if json.Unmarshal(data, &upstreamError) == nil && upstreamError.Code == "INSUFFICIENT_BALANCE" {
 					available[index] = true
-					log.Info().
+					log.Ctx(ctx).Info().
 						Str("api_key_fingerprint", keyFingerprint).
 						Int("candidate_index", index).
 						Str("upstream_code", upstreamError.Code).
@@ -335,7 +336,7 @@ func (h *OIDCResourceHandler) filterAPIKeys(ctx context.Context, baseURL string,
 				}
 			}
 			if status == http.StatusUnauthorized || status == http.StatusForbidden {
-				log.Warn().
+				log.Ctx(ctx).Warn().
 					Str("api_key_fingerprint", keyFingerprint).
 					Int("candidate_index", index).
 					Int("upstream_status", status).
@@ -351,7 +352,7 @@ func (h *OIDCResourceHandler) filterAPIKeys(ctx context.Context, baseURL string,
 					firstErr = err
 					cancel()
 				})
-				log.Error().Err(err).
+				log.Ctx(ctx).Error().Err(err).
 					Str("api_key_fingerprint", keyFingerprint).
 					Int("candidate_index", index).
 					Int("upstream_status", status).
@@ -368,7 +369,7 @@ func (h *OIDCResourceHandler) filterAPIKeys(ctx context.Context, baseURL string,
 				}
 			}
 			available[index] = hasAllowedModel(payload.Data, allowed)
-			log.Info().
+			log.Ctx(ctx).Info().
 				Str("api_key_fingerprint", keyFingerprint).
 				Int("candidate_index", index).
 				Int("upstream_status", status).
@@ -398,6 +399,7 @@ func (h *OIDCResourceHandler) fetchModelList(ctx context.Context, baseURL, apiKe
 	}
 	request.Header.Set("Authorization", "Bearer "+apiKey)
 	request.Header.Set("Accept", "application/json")
+	middleware.SetRequestIDHeader(request)
 	response, err := h.client.Do(request)
 	if err != nil {
 		return modelListResponse{}, nil, 0, fmt.Errorf("模型上游连接失败: %w", err)

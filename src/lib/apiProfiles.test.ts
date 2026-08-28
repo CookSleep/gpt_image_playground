@@ -455,6 +455,7 @@ describe('custom providers', () => {
         statusPath: 'data.status',
         successValues: ['completed'],
         failureValues: ['failed', 'cancelled'],
+        pendingValues: ['queued', 'running'],
         result: {
           imageUrlPaths: ['data.result.images.*.url.*'],
         },
@@ -471,6 +472,7 @@ describe('custom providers', () => {
         path: 'tasks/{task_id}',
         query: { language: 'zh' },
         successValues: ['completed'],
+        pendingValues: ['queued', 'running'],
         result: {
           imageUrlPaths: ['data.result.images.*.url.*'],
         },

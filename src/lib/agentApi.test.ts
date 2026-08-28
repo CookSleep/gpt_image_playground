@@ -67,6 +67,7 @@ describe('callAgentResponsesApi', () => {
 
     await callAgentResponsesApi({
       settings: DEFAULT_SETTINGS,
+      requestId: 'frontend-request-agent',
       profile,
       params: DEFAULT_PARAMS,
       input: 'prompt',
@@ -74,6 +75,7 @@ describe('callAgentResponsesApi', () => {
     })
 
     const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>
+    expect(headers['X-Request-ID']).toBe('frontend-request-agent')
     expect(headers['x-client-request-id']).toMatch(/^img_/)
     expect(tracked).toEqual([{ requestId: headers['x-client-request-id'] }])
   })

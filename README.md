@@ -237,7 +237,7 @@ docker run -d -p 8080:8080 \
 ```
 
 > `config.yaml` 需包含数据库连接与 JWT/OIDC 配置，`database.host` 指向可连通的 PostgreSQL。若不需要登录，可省略 `-e AUTH_BACKEND_URL=`（或设为 `disabled`），此时无需配置 OIDC 提供商。
-> 如需日志落盘，在 `config.yaml` 中设置 `server.log_file: /app/logs/backend.log`。默认按 100 MB 轮转，保留 10 个备份和 30 天，并继续输出到 `docker logs`。
+> 如需日志落盘，在 `config.yaml` 的 `log` 段中设置 `file: /app/logs/backend.log`。默认按 100 MB 轮转，保留 10 个备份和 30 天，并继续输出到 `docker logs`。
 
 **2. Docker Compose 示例（含 PostgreSQL）**
 

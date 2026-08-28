@@ -1,5 +1,5 @@
 import type { ApiProfile } from '../types'
-import { authFetch } from '../auth/api'
+import { authFetch, REQUEST_ID_HEADER } from '../auth/api'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { getApiErrorMessage } from './imageApiShared'
 
@@ -79,7 +79,7 @@ function chunkIds(ids: string[]): string[][] {
   return chunks
 }
 
-async function queryImageStatusChunk(profile: ApiProfile, requestIds: string[], options: { viaBackend?: boolean }): Promise<ImageStatusQueryResult> {
+async function queryImageStatusChunk(profile: ApiProfile, requestIds: string[], options: { viaBackend?: boolean; requestId?: string }): Promise<ImageStatusQueryResult> {
   if (requestIds.length === 0) return { records: [], notFound: [] }
 
   const proxyConfig = readClientDevProxyConfig()
@@ -90,6 +90,7 @@ async function queryImageStatusChunk(profile: ApiProfile, requestIds: string[], 
   const response = options.viaBackend
     ? await authFetch('/api/v1/images/status', {
         method: 'POST',
+        headers: options.requestId ? { [REQUEST_ID_HEADER]: options.requestId } : undefined,
         body: JSON.stringify({ api_key: profile.apiKey, request_ids: requestIds }),
         cache: 'no-store',
       })
@@ -97,6 +98,7 @@ async function queryImageStatusChunk(profile: ApiProfile, requestIds: string[], 
         method: 'GET',
         headers: {
           Authorization: `Bearer ${profile.apiKey}`,
+          ...(options.requestId ? { [REQUEST_ID_HEADER]: options.requestId } : {}),
         },
         cache: 'no-store',
       })
@@ -115,7 +117,7 @@ async function queryImageStatusChunk(profile: ApiProfile, requestIds: string[], 
   }
 }
 
-export async function queryImageStatuses(profile: ApiProfile, requestIds: string[], options: { viaBackend?: boolean } = {}): Promise<ImageStatusQueryResult> {
+export async function queryImageStatuses(profile: ApiProfile, requestIds: string[], options: { viaBackend?: boolean; requestId?: string } = {}): Promise<ImageStatusQueryResult> {
   const uniqueIds = [...new Set(requestIds.filter((id) => id.trim()))]
   const results = await Promise.all(chunkIds(uniqueIds).map((ids) => queryImageStatusChunk(profile, ids, options)))
 

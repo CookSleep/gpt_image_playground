@@ -5,6 +5,7 @@ import { callBackendCompositeImageApi, queryBackendCompositeImageTask } from './
 
 vi.mock('../auth/api', () => ({
   authFetch: vi.fn(),
+  REQUEST_ID_HEADER: 'X-Request-ID',
 }))
 
 describe('callBackendCompositeImageApi', () => {
@@ -27,6 +28,7 @@ describe('callBackendCompositeImageApi', () => {
 
     const result = await callBackendCompositeImageApi({
       apiKey: 'composite-key',
+      clientRequestId: 'frontend-request-1',
       model: 'openai/gpt-image-2',
       prompt: '画一张图',
       params: { ...DEFAULT_PARAMS },
@@ -40,7 +42,13 @@ describe('callBackendCompositeImageApi', () => {
     ])
     expect(authFetch).toHaveBeenNthCalledWith(1, '/api/v1/model/openai/gpt-image-2', expect.objectContaining({
       method: 'POST',
-      headers: expect.objectContaining({ 'X-Upstream-API-Key': 'composite-key' }),
+      headers: expect.objectContaining({
+        'X-Request-ID': 'frontend-request-1',
+        'X-Upstream-API-Key': 'composite-key',
+      }),
+    }))
+    expect(authFetch).toHaveBeenNthCalledWith(2, '/api/v1/model/openai/gpt-image-2/requests/request-1', expect.objectContaining({
+      headers: expect.objectContaining({ 'X-Request-ID': 'frontend-request-1' }),
     }))
     expect(onRequestCreated).toHaveBeenCalledWith({
       requestId: 'request-1',
@@ -66,14 +74,57 @@ describe('callBackendCompositeImageApi', () => {
       apiKey: 'composite-key',
       model: 'openai/gpt-image-2',
       requestId: 'persisted-request',
+      clientRequestId: 'frontend-request-2',
       params: { ...DEFAULT_PARAMS },
     })
 
     expect(vi.mocked(authFetch).mock.calls.map(([path]) => path)).toEqual([
       '/api/v1/model/openai/gpt-image-2/requests/persisted-request',
     ])
+    expect(authFetch).toHaveBeenCalledWith('/api/v1/model/openai/gpt-image-2/requests/persisted-request', expect.objectContaining({
+      headers: expect.objectContaining({ 'X-Request-ID': 'frontend-request-2' }),
+    }))
     expect(result?.images).toEqual(['data:image/png;base64,AAECAw=='])
     expect(result?.actualCost).toBe(0.125)
+  })
+
+  it.each(['IN_QUEUE', 'IN_PROGRESS'])('treats %s as pending', async (status) => {
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({ status }), { status: 200 }))
+
+    const result = await queryBackendCompositeImageTask({
+      apiKey: 'composite-key',
+      model: 'openai/gpt-image-2',
+      requestId: 'pending-request',
+      params: { ...DEFAULT_PARAMS },
+    })
+
+    expect(result).toBeNull()
+    expect(authFetch).toHaveBeenCalledOnce()
+  })
+
+  it.each(['FAILED', 'CANCELED'])('treats %s as terminal failure', async (status) => {
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      status,
+      message: 'upstream task stopped',
+    }), { status: 200 }))
+
+    await expect(queryBackendCompositeImageTask({
+      apiKey: 'composite-key',
+      model: 'openai/gpt-image-2',
+      requestId: 'failed-request',
+      params: { ...DEFAULT_PARAMS },
+    })).rejects.toThrow('upstream task stopped')
+  })
+
+  it('rejects unknown task statuses', async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({ status: 'RETRYING' }), { status: 200 }))
+
+    await expect(queryBackendCompositeImageTask({
+      apiKey: 'composite-key',
+      model: 'openai/gpt-image-2',
+      requestId: 'unknown-request',
+      params: { ...DEFAULT_PARAMS },
+    })).rejects.toThrow('Composite 上游返回了未知的任务状态：RETRYING')
   })
 
   it('uploads edit files and reports their persistent URLs before submitting', async () => {

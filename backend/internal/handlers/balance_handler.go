@@ -40,7 +40,7 @@ func (h *BalanceHandler) Get(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		log.Error().Err(err).Str("user_id", userID).Msg("get balance response")
+		log.Ctx(c.Request.Context()).Error().Err(err).Str("user_id", userID).Msg("get balance response")
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "余额接口失败: " + err.Error()})
 		return
 	}

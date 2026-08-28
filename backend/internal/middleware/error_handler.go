@@ -24,7 +24,7 @@ func ErrorHandler() gin.HandlerFunc {
 		}
 		err := c.Errors.Last()
 
-		log.Error().
+		log.Ctx(c.Request.Context()).Error().
 			Err(err.Err).
 			Str("path", c.Request.URL.Path).
 			Str("method", c.Request.Method).
@@ -71,7 +71,7 @@ func getErrorMessage(statusCode int) string {
 // RecoveryMiddleware 恢复中间件，防止panic导致服务崩溃
 func RecoveryMiddleware() gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
-		log.Error().
+		log.Ctx(c.Request.Context()).Error().
 			Interface("panic", recovered).
 			Str("path", c.Request.URL.Path).
 			Str("method", c.Request.Method).

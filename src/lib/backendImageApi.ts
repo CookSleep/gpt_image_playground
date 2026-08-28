@@ -1,5 +1,5 @@
 import type { Project, TaskParams, TaskRecord } from '../types'
-import { authFetch } from '../auth/api'
+import { authFetch, REQUEST_ID_HEADER } from '../auth/api'
 import { createImageStatusRequestId, type CallApiResult } from './imageApiShared'
 import { getOnlineProjectRecord } from './onlineProjects'
 
@@ -111,6 +111,7 @@ export async function callBackendImageApi(options: {
   })
   const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(options.project.remoteId ?? options.project.id)}/${endpointType}`, {
     method: 'POST',
+    headers: options.task.requestId ? { [REQUEST_ID_HEADER]: options.task.requestId } : undefined,
     body: JSON.stringify(requestBody),
   })
   const data = await resp.json().catch(() => null) as BackendGenerationResponse & { message?: string } | null

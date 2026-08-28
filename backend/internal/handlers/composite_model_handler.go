@@ -86,7 +86,7 @@ func (h *CompositeModelHandler) Proxy(c *gin.Context) {
 	if c.Request.URL.RawQuery != "" {
 		endpoint += "?" + c.Request.URL.RawQuery
 	}
-	log.Info().
+	log.Ctx(c.Request.Context()).Info().
 		Str("method", c.Request.Method).
 		Str("path", c.Request.URL.Path).
 		Str("upstream_url", endpoint).
@@ -102,13 +102,14 @@ func (h *CompositeModelHandler) Proxy(c *gin.Context) {
 	request.Header.Set("Authorization", "Bearer "+apiKey)
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", c.Request.UserAgent())
+	middleware.SetRequestIDHeader(request)
 	if contentType := c.GetHeader("Content-Type"); contentType != "" {
 		request.Header.Set("Content-Type", contentType)
 	}
 
 	response, err := h.client.Do(request)
 	if err != nil {
-		log.Error().Err(err).Str("method", c.Request.Method).Str("upstream_url", endpoint).Msg("composite model proxy response")
+		log.Ctx(c.Request.Context()).Error().Err(err).Str("method", c.Request.Method).Str("upstream_url", endpoint).Msg("composite model proxy response")
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "Composite 上游连接失败: " + err.Error()})
 		return
 	}
@@ -122,14 +123,15 @@ func (h *CompositeModelHandler) Proxy(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "Composite 上游回包过大"})
 		return
 	}
-	log.Info().
+	log.Ctx(c.Request.Context()).Info().
 		Str("method", c.Request.Method).
 		Str("upstream_url", endpoint).
+		Str("upstream_request_id", response.Header.Get("X-Request-ID")).
 		Int("status", response.StatusCode).
 		Interface("body", generationLogPayload(responseData, len(responseData) > maxGenerationLogResponseBytes)).
 		Msg("composite model proxy response")
 
-	for _, name := range []string{"Content-Type", "Cache-Control", "Retry-After", "X-Request-ID"} {
+	for _, name := range []string{"Content-Type", "Cache-Control", "Retry-After"} {
 		if value := response.Header.Get(name); value != "" {
 			c.Header(name, value)
 		}

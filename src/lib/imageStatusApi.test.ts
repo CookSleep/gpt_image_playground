@@ -5,6 +5,7 @@ import { queryImageStatuses } from './imageStatusApi'
 
 vi.mock('../auth/api', () => ({
   authFetch: vi.fn(),
+  REQUEST_ID_HEADER: 'X-Request-ID',
 }))
 
 describe('queryImageStatuses', () => {
@@ -20,13 +21,16 @@ describe('queryImageStatuses', () => {
     const profile = createDefaultOpenAIProfile({ baseUrl: 'https://api.example.com/v1', apiKey: 'test-key' })
     const ids = Array.from({ length: 101 }).map((_, idx) => `img_${idx}`)
 
-    await queryImageStatuses(profile, ids)
+    await queryImageStatuses(profile, ids, { requestId: 'frontend-request-direct' })
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
     const firstUrl = new URL(String(fetchMock.mock.calls[0][0]))
     const secondUrl = new URL(String(fetchMock.mock.calls[1][0]))
     expect(firstUrl.searchParams.get('request_ids')?.split(',')).toHaveLength(100)
     expect(secondUrl.searchParams.get('request_ids')?.split(',')).toHaveLength(1)
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1]?.headers as Record<string, string>)['X-Request-ID']).toBe('frontend-request-direct')
+    }
   })
 
   it('parses status texts for Agent display', async () => {
@@ -56,10 +60,11 @@ describe('queryImageStatuses', () => {
     }))
     const profile = createDefaultOpenAIProfile({ baseUrl: 'https://api.example.com/v1', apiKey: 'oidc-api-key' })
 
-    const result = await queryImageStatuses(profile, ['img_backend'], { viaBackend: true })
+    const result = await queryImageStatuses(profile, ['img_backend'], { viaBackend: true, requestId: 'frontend-request-a' })
 
     expect(authFetch).toHaveBeenCalledWith('/api/v1/images/status', {
       method: 'POST',
+      headers: { 'X-Request-ID': 'frontend-request-a' },
       body: JSON.stringify({ api_key: 'oidc-api-key', request_ids: ['img_backend'] }),
       cache: 'no-store',
     })

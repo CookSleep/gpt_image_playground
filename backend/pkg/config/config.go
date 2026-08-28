@@ -13,6 +13,7 @@ import (
 // Config 应用配置（来自 YAML 文件）
 type Config struct {
 	Server         ServerConfig         `yaml:"server"`
+	Log            LogConfig            `yaml:"log"`
 	Database       DatabaseConfig       `yaml:"database"`
 	JWT            JWTConfig            `yaml:"jwt"`
 	OIDC           OIDCConfig           `yaml:"oidc"`
@@ -20,6 +21,15 @@ type Config struct {
 	ModelWhitelist ModelWhitelistConfig `yaml:"model_whitelist"`
 	InnerAPI       InnerAPIConfig       `yaml:"inner_api_rpc"`
 	FileAPI        FileAPIConfig        `yaml:"file_api"`
+}
+
+// LogConfig 控制日志级别、落盘和文件轮转。
+type LogConfig struct {
+	Level      string `yaml:"level"`
+	File       string `yaml:"file"`
+	MaxSizeMB  int    `yaml:"max_size_mb"`
+	MaxBackups int    `yaml:"max_backups"`
+	MaxAgeDays int    `yaml:"max_age_days"`
 }
 
 // ModelWhitelistConfig 控制前端按使用场景展示的模型。空列表表示不限制。
@@ -70,17 +80,12 @@ func (a AdminConfig) IsAdminEmail(email string) bool {
 
 // ServerConfig 服务器配置
 type ServerConfig struct {
-	Host          string   `yaml:"host"`
-	Port          int      `yaml:"port"`
-	Environment   string   `yaml:"environment"`
-	LogLevel      string   `yaml:"log_level"`
-	LogFile       string   `yaml:"log_file"`
-	LogMaxSizeMB  int      `yaml:"log_max_size_mb"`
-	LogMaxBackups int      `yaml:"log_max_backups"`
-	LogMaxAgeDays int      `yaml:"log_max_age_days"`
-	BaseURL       string   `yaml:"base_url"`     // 后端对外基础地址，例如 https://app.example.com
-	FrontendURL   string   `yaml:"frontend_url"` // 前端入口地址，登录完成后回跳
-	CORSOrigins   []string `yaml:"cors_origins"`
+	Host        string   `yaml:"host"`
+	Port        int      `yaml:"port"`
+	Environment string   `yaml:"environment"`
+	BaseURL     string   `yaml:"base_url"`     // 后端对外基础地址，例如 https://app.example.com
+	FrontendURL string   `yaml:"frontend_url"` // 前端入口地址，登录完成后回跳
+	CORSOrigins []string `yaml:"cors_origins"`
 }
 
 // DatabaseConfig 数据库配置
@@ -141,6 +146,33 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", resolved, err)
 	}
+	// 兼容旧配置中的 server.log_*，新 log 段始终优先。
+	var legacy struct {
+		Server struct {
+			Level      string `yaml:"log_level"`
+			File       string `yaml:"log_file"`
+			MaxSizeMB  int    `yaml:"log_max_size_mb"`
+			MaxBackups int    `yaml:"log_max_backups"`
+			MaxAgeDays int    `yaml:"log_max_age_days"`
+		} `yaml:"server"`
+	}
+	if err := yaml.Unmarshal(data, &legacy); err == nil {
+		if cfg.Log.Level == "" {
+			cfg.Log.Level = legacy.Server.Level
+		}
+		if cfg.Log.File == "" {
+			cfg.Log.File = legacy.Server.File
+		}
+		if cfg.Log.MaxSizeMB == 0 {
+			cfg.Log.MaxSizeMB = legacy.Server.MaxSizeMB
+		}
+		if cfg.Log.MaxBackups == 0 {
+			cfg.Log.MaxBackups = legacy.Server.MaxBackups
+		}
+		if cfg.Log.MaxAgeDays == 0 {
+			cfg.Log.MaxAgeDays = legacy.Server.MaxAgeDays
+		}
+	}
 
 	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
@@ -180,18 +212,18 @@ func (c *Config) applyDefaults() {
 	if c.Server.Environment == "" {
 		c.Server.Environment = "development"
 	}
-	if c.Server.LogLevel == "" {
-		c.Server.LogLevel = "info"
+	if c.Log.Level == "" {
+		c.Log.Level = "info"
 	}
-	c.Server.LogFile = strings.TrimSpace(c.Server.LogFile)
-	if c.Server.LogMaxSizeMB == 0 {
-		c.Server.LogMaxSizeMB = 100
+	c.Log.File = strings.TrimSpace(c.Log.File)
+	if c.Log.MaxSizeMB == 0 {
+		c.Log.MaxSizeMB = 100
 	}
-	if c.Server.LogMaxBackups == 0 {
-		c.Server.LogMaxBackups = 10
+	if c.Log.MaxBackups == 0 {
+		c.Log.MaxBackups = 10
 	}
-	if c.Server.LogMaxAgeDays == 0 {
-		c.Server.LogMaxAgeDays = 30
+	if c.Log.MaxAgeDays == 0 {
+		c.Log.MaxAgeDays = 30
 	}
 	if c.Database.Port == 0 {
 		c.Database.Port = 5432
@@ -255,8 +287,8 @@ func normalizeModelWhitelist(models []string) []string {
 
 // Validate 校验关键字段
 func (c *Config) Validate() error {
-	if c.Server.LogMaxSizeMB < 1 || c.Server.LogMaxBackups < 1 || c.Server.LogMaxAgeDays < 1 {
-		return errors.New("server log rotation values must be positive")
+	if c.Log.MaxSizeMB < 1 || c.Log.MaxBackups < 1 || c.Log.MaxAgeDays < 1 {
+		return errors.New("log rotation values must be positive")
 	}
 	if c.JWT.SecretKey == "" {
 		return errors.New("jwt.secret_key is required")

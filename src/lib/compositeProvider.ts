@@ -44,6 +44,7 @@ export const COMPOSITE_IMAGE_EDIT_PROVIDER: CustomProviderDefinition = {
     statusPath: 'status',
     successValues: ['COMPLETED'],
     failureValues: ['FAILED', 'CANCELED'],
+    pendingValues: ['IN_QUEUE', 'IN_PROGRESS'],
     errorPath: 'error.message',
     result: {
       imageUrlPaths: ['images.*.url'],
@@ -59,6 +60,7 @@ export const COMPOSITE_IMAGE_EDIT_PROVIDER: CustomProviderDefinition = {
     statusPath: 'status',
     successValues: ['COMPLETED'],
     failureValues: ['FAILED', 'CANCELED'],
+    pendingValues: ['IN_QUEUE', 'IN_PROGRESS'],
     errorPath: 'error.message',
     result: {
       imageUrlPaths: ['images.*.url'],

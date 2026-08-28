@@ -2,16 +2,18 @@ server:
   host: 0.0.0.0
   port: 8080
   environment: development        # development | production
-  log_level: info                 # debug | info | warn | error
-  log_file: ""                    # 留空仅写 stdout；Docker 落盘可填 /app/logs/backend.log
-  log_max_size_mb: 100            # 单个日志文件达到该大小后轮转
-  log_max_backups: 10             # 最多保留的旧日志文件数量
-  log_max_age_days: 30            # 旧日志最长保留天数
   base_url: http://localhost:8080 # 后端对外基础地址，OIDC 回调拼接用
   frontend_url: http://localhost:5173 # 登录完成后回跳的前端入口
   cors_origins:
     - http://localhost:5173
     - http://localhost:3000
+
+log:
+  level: info                      # debug | info | warn | error
+  file: ""                        # 留空仅写 stdout；Docker 落盘可填 /app/logs/backend.log
+  max_size_mb: 100                # 单个日志文件达到该大小后轮转
+  max_backups: 10                 # 最多保留的旧日志文件数量
+  max_age_days: 30                # 旧日志最长保留天数
 
 database:
   host: localhost

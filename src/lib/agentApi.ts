@@ -1,4 +1,5 @@
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
+import { REQUEST_ID_HEADER } from '../auth/api'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { appendStreamingFormatHint, createImageStatusRequestId, maybeAppendStreamingHint, getApiErrorMessage, MIME_MAP, normalizeBase64Image, pickActualParams } from './imageApiShared'
 
@@ -689,6 +690,7 @@ async function parseAgentStreamResponse(
 
 export async function callAgentResponsesApi(opts: {
   settings: AppSettings
+  requestId?: string
   profile: ApiProfile
   params: TaskParams
   input: unknown
@@ -729,6 +731,7 @@ export async function callAgentResponsesApi(opts: {
       method: 'POST',
       headers: {
         ...createHeaders(profile),
+        ...(opts.requestId ? { [REQUEST_ID_HEADER]: opts.requestId } : {}),
         'x-client-request-id': imageStatusRequestId,
       },
       cache: 'no-store',
@@ -830,6 +833,7 @@ export interface BatchImageCallResult {
  */
 export async function callBatchImageSingle(opts: {
   profile: ApiProfile
+  requestId?: string
   params: TaskParams
   batchItemId: string
   prompt: string
@@ -906,6 +910,7 @@ export async function callBatchImageSingle(opts: {
       method: 'POST',
       headers: {
         ...createHeaders(profile),
+        ...(opts.requestId ? { [REQUEST_ID_HEADER]: opts.requestId } : {}),
         'x-client-request-id': imageStatusRequestId,
       },
       cache: 'no-store',

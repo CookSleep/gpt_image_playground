@@ -5,6 +5,7 @@ import { callBackendImageApi } from './backendImageApi'
 
 vi.mock('../auth/api', () => ({
   authFetch: vi.fn(),
+  REQUEST_ID_HEADER: 'X-Request-ID',
 }))
 
 function project(): Project {
@@ -22,6 +23,7 @@ function project(): Project {
 function task(): TaskRecord {
   return {
     id: 'task-a',
+    requestId: 'frontend-request-a',
     projectId: 'project/a',
     prompt: '画一张图',
     params: { ...DEFAULT_PARAMS },
@@ -69,6 +71,7 @@ describe('callBackendImageApi', () => {
 
     expect(authFetch).toHaveBeenCalledWith('/api/v1/projects/project%2Fa/generations', expect.objectContaining({
       method: 'POST',
+      headers: { 'X-Request-ID': 'frontend-request-a' },
     }))
     const request = JSON.parse(vi.mocked(authFetch).mock.calls[0][1]?.body as string)
     expect(request).toMatchObject({

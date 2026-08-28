@@ -15,6 +15,7 @@ import (
 func newCompositeModelRouter(transport http.RoundTripper, authenticated bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
+	r.Use(middleware.RequestID())
 	api := r.Group("/api/v1", func(c *gin.Context) {
 		if authenticated {
 			c.Set(middleware.ContextKeyUserID, "user-a")
@@ -38,6 +39,9 @@ func TestCompositeModelHandlerForwardsAsyncRequests(t *testing.T) {
 		if req.UserAgent() != "gpt-image-playground-browser/1.0" {
 			t.Fatalf("unexpected upstream user agent: %q", req.UserAgent())
 		}
+		if req.Header.Get(middleware.RequestIDHeader) != "frontend-request-a" {
+			t.Fatalf("unexpected upstream request ID: %q", req.Header.Get(middleware.RequestIDHeader))
+		}
 		if requestCount == 1 {
 			if req.Method != http.MethodPost || req.URL.String() != "https://provider.example/api/v1/model/openai/gpt-image-2" {
 				t.Fatalf("unexpected submit request: %s %s", req.Method, req.URL)
@@ -59,6 +63,7 @@ func TestCompositeModelHandlerForwardsAsyncRequests(t *testing.T) {
 	submit.Header.Set(compositeAPIKeyHeader, "composite-key")
 	submit.Header.Set("Content-Type", "application/json")
 	submit.Header.Set("User-Agent", "gpt-image-playground-browser/1.0")
+	submit.Header.Set(middleware.RequestIDHeader, "frontend-request-a")
 	submitResponse := httptest.NewRecorder()
 	r.ServeHTTP(submitResponse, submit)
 	if submitResponse.Code != http.StatusAccepted || submitResponse.Body.String() != `{"request_id":"request-1"}` {
@@ -68,6 +73,7 @@ func TestCompositeModelHandlerForwardsAsyncRequests(t *testing.T) {
 	status := httptest.NewRequest(http.MethodGet, "/api/v1/model/openai/gpt-image-2/requests/request-1?verbose=true", nil)
 	status.Header.Set(compositeAPIKeyHeader, "composite-key")
 	status.Header.Set("User-Agent", "gpt-image-playground-browser/1.0")
+	status.Header.Set(middleware.RequestIDHeader, "frontend-request-a")
 	statusResponse := httptest.NewRecorder()
 	r.ServeHTTP(statusResponse, status)
 	if statusResponse.Code != http.StatusOK || statusResponse.Body.String() != `{"status":"COMPLETED","actual_cost":0.0375,"images":[]}` {

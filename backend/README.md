@@ -126,8 +126,9 @@ file_api:
 - `server.base_url` 后端对外基础地址（OIDC 回调拼接用）
 - `server.frontend_url` 登录完成后回跳的前端地址
 - `server.cors_origins` 允许跨域的前端来源；同源部署可留空
-- `server.log_file` 日志落盘路径；留空时仅写 stdout。配置后同时写 stdout 和文件
-- `server.log_max_size_mb` / `log_max_backups` / `log_max_age_days` 控制日志轮转，默认 100 MB / 10 个备份 / 30 天，旧文件自动压缩
+- `log.file` 日志落盘路径；留空时仅写 stdout。配置后同时写 stdout 和文件
+- `log.level` 控制日志级别；`log.max_size_mb` / `max_backups` / `max_age_days` 控制日志轮转，默认 100 MB / 10 个备份 / 30 天，旧文件自动压缩
+- 每个 HTTP 请求的访问日志和业务日志都包含相同的 `request_id`；前端生成 `X-Request-ID`，后端复用并转发给上游，同时通过响应头返回。没有该请求头时由后端生成
 - `jwt.secret_key` **必须**设为长随机串，泄漏即代表所有 token 失效
 - `jwt.expire_hours` access token 寿命，默认 24h
 - `jwt.refresh_hours` refresh token 寿命，默认 168h（7 天）
@@ -167,7 +168,7 @@ file_api:
 ```bash
 cd backend/deploy
 cp ../config/config.yaml.example config.yaml
-# 修改 config.yaml，将 server.log_file 设为 /app/logs/backend.log 后启动
+# 修改 config.yaml，将 log.file 设为 /app/logs/backend.log 后启动
 docker compose up -d
 ```
 

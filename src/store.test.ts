@@ -6,6 +6,7 @@ import type { AgentConversation, ExportData, Project, StoredImage, StoredImageTh
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 const authState = vi.hoisted(() => ({ accessToken: null as string | null }))
 vi.mock('./auth/api', () => ({
+  createRequestId: () => 'frontend-request-id',
   isAuthEnabled: () => true,
   getAccessToken: () => authState.accessToken,
 }))
@@ -828,6 +829,7 @@ describe('mask draft lifecycle in store actions', () => {
       await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
       expect(callBackendCompositeImageApi).toHaveBeenCalledWith(expect.objectContaining({
         apiKey: 'composite-key',
+        clientRequestId: 'frontend-request-id',
         model: 'openai/gpt-image-2',
         onRequestCreated: expect.any(Function),
       }))
@@ -837,6 +839,7 @@ describe('mask draft lifecycle in store actions', () => {
         dataUrl: 'data:image/png;base64,Y29tcG9zaXRl',
       }))
       expect(useStore.getState().tasks[0]).toMatchObject({
+        requestId: 'frontend-request-id',
         compositeRequestId: 'composite-request-1',
         compositeStatusUrl: 'https://provider.example/status/composite-request-1',
         actualCost: 0.0375,
@@ -1574,6 +1577,7 @@ describe('interrupted OpenAI running tasks', () => {
       apiKey: 'composite-key',
       model: 'openai/gpt-image-2',
       requestId: 'composite-request',
+      clientRequestId: 'frontend-request-id',
       params: compositeTask.params,
     }))
     await vi.waitFor(() => expect(useStore.getState().tasks.find((item) => item.id === compositeTask.id)?.status).toBe('done'))
@@ -1900,7 +1904,7 @@ describe('image status recovery', () => {
     await vi.waitFor(() => expect(useStore.getState().tasks.find((item) => item.id === runningTask.id)?.status).toBe('done'))
 
     const recovered = useStore.getState().tasks.find((item) => item.id === runningTask.id)!
-    expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_status_1'])
+    expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_status_1'], { requestId: 'frontend-request-id' })
     expect(fetchMock).toHaveBeenCalledWith('https://cos.example/a.png', expect.objectContaining({ cache: 'no-store' }))
     expect(recovered.imageStatusRecoverable).toBe(false)
     expect(recovered.outputImages).toHaveLength(1)
@@ -2064,7 +2068,7 @@ describe('image status recovery', () => {
     })
 
     await initStore()
-    await vi.waitFor(() => expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_agent_round_status']))
+    await vi.waitFor(() => expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_agent_round_status'], { requestId: 'frontend-request-id' }))
 
     const restored = useStore.getState().agentConversations.find((item) => item.id === conversation.id)!
     expect(restored.rounds[0]).toMatchObject({
@@ -2143,7 +2147,7 @@ describe('image status recovery', () => {
     await initStore()
     await vi.waitFor(() => expect(queryImageStatuses).toHaveBeenCalledTimes(1))
 
-    expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_agent_shared_status'])
+    expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_agent_shared_status'], { requestId: 'frontend-request-id' })
   })
 
   it('does not query image status for a stopped Agent round after refresh', async () => {
@@ -2241,7 +2245,7 @@ describe('image status recovery', () => {
     await putAgentConversation(conversation)
 
     await initStore()
-    await vi.waitFor(() => expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_agent_stop_race']))
+    await vi.waitFor(() => expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_agent_stop_race'], { requestId: 'frontend-request-id' }))
     useStore.setState((state) => ({
       agentConversations: state.agentConversations.map((item) =>
         item.id === conversation.id
@@ -2295,7 +2299,7 @@ describe('image status recovery', () => {
 
       await initStore()
       await vi.advanceTimersByTimeAsync(0)
-      expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_status_invalid_key'])
+      expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_status_invalid_key'], { requestId: 'frontend-request-id' })
 
       useStore.setState((state) => ({
         tasks: state.tasks.map((item) =>
@@ -2373,7 +2377,7 @@ describe('image status recovery', () => {
 
       await initStore()
       await vi.advanceTimersByTimeAsync(0)
-      expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_agent_invalid_key'])
+      expect(queryImageStatuses).toHaveBeenCalledWith(expect.objectContaining({ id: openAIProfile.id }), ['img_agent_invalid_key'], { requestId: 'frontend-request-id' })
 
       useStore.setState((state) => ({
         agentConversations: state.agentConversations.map((item) =>

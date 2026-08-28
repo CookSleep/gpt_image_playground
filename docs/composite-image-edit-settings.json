@@ -43,6 +43,7 @@
         "statusPath": "status",
         "successValues": ["COMPLETED"],
         "failureValues": ["FAILED", "CANCELED"],
+        "pendingValues": ["IN_QUEUE", "IN_PROGRESS"],
         "errorPath": "error.message",
         "result": {
           "imageUrlPaths": ["images.*.url"],
@@ -59,6 +60,7 @@
         "statusPath": "status",
         "successValues": ["COMPLETED"],
         "failureValues": ["FAILED", "CANCELED"],
+        "pendingValues": ["IN_QUEUE", "IN_PROGRESS"],
         "errorPath": "error.message",
         "result": {
           "imageUrlPaths": ["images.*.url"],

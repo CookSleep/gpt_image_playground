@@ -1,4 +1,5 @@
 import { DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type CustomProviderDefinition, type CustomProviderPollMapping, type CustomProviderResultMapping, type CustomProviderSubmitMapping, type ImageApiResponse, type ImageResponseItem, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
+import { REQUEST_ID_HEADER } from '../auth/api'
 import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import {
@@ -83,9 +84,10 @@ function normalizeImageApiPayload(value: unknown): ImageApiResponse {
   return { data: [] }
 }
 
-function createRequestHeaders(profile: ApiProfile): Record<string, string> {
+function createRequestHeaders(profile: ApiProfile, requestId?: string): Record<string, string> {
   return {
     Authorization: `Bearer ${profile.apiKey}`,
+    ...(requestId ? { [REQUEST_ID_HEADER]: requestId } : {}),
   }
 }
 
@@ -563,7 +565,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
-  const requestHeaders = createRequestHeaders(profile)
+  const requestHeaders = createRequestHeaders(profile, opts.requestId)
   const imageStatusRequestId = createImageStatusRequestId()
   opts.onImageStatusRequestCreated?.({ requestId: imageStatusRequestId })
   const paths = createOpenAICompatiblePaths()
@@ -707,11 +709,12 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-function getTaskState(payload: unknown, poll: CustomProviderPollMapping): 'success' | 'failure' | 'pending' {
+function getTaskState(payload: unknown, poll: CustomProviderPollMapping): 'success' | 'failure' | 'pending' | 'invalid' {
   const status = getByPath(payload, poll.statusPath)
   const statusText = typeof status === 'string' ? status : String(status ?? '')
   if (poll.successValues.includes(statusText)) return 'success'
   if (poll.failureValues.includes(statusText)) return 'failure'
+  if (poll.pendingValues && !poll.pendingValues.includes(statusText)) return 'invalid'
   return 'pending'
 }
 
@@ -893,7 +896,7 @@ async function extractCustomImages(payload: unknown, result: CustomProviderResul
 }
 
 async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: CallApiOptions, profile: ApiProfile, controller: AbortController, proxyConfig: ReturnType<typeof readClientDevProxyConfig>, useApiProxy: boolean): Promise<unknown> {
-  const requestHeaders = createRequestHeaders(profile)
+  const requestHeaders = createRequestHeaders(profile, opts.requestId)
   const context = createCustomProviderContext(opts, profile)
   const method = mapping.method ?? 'POST'
   const contentType = mapping.contentType ?? 'json'
@@ -935,9 +938,10 @@ async function pollCustomTaskResult(
   taskId: string,
   mime: string,
   signal?: AbortSignal,
+  requestId?: string,
 ): Promise<CallApiResult> {
   const proxyConfig = readClientDevProxyConfig()
-  const requestHeaders = createRequestHeaders(profile)
+  const requestHeaders = createRequestHeaders(profile, requestId)
   const startedAt = Date.now()
   const timeoutMs = (poll.timeoutSeconds ?? profile.timeout ?? 600) * 1000
   const maxRetries = poll.maxRetries ?? 3
@@ -997,6 +1001,10 @@ async function pollCustomTaskResult(
       const message = getByPath(taskPayload, poll.errorPath) || getByPath(taskPayload, 'message') || getByPath(taskPayload, 'data.fail_reason') || getByPath(taskPayload, 'error.message')
       throw new Error(typeof message === 'string' && message.trim() ? message : '异步任务失败')
     }
+    if (state === 'invalid') {
+      const status = getByPath(taskPayload, poll.statusPath)
+      throw new Error(`异步任务返回未知状态：${String(status ?? '') || '(empty)'}`)
+    }
     if (state === 'success') {
       try {
         const resultPayload = poll.resultPath
@@ -1025,11 +1033,12 @@ export async function getCustomQueuedImageResult(
   taskId: string,
   params: TaskParams,
   isEdit = false,
+  requestId?: string,
 ): Promise<CallApiResult> {
   const poll = isEdit && customProvider.editPoll ? customProvider.editPoll : customProvider.poll
   if (!poll) throw new Error('自定义异步任务缺少 poll 配置')
   const mime = MIME_MAP[params.output_format] || 'image/png'
-  return pollCustomTaskResult(profile, poll, taskId, mime)
+  return pollCustomTaskResult(profile, poll, taskId, mime, undefined, requestId)
 }
 
 async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile, customProvider: CustomProviderDefinition): Promise<CallApiResult> {
@@ -1066,7 +1075,7 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
       clearTimeout(timeoutId)
       timeoutId = null
     }
-    return pollCustomTaskResult(profile, pollMapping, taskId, mime, controller.signal)
+    return pollCustomTaskResult(profile, pollMapping, taskId, mime, controller.signal, opts.requestId)
   } finally {
     if (timeoutId) clearTimeout(timeoutId)
   }
@@ -1130,7 +1139,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
-  const requestHeaders = createRequestHeaders(profile)
+  const requestHeaders = createRequestHeaders(profile, opts.requestId)
   const imageStatusRequestId = createImageStatusRequestId()
   opts.onImageStatusRequestCreated?.({ requestId: imageStatusRequestId })
   const controller = new AbortController()

@@ -223,6 +223,9 @@ function normalizePollMapping(value: unknown, fallback?: CustomProviderPollMappi
     statusPath,
     successValues: normalizeStringArray(record.successValues, fallback?.successValues ?? ['SUCCESS', 'succeeded', 'completed', 'COMPLETED']),
     failureValues: normalizeStringArray(record.failureValues, fallback?.failureValues ?? ['FAILURE', 'failed', 'error', 'FAILED', 'cancelled']),
+    pendingValues: record.pendingValues !== undefined
+      ? normalizeStringArray(record.pendingValues, [])
+      : fallback?.pendingValues,
     errorPath: typeof record.errorPath === 'string' && record.errorPath.trim() ? record.errorPath.trim() : fallback?.errorPath,
     resultPath: typeof record.resultPath === 'string' && record.resultPath.trim() ? record.resultPath.trim() : fallback?.resultPath,
     resultMethod: normalizeRequestMethod(record.resultMethod, fallback?.resultMethod ?? 'GET'),

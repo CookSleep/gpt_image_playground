@@ -60,7 +60,7 @@ func (h *FileAPIHandler) Proxy(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxFileProxyRequestBytes)
 		discardedBytes, err := io.Copy(io.Discard, c.Request.Body)
 		if err != nil {
-			log.Warn().
+			log.Ctx(c.Request.Context()).Warn().
 				Err(err).
 				Int64("discarded_body_bytes", discardedBytes).
 				Str("user_id", userID).
@@ -68,7 +68,7 @@ func (h *FileAPIHandler) Proxy(c *gin.Context) {
 				Msg("File API request body discard failed")
 			c.Header("Connection", "close")
 		}
-		log.Warn().
+		log.Ctx(c.Request.Context()).Warn().
 			Int64("discarded_body_bytes", discardedBytes).
 			Str("user_id", userID).
 			Str("provider", c.GetString(middleware.ContextKeyProvider)).
@@ -106,6 +106,7 @@ func (h *FileAPIHandler) Proxy(c *gin.Context) {
 	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(h.cfg.DeveloperKey))
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", contentType)
+	middleware.SetRequestIDHeader(request)
 	request.ContentLength = c.Request.ContentLength
 
 	response, err := h.client.Do(request)
@@ -115,7 +116,7 @@ func (h *FileAPIHandler) Proxy(c *gin.Context) {
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"code": http.StatusRequestEntityTooLarge, "message": "file request is too large"})
 			return
 		}
-		log.Error().Err(err).Str("method", c.Request.Method).Str("upstream_url", endpoint).Str("user_id", userID).Msg("File API proxy response")
+		log.Ctx(c.Request.Context()).Error().Err(err).Str("method", c.Request.Method).Str("upstream_url", endpoint).Str("user_id", userID).Msg("File API proxy response")
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "File API 上游连接失败: " + err.Error()})
 		return
 	}

@@ -53,7 +53,7 @@ import {
   storeImageReference,
   storeImageWithSize,
 } from './lib/db'
-import { getAccessToken, isAuthEnabled } from './auth/api'
+import { createRequestId, getAccessToken, isAuthEnabled } from './auth/api'
 import { buildLegacyProjectArchive, buildOnlineProjectArchive, clearLegacyProjectUploadId, createOnlineProject, deleteOnlineProject, deleteOnlineProjectImage, deleteOnlineProjectTask, downloadOnlineProject, downloadOnlineProjectImage, getAgentConversationReferencedImageIds, getLegacyProjectUploadId, getTaskReferencedImageIds, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectTask, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
 import { callImageApi } from './lib/api'
 import { callBackendImageApi } from './lib/backendImageApi'
@@ -449,6 +449,7 @@ function normalizeAgentRound(value: unknown, fallbackIndex: number): AgentRound 
 
   return {
     id: round.id,
+    ...(typeof round.requestId === 'string' ? { requestId: round.requestId } : {}),
     index: typeof round.index === 'number' ? round.index : fallbackIndex + 1,
     parentRoundId: typeof round.parentRoundId === 'string' ? round.parentRoundId : null,
     userMessageId: round.userMessageId,
@@ -2921,6 +2922,8 @@ async function recoverFalTask(taskId: string) {
   const { settings, tasks } = useStore.getState()
   const task = tasks.find((item) => item.id === taskId)
   if (!task || task.apiProvider !== 'fal' || !task.falRequestId || !task.falEndpoint || task.status === 'done') return
+  const requestId = task.requestId ?? createRequestId()
+  if (!task.requestId) void updateTaskInStore(taskId, { requestId })
 
   const profile = getFalRecoveryProfile(settings, task)
   if (!profile) {
@@ -2929,7 +2932,7 @@ async function recoverFalTask(taskId: string) {
   }
 
   try {
-    const result = await getFalQueuedImageResult(profile, task.falEndpoint, task.falRequestId, task.params)
+    const result = await getFalQueuedImageResult(profile, task.falEndpoint, task.falRequestId, task.params, requestId)
     clearFalRecoveryTimer(taskId)
     await completeRecoveredFalTask(task, result)
     return
@@ -2983,6 +2986,8 @@ async function completeRecoveredCompositeTask(task: TaskRecord, result: Awaited<
 async function recoverCompositeTask(taskId: string) {
   const task = useStore.getState().tasks.find((item) => item.id === taskId)
   if (!task || task.status === 'done' || !task.compositeRequestId) return
+  const requestId = task.requestId ?? createRequestId()
+  if (!task.requestId) void updateTaskInStore(taskId, { requestId })
   const apiOverride = task.apiOverride
   if (apiOverride?.platform?.trim().toLowerCase() !== 'composite' || !apiOverride.apiKey || !task.apiModel) {
     clearCompositeRecoveryTimer(taskId)
@@ -3006,6 +3011,7 @@ async function recoverCompositeTask(taskId: string) {
       apiKey: apiOverride.apiKey,
       model: task.apiModel,
       requestId: task.compositeRequestId,
+      clientRequestId: requestId,
       params: task.params,
     })
     if (!result) {
@@ -3272,7 +3278,13 @@ async function ensureAgentRoundImageStatusTask(conversation: AgentConversation, 
     task.agentRoundId === round.id &&
     task.imageStatusRequestIds?.some((requestId) => requestIds.includes(requestId)),
   )
-  if (existingTask) return existingTask
+  if (existingTask) {
+    if (!existingTask.requestId && round.requestId) {
+      void updateTaskInStore(existingTask.id, { requestId: round.requestId })
+      return { ...existingTask, requestId: round.requestId }
+    }
+    return existingTask
+  }
 
   const params = {
     ...useStore.getState().params,
@@ -3282,6 +3294,7 @@ async function ensureAgentRoundImageStatusTask(conversation: AgentConversation, 
   const projectId = useStore.getState().tasks.find((task) => task.agentConversationId === conversation.id)?.projectId
   const task: TaskRecord = {
     id: genId(),
+    requestId: round.requestId,
     ...(projectId ? { projectId } : {}),
     prompt: round.prompt,
     params,
@@ -3319,6 +3332,15 @@ async function recoverAgentRoundImageStatus(conversationId: string, roundId: str
   const conversation = agentConversations.find((item) => item.id === conversationId)
   const round = conversation?.rounds.find((item) => item.id === roundId)
   if (!conversation || !round || round.status === 'done' || !round.imageStatusRequestIds?.length) return
+  const requestId = round.requestId ?? createRequestId()
+  const requestRound = round.requestId ? round : { ...round, requestId }
+  if (!round.requestId) {
+    updateAgentConversation(conversationId, (current) => ({
+      ...current,
+      updatedAt: Date.now(),
+      rounds: current.rounds.map((item) => item.id === roundId ? requestRound : item),
+    }))
+  }
   if (!canRecoverAgentRoundImageStatus(round)) {
     clearAgentImageStatusRecoveryTimer(conversationId, roundId)
     return
@@ -3347,7 +3369,7 @@ async function recoverAgentRoundImageStatus(conversationId: string, roundId: str
 
   const timedOut = Date.now() - round.createdAt >= Math.max(0, profile.timeout * 1000)
   try {
-    const result = await queryImageStatuses(profile, requestIds)
+    const result = await queryImageStatuses(profile, requestIds, { requestId })
     const latestRound = useStore.getState().agentConversations
       .find((item) => item.id === conversationId)
       ?.rounds.find((item) => item.id === roundId)
@@ -3397,7 +3419,7 @@ async function recoverAgentRoundImageStatus(conversationId: string, roundId: str
     const allFailedRequests = [...failedRequests, ...timedOutRequests]
     clearAgentImageStatusRecoveryTimer(conversationId, roundId)
 
-    const task = await ensureAgentRoundImageStatusTask(conversation, round, profile, requestIds)
+    const task = await ensureAgentRoundImageStatusTask(conversation, requestRound, profile, requestIds)
     if (succeededRecords.length > 0) {
       await completeRecoveredImageStatusTask(task, succeededRecords, allFailedRequests)
       return
@@ -3428,7 +3450,7 @@ async function recoverAgentRoundImageStatus(conversationId: string, roundId: str
 
     clearAgentImageStatusRecoveryTimer(conversationId, roundId)
     const error = err instanceof Error ? err.message : String(err)
-    const task = await ensureAgentRoundImageStatusTask(conversation, round, profile, requestIds)
+    const task = await ensureAgentRoundImageStatusTask(conversation, requestRound, profile, requestIds)
     updateTaskInStore(task.id, {
       status: 'error',
       error,
@@ -3509,6 +3531,8 @@ async function recoverImageStatusTask(taskId: string) {
   const task = tasks.find((item) => item.id === taskId)
   const requestIds = task?.imageStatusRequestIds ?? []
   if (!task || task.status === 'done' || (task.apiProvider ?? 'openai') === 'fal' || requestIds.length === 0) return
+  const requestId = task.requestId ?? createRequestId()
+  if (!task.requestId) void updateTaskInStore(taskId, { requestId })
   if (!canRecoverTaskImageStatus(task)) {
     clearImageStatusRecoveryTimer(taskId)
     return
@@ -3533,8 +3557,8 @@ async function recoverImageStatusTask(taskId: string) {
       : undefined
     const viaBackend = project?.storage === 'online' && Boolean(project.remoteId) && (task.apiProvider ?? 'openai') === 'openai' && Boolean(task.apiOverride?.apiKey)
     const result = viaBackend
-      ? await queryImageStatuses(profile, requestIds, { viaBackend: true })
-      : await queryImageStatuses(profile, requestIds)
+      ? await queryImageStatuses(profile, requestIds, { viaBackend: true, requestId })
+      : await queryImageStatuses(profile, requestIds, { requestId })
     const latestTask = useStore.getState().tasks.find((item) => item.id === taskId)
     if (!latestTask || !canRecoverTaskImageStatus(latestTask)) {
       clearImageStatusRecoveryTimer(taskId)
@@ -4154,6 +4178,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   const projectId = getActiveTaskProjectId() ?? useStore.getState().createProject(prompt.trim(), { autoRecord: true })
   const task: TaskRecord = {
     id: taskId,
+    requestId: createRequestId(),
     ...(projectId ? { projectId } : {}),
     prompt: prompt.trim(),
     params: taskParams,
@@ -5110,6 +5135,7 @@ export async function submitAgentMessage() {
   }
   const round: AgentRound = {
     id: roundId,
+    requestId: createRequestId(),
     index: shouldAppendToEditingRound && editingRound ? editingRound.index : parentPath.length + 1,
     parentRoundId,
     ...(editingRoundHasErrorAssistantMessage && editingRoundAssistantMessage ? { assistantMessageId: editingRoundAssistantMessage.id } : {}),
@@ -5232,6 +5258,7 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
         round.id === sourceRound.id
           ? {
               ...round,
+              requestId: createRequestId(),
               outputTaskIds: [],
               responseId: undefined,
               responseOutput: undefined,
@@ -5256,6 +5283,7 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
   const newUserMessageId = genId()
   const newRound: AgentRound = {
     id: newRoundId,
+    requestId: createRequestId(),
     index: sourceRound.index,
     parentRoundId: sourceRound.parentRoundId ?? null,
     userMessageId: newUserMessageId,
@@ -5311,6 +5339,14 @@ async function executeAgentRound(
     const round = conversation.rounds.find((item) => item.id === roundId)
     const userMessage = round ? conversation.messages.find((message) => message.id === round.userMessageId) : null
     if (!round || !userMessage) return
+    const requestId = round.requestId ?? createRequestId()
+    if (!round.requestId) {
+      updateAgentConversation(conversationId, (current) => ({
+        ...current,
+        updatedAt: Date.now(),
+        rounds: current.rounds.map((item) => item.id === roundId ? { ...item, requestId } : item),
+      }))
+    }
     const maskDataUrl = round.maskImageId ? await ensureImageCached(round.maskImageId) : undefined
     if (round.maskImageId && !maskDataUrl) throw new Error('遮罩图片已不存在')
 
@@ -5362,6 +5398,7 @@ async function executeAgentRound(
 
       const task: TaskRecord = {
         id: genId(),
+        requestId,
         ...(projectId ? { projectId } : {}),
         prompt: taskPrompt,
         params: options.taskParams ?? { ...params, n: 1 },
@@ -5517,6 +5554,7 @@ async function executeAgentRound(
     }) => {
       const result = await callImageApi({
         settings: imageRequestSettings,
+        requestId,
         prompt: replaceImageMentionsForApi(opts.prompt, opts.referenceImageDataUrls.length),
         params: opts.taskParams,
         inputImageDataUrls: opts.referenceImageDataUrls,
@@ -5663,6 +5701,7 @@ async function executeAgentRound(
             }
           : await callBatchImageSingle({
               profile: imageProfile,
+              requestId,
               params: taskParams,
               batchItemId: item.id,
               prompt: item.prompt,
@@ -5749,6 +5788,7 @@ async function executeAgentRound(
       let currentResponseOutputItems: ResponsesOutputItem[] = []
       const result = await callAgentResponsesApi({
         settings: requestSettings,
+        requestId,
         profile: activeProfile,
         params,
         input: apiInputForTurn,
@@ -5856,6 +5896,7 @@ async function executeAgentRound(
         }
         const task: TaskRecord = {
           id: genId(),
+          requestId,
           ...(projectId ? { projectId } : {}),
           prompt: image.revisedPrompt ?? round?.prompt ?? userMessage.content,
           params,
@@ -6143,6 +6184,8 @@ async function executeTask(taskId: string) {
     : null
   const backendManagesTaskRecord = Boolean(backendRequest && !task.transparentOutput)
   const updateExecutingTask = (patch: Partial<TaskRecord>) => updateTaskInStore(taskId, patch, !backendManagesTaskRecord)
+  const requestId = task.requestId ?? createRequestId()
+  if (!task.requestId) void updateExecutingTask({ requestId })
   let falRequestInfo: { requestId: string; endpoint: string } | null = task.falRequestId && task.falEndpoint
         ? { requestId: task.falRequestId, endpoint: task.falEndpoint }
     : null
@@ -6197,6 +6240,7 @@ async function executeTask(taskId: string) {
     const result = isCompositeRequest
       ? await callBackendCompositeImageApi({
           apiKey: task.apiOverride?.apiKey ?? '',
+          clientRequestId: requestId,
           model: activeProfile.model,
           prompt,
           params: task.params,
@@ -6252,7 +6296,7 @@ async function executeTask(taskId: string) {
       : backendRequest
       ? await callBackendImageApi({
           project: backendRequest.project,
-          task,
+          task: task.requestId ? task : { ...task, requestId },
           manageTaskRecord: backendManagesTaskRecord,
           apiKey: backendRequest.apiKey,
           provider: 'openai',
@@ -6270,6 +6314,7 @@ async function executeTask(taskId: string) {
         })
       : await callImageApi({
           settings: requestSettings,
+          requestId,
           prompt,
           params: task.params,
           inputImageDataUrls: inputDataUrls,
@@ -6727,6 +6772,7 @@ export async function retryTask(task: TaskRecord) {
   const taskId = genId()
   const newTask: TaskRecord = {
     id: taskId,
+    requestId: createRequestId(),
     ...(task.projectId ? { projectId: task.projectId } : {}),
     prompt: task.prompt,
     params: taskParams,
@@ -7030,6 +7076,8 @@ async function recoverCustomTask(taskId: string) {
   const { settings, tasks } = useStore.getState()
   const task = tasks.find((item) => item.id === taskId)
   if (!task || !task.customTaskId || task.status === 'done') return
+  const requestId = task.requestId ?? createRequestId()
+  if (!task.requestId) void updateTaskInStore(taskId, { requestId })
 
   const profile = getCustomRecoveryProfile(settings, task)
   const customProvider = task.apiProvider ? getCustomProviderDefinition(settings, task.apiProvider) : null
@@ -7040,7 +7088,7 @@ async function recoverCustomTask(taskId: string) {
   }
 
   try {
-    const result = await getCustomQueuedImageResult(profile, customProvider, task.customTaskId, task.params, task.inputImageIds.length > 0)
+    const result = await getCustomQueuedImageResult(profile, customProvider, task.customTaskId, task.params, task.inputImageIds.length > 0, requestId)
     clearCustomRecoveryTimer(taskId)
     await completeRecoveredCustomTask(task, result)
   } catch (err) {

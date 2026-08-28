@@ -435,6 +435,7 @@ export interface SubmitOptions {
 
 export interface StatusOptions {
   requestId: string
+  headers?: Record<string, string>
   logs?: boolean
   abortSignal?: AbortSignal
 }
@@ -484,6 +485,7 @@ function createQueueClient(config: ResolvedConfig) {
           query: { logs: options.logs ? '1' : '0' },
           path: `/requests/${options.requestId}/status`,
         }),
+        headers: options.headers,
         config,
         options: { signal: options.abortSignal, retry: QUEUE_STATUS_RETRY_CONFIG },
       })
@@ -497,6 +499,7 @@ function createQueueClient(config: ResolvedConfig) {
           try {
             const status = await client.status(endpointId, {
               requestId: options.requestId,
+              headers: options.headers,
               logs: options.logs ?? false,
               abortSignal: options.abortSignal,
             })
@@ -523,6 +526,7 @@ function createQueueClient(config: ResolvedConfig) {
           subdomain: 'queue',
           path: `/requests/${options.requestId}`,
         }),
+        headers: options.headers,
         config: { ...config, responseHandler: resultResponseHandler as ResponseHandler<unknown> },
         options: { signal: options.abortSignal, retry: QUEUE_RETRY_CONFIG },
       })
@@ -547,12 +551,13 @@ export function createMediaClient(userConfig: MediaClientConfig = {}): MediaClie
       options.onEnqueue?.(requestId)
       await queue.subscribeToStatus(endpointId, {
         requestId,
+        headers: options.headers,
         logs: options.logs,
         pollInterval: options.pollInterval,
         onQueueUpdate: options.onQueueUpdate,
         abortSignal: options.abortSignal,
       })
-      return queue.result<T>(endpointId, { requestId, abortSignal: options.abortSignal })
+      return queue.result<T>(endpointId, { requestId, headers: options.headers, abortSignal: options.abortSignal })
     },
   }
 }

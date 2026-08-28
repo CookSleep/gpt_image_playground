@@ -255,6 +255,7 @@ poll/editPoll 字段：
 - statusPath：查询响应状态字段路径。
 - successValues：成功状态值数组。
 - failureValues：失败状态值数组。
+- pendingValues：进行中状态值数组，可选；配置后，未命中成功、失败或进行中数组的状态会立即报错。
 - errorPath：失败原因路径，可选。
 - resultPath：状态变为成功后获取最终结果的接口路径，可选；省略时直接使用状态响应。
 - resultMethod：最终结果接口方法，可选，默认 GET。

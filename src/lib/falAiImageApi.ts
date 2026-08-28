@@ -1,5 +1,6 @@
 import { client } from './opentk_media_sdk'
 import type { ApiProfile, FalApiResponse, TaskParams } from '../types'
+import { REQUEST_ID_HEADER } from '../auth/api'
 import { DEFAULT_FAL_BASE_URL } from './apiProfiles'
 import {
   assertImageInputPayloadSize,
@@ -185,10 +186,12 @@ export async function getFalQueuedImageResult(
   endpoint: string,
   requestId: string,
   params: TaskParams,
+  clientRequestId?: string,
 ): Promise<CallApiResult> {
   configureFal(profile)
-  await client.queue.subscribeToStatus(endpoint, { requestId, logs: true })
-  const result = await client.queue.result(endpoint, { requestId })
+  const headers = clientRequestId ? { [REQUEST_ID_HEADER]: clientRequestId } : undefined
+  await client.queue.subscribeToStatus(endpoint, { requestId, headers, logs: true })
+  const result = await client.queue.result(endpoint, { requestId, headers })
   return parseFalResult(result.data as FalApiResponse, params, getFalCustomBaseUrlLabel(profile))
 }
 
@@ -211,6 +214,7 @@ export async function callFalAiImageApi(opts: CallApiOptions, profile: ApiProfil
     const input = await createFalRequestInput(opts)
     const result = await client.subscribe(endpoint, {
       input,
+      headers: opts.requestId ? { [REQUEST_ID_HEADER]: opts.requestId } : undefined,
       logs: true,
       onEnqueue: (requestId) => {
         opts.onFalRequestEnqueued?.({ requestId, endpoint })

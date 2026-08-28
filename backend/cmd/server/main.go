@@ -74,7 +74,7 @@ func main() {
 	}
 
 	// 2. 初始化日志（zerolog；gin-contrib/logger 直接用全局 logger）
-	logCloser, err := setupLogger(cfg.Server)
+	logCloser, err := setupLogger(cfg.Log, cfg.Server.Environment)
 	if err != nil {
 		log.Fatal().Err(err).Msg("setup logger failed")
 	}
@@ -118,8 +118,9 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
+	r.Use(middleware.RequestID())
 	r.Use(middleware.RecoveryMiddleware())
-	r.Use(ginlogger.SetLogger())
+	r.Use(requestLoggerMiddleware())
 	r.Use(buildCORS(cfg.Server.CORSOrigins))
 	r.Use(securityHeaders(cfg.Server.Environment))
 	r.Use(middleware.ErrorHandler())
@@ -182,18 +183,23 @@ func main() {
 }
 
 // setupLogger 配置 zerolog 全局 logger；配置文件路径后同时写 stdout 和轮转文件。
-func setupLogger(cfg config.ServerConfig) (io.Closer, error) {
+func setupLogger(cfg config.LogConfig, environment string) (io.Closer, error) {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	lvl, err := zerolog.ParseLevel(cfg.LogLevel)
+	lvl, err := zerolog.ParseLevel(cfg.Level)
 	if err != nil || lvl == zerolog.NoLevel {
 		lvl = zerolog.InfoLevel
 	}
 	zerolog.SetGlobalLevel(lvl)
 
-	var output io.Writer = os.Stdout
+	var stdout io.Writer = os.Stdout
+	if environment != "production" {
+		stdout = zerolog.ConsoleWriter{Out: os.Stdout}
+	}
+
+	var output io.Writer = stdout
 	var closer io.Closer
-	if cfg.LogFile != "" {
-		path := filepath.Clean(cfg.LogFile)
+	if cfg.File != "" {
+		path := filepath.Clean(cfg.File)
 		if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 			return nil, fmt.Errorf("create log directory: %w", err)
 		}
@@ -206,19 +212,24 @@ func setupLogger(cfg config.ServerConfig) (io.Closer, error) {
 		}
 		rotating := &lumberjack.Logger{
 			Filename:   path,
-			MaxSize:    cfg.LogMaxSizeMB,
-			MaxBackups: cfg.LogMaxBackups,
-			MaxAge:     cfg.LogMaxAgeDays,
+			MaxSize:    cfg.MaxSizeMB,
+			MaxBackups: cfg.MaxBackups,
+			MaxAge:     cfg.MaxAgeDays,
 			Compress:   true,
 		}
-		output = io.MultiWriter(os.Stdout, rotating)
+		fileOutput := zerolog.ConsoleWriter{Out: rotating, NoColor: true}
+		output = zerolog.MultiLevelWriter(stdout, fileOutput)
 		closer = rotating
 	}
-	if cfg.Environment != "production" {
-		output = zerolog.ConsoleWriter{Out: output}
-	}
 	log.Logger = zerolog.New(output).With().Timestamp().Logger()
+	zerolog.DefaultContextLogger = &log.Logger
 	return closer, nil
+}
+
+func requestLoggerMiddleware() gin.HandlerFunc {
+	return ginlogger.SetLogger(ginlogger.WithLogger(func(c *gin.Context, _ zerolog.Logger) zerolog.Logger {
+		return *log.Ctx(c.Request.Context())
+	}))
 }
 
 // buildCORS 任务 6.4：CORS 中间件
@@ -231,8 +242,8 @@ func buildCORS(origins []string) gin.HandlerFunc {
 	return cors.New(cors.Config{
 		AllowOrigins:     origins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-OIDC-Access-Token", "X-Upstream-API-Key"},
-		ExposeHeaders:    []string{"Content-Length"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-OIDC-Access-Token", "X-Upstream-API-Key", middleware.RequestIDHeader},
+		ExposeHeaders:    []string{"Content-Length", middleware.RequestIDHeader},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	})

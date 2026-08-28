@@ -22,9 +22,17 @@ export const OIDC_TOKEN_EXPIRY_KEY = 'auth.oidc_access_token_expire_at'
 const OIDC_REFRESH_SKEW_SEC = 60
 const FETCH_USER_CACHE_MS = 1000
 const AUTH_REQUEST_TIMEOUT_MS = 8000
+export const REQUEST_ID_HEADER = 'X-Request-ID'
 
 let fetchUserInFlight: { token: string; promise: Promise<PublicUser | null> } | null = null
 let fetchUserCache: { token: string; value: PublicUser | null; expiresAt: number } | null = null
+
+export function createRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID().replace(/-/g, '')
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`
+}
 
 export type Provider = {
   name: string
@@ -230,6 +238,7 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
   const accessToken = getAccessToken()
   const headers = new Headers(init.headers || {})
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+  if (!headers.has(REQUEST_ID_HEADER)) headers.set(REQUEST_ID_HEADER, createRequestId())
   const isFormData = typeof FormData !== 'undefined' && init.body instanceof FormData
   if (init.body && !isFormData && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
@@ -239,10 +248,10 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
   if (resp.status !== 401) return resp
 
   // 尝试 refresh
-  const refreshed = await refreshTokens(init.signal ?? undefined)
+  const refreshed = await refreshTokens(init.signal ?? undefined, headers.get(REQUEST_ID_HEADER) ?? undefined)
   if (!refreshed) return resp
 
-  const retryHeaders = new Headers(init.headers || {})
+  const retryHeaders = new Headers(headers)
   retryHeaders.set('Authorization', `Bearer ${refreshed.access_token}`)
   if (init.body && !isFormData && !retryHeaders.has('Content-Type')) {
     retryHeaders.set('Content-Type', 'application/json')
@@ -253,7 +262,10 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
 
 /** 列出可用的 OIDC 提供商 */
 export async function listProviders(): Promise<Provider[]> {
-  const resp = await fetch(url('/auth/providers'), { signal: AbortSignal.timeout(AUTH_REQUEST_TIMEOUT_MS) })
+  const resp = await fetch(url('/auth/providers'), {
+    headers: { [REQUEST_ID_HEADER]: createRequestId() },
+    signal: AbortSignal.timeout(AUTH_REQUEST_TIMEOUT_MS),
+  })
   if (!resp.ok) throw new Error(`list providers: ${resp.status}`)
   const data = (await resp.json()) as { providers: Provider[] }
   return data.providers || []
@@ -301,13 +313,13 @@ export async function fetchUser(): Promise<PublicUser | null> {
 }
 
 /** 刷新 token，失败返回 null 并清掉本地 token */
-export async function refreshTokens(signal?: AbortSignal): Promise<TokenPair | null> {
+export async function refreshTokens(signal?: AbortSignal, requestId = createRequestId()): Promise<TokenPair | null> {
   const refresh = getRefreshToken()
   if (!refresh) return null
   try {
     const resp = await fetch(url('/auth/refresh'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', [REQUEST_ID_HEADER]: requestId },
       body: JSON.stringify({ refresh_token: refresh }),
       signal,
     })

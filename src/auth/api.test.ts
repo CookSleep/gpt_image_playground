@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ACCESS_TOKEN_KEY,
   OIDC_ACCESS_TOKEN_KEY,
+  REFRESH_TOKEN_KEY,
   authFetch,
   fetchUser,
   getAuthBaseUrl,
@@ -82,6 +83,38 @@ describe('authFetch', () => {
     const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers
     expect(headers.get('Authorization')).toBe('Bearer token-a')
     expect(headers.has('Content-Type')).toBe(false)
+    expect(headers.get('X-Request-ID')).toMatch(/^[a-z0-9-]+$/)
+  })
+
+  it('preserves one request ID across an authentication retry', async () => {
+    vi.stubGlobal('window', { __APP_CONFIG__: { AUTH_BACKEND_URL: '' } })
+    const storage = new Map<string, string>([
+      [ACCESS_TOKEN_KEY, 'expired-token'],
+      [REFRESH_TOKEN_KEY, 'refresh-token'],
+    ])
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key: string) => storage.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
+      removeItem: vi.fn((key: string) => storage.delete(key)),
+    })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access_token: 'fresh-token',
+        refresh_token: 'fresh-refresh-token',
+        expires_in: 3600,
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await authFetch('/api/v1/projects', { headers: { 'X-Request-ID': 'frontend-request-a' } })
+
+    const firstHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers
+    const refreshHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>
+    const retryHeaders = fetchMock.mock.calls[2]?.[1]?.headers as Headers
+    expect(firstHeaders.get('X-Request-ID')).toBe('frontend-request-a')
+    expect(refreshHeaders['X-Request-ID']).toBe('frontend-request-a')
+    expect(retryHeaders.get('X-Request-ID')).toBe('frontend-request-a')
   })
 })
 

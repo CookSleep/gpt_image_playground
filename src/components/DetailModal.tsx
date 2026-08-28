@@ -271,6 +271,12 @@ export default function DetailModal() {
   const transparentOutputText = task.transparentOutput || task.params.transparent_output ? 'true' : 'false'
   const currentTransparentOutputFailed = Boolean(currentOutputImageId && task.transparentOutput && task.transparentOriginalImages?.[currentOutputImageIndex] === '')
   const outputCompressionText = task.params.output_compression == null ? '未设置' : String(task.params.output_compression)
+  const taskIds = [...new Set([
+    task.compositeRequestId,
+    task.falRequestId,
+    task.customTaskId,
+    ...(task.imageStatusRequestIds ?? []),
+  ].map((id) => id?.trim()).filter((id): id is string => Boolean(id)))]
 
   const formatTime = (ts: number | null) => {
     if (!ts) return ''
@@ -341,6 +347,26 @@ export default function DetailModal() {
       showToast('提示词已复制', 'success')
     } catch (err) {
       showToast(getClipboardFailureMessage('复制提示词失败', err), 'error')
+    }
+  }
+
+  const handleCopyRequestId = async () => {
+    if (!task.requestId) return
+    try {
+      await copyTextToClipboard(task.requestId)
+      showToast('request_id 已复制', 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制 request_id 失败', err), 'error')
+    }
+  }
+
+  const handleCopyTaskIds = async () => {
+    if (!taskIds.length) return
+    try {
+      await copyTextToClipboard(taskIds.join('\n'))
+      showToast(taskIds.length === 1 ? 'task_id 已复制' : 'task_id 已全部复制', 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制 task_id 失败', err), 'error')
     }
   }
 
@@ -1039,6 +1065,46 @@ export default function DetailModal() {
                 </div>
               )}
             </div>
+
+            {task.requestId && (
+              <div className="mb-4 flex min-w-0 items-center gap-2 text-xs">
+                <span className="shrink-0 text-gray-400 dark:text-gray-500">request_id</span>
+                <div className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap hide-scrollbar mask-edge-r pr-2">
+                  <span className="select-text font-mono font-medium text-gray-700 dark:text-gray-300">
+                    {task.requestId}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopyRequestId}
+                  className="shrink-0 rounded p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                  title="复制 request_id"
+                  aria-label="复制 request_id"
+                >
+                  <CopyIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
+            {taskIds.length > 0 && (
+              <div className="mb-4 flex min-w-0 items-center gap-2 text-xs">
+                <span className="shrink-0 text-gray-400 dark:text-gray-500">task_id</span>
+                <div className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap hide-scrollbar mask-edge-r pr-2">
+                  <span className="select-text font-mono font-medium text-gray-700 dark:text-gray-300">
+                    {taskIds.join(', ')}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopyTaskIds}
+                  className="shrink-0 rounded p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                  title={taskIds.length === 1 ? '复制 task_id' : '复制全部 task_id'}
+                  aria-label={taskIds.length === 1 ? '复制 task_id' : '复制全部 task_id'}
+                >
+                  <CopyIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
 
             {/* 时间 */}
             <div className="text-xs text-gray-400 dark:text-gray-500 mb-4">

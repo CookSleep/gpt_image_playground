@@ -119,7 +119,7 @@ func generationLogPayload(data []byte, truncated bool) any {
 
 func logGenerationRequest(c *gin.Context, req projectGenerationRequest) {
 	data, _ := json.Marshal(req)
-	log.Info().
+	log.Ctx(c.Request.Context()).Info().
 		Str("method", c.Request.Method).
 		Str("path", c.Request.URL.Path).
 		Str("user_id", c.GetString(middleware.ContextKeyUserID)).
@@ -127,8 +127,8 @@ func logGenerationRequest(c *gin.Context, req projectGenerationRequest) {
 		Msg("generation request")
 }
 
-func logGenerationUpstreamRequest(method, endpoint string, attempt int, body []byte) {
-	event := log.Info().
+func logGenerationUpstreamRequest(ctx context.Context, method, endpoint string, attempt int, body []byte) {
+	event := log.Ctx(ctx).Info().
 		Str("method", method).
 		Str("url", endpoint).
 		Int("attempt", attempt)
@@ -138,8 +138,8 @@ func logGenerationUpstreamRequest(method, endpoint string, attempt int, body []b
 	event.Msg("generation upstream request")
 }
 
-func logGenerationUpstream(method, endpoint string, attempt, status int, body []byte, err error) {
-	event := log.Info().
+func logGenerationUpstream(ctx context.Context, method, endpoint string, attempt, status int, body []byte, err error) {
+	event := log.Ctx(ctx).Info().
 		Str("method", method).
 		Str("url", endpoint).
 		Int("attempt", attempt)
@@ -336,7 +336,7 @@ func buildGenerationTaskRecord(req projectGenerationRequest, result *projectGene
 func (h *ProjectGenerationHandler) saveGenerationTaskRecordAsync(requestCtx context.Context, userID, projectID string, req projectGenerationRequest, result *projectGenerationResponse, status int, message string) {
 	task, err := buildGenerationTaskRecord(req, result, status, message, time.Now())
 	if err != nil {
-		log.Error().Err(err).Str("project_id", projectID).Str("task_id", req.TaskID).Msg("build generation task record failed")
+		log.Ctx(requestCtx).Error().Err(err).Str("project_id", projectID).Str("task_id", req.TaskID).Msg("build generation task record failed")
 		return
 	}
 	project := append(json.RawMessage(nil), req.Project...)
@@ -345,7 +345,7 @@ func (h *ProjectGenerationHandler) saveGenerationTaskRecordAsync(requestCtx cont
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		if _, err := h.projects.SaveTaskRecord(ctx, userID, projectID, strings.TrimSpace(req.ProjectTitle), req.TaskID, project, task); err != nil {
-			log.Error().Err(err).Str("project_id", projectID).Str("task_id", req.TaskID).Msg("save generation task record failed")
+			log.Ctx(ctx).Error().Err(err).Str("project_id", projectID).Str("task_id", req.TaskID).Msg("save generation task record failed")
 		}
 	}()
 }
@@ -467,6 +467,7 @@ func createUpstreamGenerationRequest(ctx context.Context, baseURL, userAgent str
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", userAgent)
 	request.Header.Set("x-client-request-id", req.RequestIDs[0])
+	middleware.SetRequestIDHeader(request)
 	return request, nil
 }
 
@@ -578,6 +579,7 @@ func createUpstreamResponsesRequest(ctx context.Context, baseURL, userAgent stri
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", userAgent)
 	request.Header.Set("x-client-request-id", requestID)
+	middleware.SetRequestIDHeader(request)
 	return request, nil
 }
 
@@ -632,16 +634,16 @@ func (h *ProjectGenerationHandler) generateResponses(c *gin.Context, userID, pro
 			c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
 			return nil
 		}
-		logGenerationUpstreamRequest(upstreamRequest.Method, upstreamRequest.URL.String(), 1, nil)
+		logGenerationUpstreamRequest(c.Request.Context(), upstreamRequest.Method, upstreamRequest.URL.String(), 1, nil)
 		upstreamResponse, err := h.client.Do(upstreamRequest)
 		if err != nil {
-			logGenerationUpstream(upstreamRequest.Method, upstreamRequest.URL.String(), 1, 0, nil, err)
+			logGenerationUpstream(c.Request.Context(), upstreamRequest.Method, upstreamRequest.URL.String(), 1, 0, nil, err)
 			c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "上游连接中断: " + err.Error()})
 			return nil
 		}
 		responseData, readErr := io.ReadAll(upstreamResponse.Body)
 		upstreamResponse.Body.Close()
-		logGenerationUpstream(upstreamRequest.Method, upstreamRequest.URL.String(), 1, upstreamResponse.StatusCode, responseData, readErr)
+		logGenerationUpstream(c.Request.Context(), upstreamRequest.Method, upstreamRequest.URL.String(), 1, upstreamResponse.StatusCode, responseData, readErr)
 		if readErr != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "read image provider response failed"})
 			return nil
@@ -752,6 +754,7 @@ func (h *ProjectGenerationHandler) Status(c *gin.Context) {
 	upstreamRequest.Header.Set("Authorization", "Bearer "+req.APIKey)
 	upstreamRequest.Header.Set("Accept", "application/json")
 	upstreamRequest.Header.Set("User-Agent", c.Request.UserAgent())
+	middleware.SetRequestIDHeader(upstreamRequest)
 	upstreamResponse, err := h.client.Do(upstreamRequest)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "上游连接中断: " + err.Error()})
@@ -779,7 +782,7 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 	var userID string
 	var projectID string
 	defer func() {
-		log.Info().
+		log.Ctx(c.Request.Context()).Info().
 			Str("method", c.Request.Method).
 			Str("path", c.Request.URL.Path).
 			Int("status", c.Writer.Status()).
@@ -858,16 +861,16 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
 		return
 	}
-	logGenerationUpstreamRequest(upstreamRequest.Method, upstreamRequest.URL.String(), 1, nil)
+	logGenerationUpstreamRequest(c.Request.Context(), upstreamRequest.Method, upstreamRequest.URL.String(), 1, nil)
 	upstreamResponse, err := h.client.Do(upstreamRequest)
 	if err != nil {
-		logGenerationUpstream(upstreamRequest.Method, upstreamRequest.URL.String(), 1, 0, nil, err)
+		logGenerationUpstream(c.Request.Context(), upstreamRequest.Method, upstreamRequest.URL.String(), 1, 0, nil, err)
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "上游连接中断: " + err.Error()})
 		return
 	}
 	defer upstreamResponse.Body.Close()
 	responseData, err := io.ReadAll(upstreamResponse.Body)
-	logGenerationUpstream(upstreamRequest.Method, upstreamRequest.URL.String(), 1, upstreamResponse.StatusCode, responseData, err)
+	logGenerationUpstream(c.Request.Context(), upstreamRequest.Method, upstreamRequest.URL.String(), 1, upstreamResponse.StatusCode, responseData, err)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "read image provider response failed"})
 		return

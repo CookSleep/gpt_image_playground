@@ -200,7 +200,7 @@ func (h *MaterialHandler) writeServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"code": "account_id_required", "message": err.Error()})
 		return
 	}
-	log.Error().Err(err).Str("user_id", c.GetString(middleware.ContextKeyUserID)).Msg("material management response")
+	log.Ctx(c.Request.Context()).Error().Err(err).Str("user_id", c.GetString(middleware.ContextKeyUserID)).Msg("material management response")
 	c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "素材接口失败: " + err.Error()})
 }
 
@@ -244,7 +244,7 @@ func (h *MaterialHandler) Upload(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "valid material file name required"})
 		return
 	}
-	log.Info().Str("user_id", userID).Str("file_name", fileName).Str("content_type", contentType).Int("size_bytes", len(data)).Msg("material upload request")
+	log.Ctx(c.Request.Context()).Info().Str("user_id", userID).Str("file_name", fileName).Str("content_type", contentType).Int("size_bytes", len(data)).Msg("material upload request")
 	result, err := h.materials.Upload(c.Request.Context(), userID, fileName, contentType, data)
 	if errors.Is(err, services.ErrMaterialUploadNotConfigured) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "message": err.Error()})
@@ -255,11 +255,11 @@ func (h *MaterialHandler) Upload(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		log.Error().Err(err).Str("user_id", userID).Msg("material upload response")
+		log.Ctx(c.Request.Context()).Error().Err(err).Str("user_id", userID).Msg("material upload response")
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "素材上传失败: " + err.Error()})
 		return
 	}
-	log.Info().Str("user_id", userID).Str("material_id", result.ID).Str("url", result.URL).Msg("material upload response")
+	log.Ctx(c.Request.Context()).Info().Str("user_id", userID).Str("material_id", result.ID).Str("url", result.URL).Msg("material upload response")
 	c.JSON(http.StatusCreated, gin.H{
 		"id": result.ID, "file_url": result.URL, "file_name": result.FileName,
 		"content_type": result.ContentType, "size_bytes": result.SizeBytes,

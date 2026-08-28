@@ -62,6 +62,7 @@ export interface CustomProviderPollMapping {
   statusPath: string
   successValues: string[]
   failureValues: string[]
+  pendingValues?: string[]
   errorPath?: string
   resultPath?: string
   resultMethod?: CustomProviderRequestMethod
@@ -172,6 +173,8 @@ export type TaskStatus = 'running' | 'done' | 'error'
 
 export interface TaskRecord {
   id: string
+  /** 前端生成的请求链路 ID，通过 X-Request-ID 传递 */
+  requestId?: string
   /** 所属项目 ID；旧版任务可能没有该字段 */
   projectId?: string
   prompt: string
@@ -307,6 +310,8 @@ export interface AgentMessage {
 
 export interface AgentRound {
   id: string
+  /** 当前轮次的请求链路 ID */
+  requestId?: string
   index: number
   parentRoundId?: string | null
   userMessageId: string
