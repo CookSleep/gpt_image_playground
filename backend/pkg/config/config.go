@@ -70,13 +70,17 @@ func (a AdminConfig) IsAdminEmail(email string) bool {
 
 // ServerConfig 服务器配置
 type ServerConfig struct {
-	Host        string   `yaml:"host"`
-	Port        int      `yaml:"port"`
-	Environment string   `yaml:"environment"`
-	LogLevel    string   `yaml:"log_level"`
-	BaseURL     string   `yaml:"base_url"`     // 后端对外基础地址，例如 https://app.example.com
-	FrontendURL string   `yaml:"frontend_url"` // 前端入口地址，登录完成后回跳
-	CORSOrigins []string `yaml:"cors_origins"`
+	Host          string   `yaml:"host"`
+	Port          int      `yaml:"port"`
+	Environment   string   `yaml:"environment"`
+	LogLevel      string   `yaml:"log_level"`
+	LogFile       string   `yaml:"log_file"`
+	LogMaxSizeMB  int      `yaml:"log_max_size_mb"`
+	LogMaxBackups int      `yaml:"log_max_backups"`
+	LogMaxAgeDays int      `yaml:"log_max_age_days"`
+	BaseURL       string   `yaml:"base_url"`     // 后端对外基础地址，例如 https://app.example.com
+	FrontendURL   string   `yaml:"frontend_url"` // 前端入口地址，登录完成后回跳
+	CORSOrigins   []string `yaml:"cors_origins"`
 }
 
 // DatabaseConfig 数据库配置
@@ -179,6 +183,16 @@ func (c *Config) applyDefaults() {
 	if c.Server.LogLevel == "" {
 		c.Server.LogLevel = "info"
 	}
+	c.Server.LogFile = strings.TrimSpace(c.Server.LogFile)
+	if c.Server.LogMaxSizeMB == 0 {
+		c.Server.LogMaxSizeMB = 100
+	}
+	if c.Server.LogMaxBackups == 0 {
+		c.Server.LogMaxBackups = 10
+	}
+	if c.Server.LogMaxAgeDays == 0 {
+		c.Server.LogMaxAgeDays = 30
+	}
 	if c.Database.Port == 0 {
 		c.Database.Port = 5432
 	}
@@ -241,6 +255,9 @@ func normalizeModelWhitelist(models []string) []string {
 
 // Validate 校验关键字段
 func (c *Config) Validate() error {
+	if c.Server.LogMaxSizeMB < 1 || c.Server.LogMaxBackups < 1 || c.Server.LogMaxAgeDays < 1 {
+		return errors.New("server log rotation values must be positive")
+	}
 	if c.JWT.SecretKey == "" {
 		return errors.New("jwt.secret_key is required")
 	}

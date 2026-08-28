@@ -2,15 +2,18 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 
 	"gpt-image-backend/internal/middleware"
 	"gpt-image-backend/pkg/config"
@@ -52,7 +55,8 @@ func (h *OIDCResourceHandler) Register(api *gin.RouterGroup) {
 
 // APIKeys 使用当前 OIDC access token 代理资源端点，token 不在后台保存。
 func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
-	if c.GetString(middleware.ContextKeyUserID) == "" {
+	userID := c.GetString(middleware.ContextKeyUserID)
+	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "unauthenticated"})
 		return
 	}
@@ -66,11 +70,18 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": oidcAccessTokenHeader + " is required"})
 		return
 	}
-	baseURL, ok := h.providers.ResourceBaseURL(c.GetString(middleware.ContextKeyProvider))
+	provider := c.GetString(middleware.ContextKeyProvider)
+	baseURL, ok := h.providers.ResourceBaseURL(provider)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "OIDC provider unavailable"})
 		return
 	}
+	log.Info().
+		Str("user_id", userID).
+		Str("provider", provider).
+		Str("scope", scope).
+		Str("resource_base_url", baseURL).
+		Msg("API Key filtering started")
 	request, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, strings.TrimRight(baseURL, "/")+"/oidc/resource/api-keys?status=active", nil)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": err.Error()})
@@ -91,6 +102,14 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "读取 API Key 上游回包失败"})
 		return
 	}
+	log.Info().
+		Str("user_id", userID).
+		Str("provider", provider).
+		Str("scope", scope).
+		Int("upstream_status", response.StatusCode).
+		Int("response_bytes", len(data)).
+		Str("content_type", response.Header.Get("Content-Type")).
+		Msg("API Key upstream response received")
 	// 避免前端 authFetch 把 Provider 的 401 误判为本项目 JWT 过期。
 	if response.StatusCode == http.StatusUnauthorized {
 		c.Data(upstreamUnauthorizedStatus, response.Header.Get("Content-Type"), data)
@@ -102,6 +121,11 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 	}
 	candidates, err := parseAPIKeyCandidates(data)
 	if err != nil {
+		log.Warn().Err(err).
+			Str("user_id", userID).
+			Str("provider", provider).
+			Str("scope", scope).
+			Msg("API Key upstream response parse failed")
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "API Key 上游回包格式无效"})
 		return
 	}
@@ -109,11 +133,57 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 	if scope == "agent" {
 		allowed = h.whitelist.Agent
 	}
+	if len(candidates) == 0 {
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(data, &raw); err == nil {
+			topLevelFields := make([]string, 0, len(raw))
+			for field := range raw {
+				topLevelFields = append(topLevelFields, field)
+			}
+			sort.Strings(topLevelFields)
+			dataFields := []string{}
+			if inner := raw["data"]; len(inner) > 0 {
+				var nested map[string]json.RawMessage
+				if err := json.Unmarshal(inner, &nested); err == nil {
+					for field := range nested {
+						dataFields = append(dataFields, field)
+					}
+					sort.Strings(dataFields)
+				}
+			}
+			log.Warn().
+				Str("user_id", userID).
+				Str("provider", provider).
+				Str("scope", scope).
+				Strs("top_level_fields", topLevelFields).
+				Strs("data_fields", dataFields).
+				Msg("API Key upstream response contains no parseable candidates")
+		}
+	}
+	log.Info().
+		Str("user_id", userID).
+		Str("provider", provider).
+		Str("scope", scope).
+		Int("candidate_count", len(candidates)).
+		Strs("allowed_models", allowed).
+		Msg("API Key candidates parsed")
 	items, err := h.filterAPIKeys(c.Request.Context(), baseURL, candidates, allowed)
 	if err != nil {
+		log.Error().Err(err).
+			Str("user_id", userID).
+			Str("provider", provider).
+			Str("scope", scope).
+			Msg("API Key model filtering failed")
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "检查 API Key 模型失败: " + err.Error()})
 		return
 	}
+	log.Info().
+		Str("user_id", userID).
+		Str("provider", provider).
+		Str("scope", scope).
+		Int("candidate_count", len(candidates)).
+		Int("retained_count", len(items)).
+		Msg("API Key filtering completed")
 	c.JSON(http.StatusOK, gin.H{"items": items, "count": len(items)})
 }
 
@@ -241,14 +311,36 @@ func (h *OIDCResourceHandler) filterAPIKeys(ctx context.Context, baseURL string,
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			keyHash := sha256.Sum256([]byte(candidate.key))
+			keyFingerprint := fmt.Sprintf("%x", keyHash[:6])
 			select {
 			case semaphore <- struct{}{}:
 				defer func() { <-semaphore }()
 			case <-ctx.Done():
 				return
 			}
-			payload, _, status, err := h.fetchModelList(ctx, baseURL, candidate.key)
+			payload, data, status, err := h.fetchModelList(ctx, baseURL, candidate.key)
+			if status == http.StatusForbidden {
+				var upstreamError struct {
+					Code string `json:"code"`
+				}
+				if json.Unmarshal(data, &upstreamError) == nil && upstreamError.Code == "INSUFFICIENT_BALANCE" {
+					available[index] = true
+					log.Info().
+						Str("api_key_fingerprint", keyFingerprint).
+						Int("candidate_index", index).
+						Str("upstream_code", upstreamError.Code).
+						Msg("API Key retained despite insufficient balance")
+					return
+				}
+			}
 			if status == http.StatusUnauthorized || status == http.StatusForbidden {
+				log.Warn().
+					Str("api_key_fingerprint", keyFingerprint).
+					Int("candidate_index", index).
+					Int("upstream_status", status).
+					Str("response", strings.TrimSpace(string(data))).
+					Msg("API Key removed because model request was rejected")
 				return
 			}
 			if err != nil || status < http.StatusOK || status >= http.StatusMultipleChoices {
@@ -259,9 +351,31 @@ func (h *OIDCResourceHandler) filterAPIKeys(ctx context.Context, baseURL string,
 					firstErr = err
 					cancel()
 				})
+				log.Error().Err(err).
+					Str("api_key_fingerprint", keyFingerprint).
+					Int("candidate_index", index).
+					Int("upstream_status", status).
+					Msg("API Key model request failed")
 				return
 			}
+			modelIDs := make([]string, 0, len(payload.Data))
+			for _, raw := range payload.Data {
+				var model struct {
+					ID string `json:"id"`
+				}
+				if err := json.Unmarshal(raw, &model); err == nil && model.ID != "" {
+					modelIDs = append(modelIDs, model.ID)
+				}
+			}
 			available[index] = hasAllowedModel(payload.Data, allowed)
+			log.Info().
+				Str("api_key_fingerprint", keyFingerprint).
+				Int("candidate_index", index).
+				Int("upstream_status", status).
+				Strs("model_ids", modelIDs).
+				Strs("allowed_models", allowed).
+				Bool("retained", available[index]).
+				Msg("API Key model filter result")
 		}()
 	}
 	wg.Wait()

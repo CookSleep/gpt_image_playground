@@ -57,7 +57,7 @@ describe('service worker fetch 缓存范围', () => {
 
     const statusRespondWith = vi.fn()
     handleFetch({
-      request: new Request('https://img.opentk.ai/api/v1/model/openai/gpt-image-2/requests/request-1/status'),
+      request: new Request('https://img.opentk.ai/api/v1/model/openai/gpt-image-2/requests/request-1'),
       respondWith: statusRespondWith,
     })
     expect(statusRespondWith).not.toHaveBeenCalled()

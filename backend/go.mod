@@ -13,6 +13,7 @@ require (
 	github.com/rs/zerolog v1.32.0
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/protobuf v1.36.10
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	trpc.group/trpc-go/trpc-go v1.0.4
 )
 

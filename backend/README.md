@@ -80,12 +80,11 @@ backend/
 | POST | `/api/v1/materials` | 上传素材库图片，后台通过 Inner API RPC 返回 `file_url` |
 | POST | `/api/v1/materials/batch-delete` | 批量删除素材，JSON `ids` 最多 100 个，后台调用 `BatchDeleteMaterials` RPC |
 | POST | `/api/v1/model/:slug`（支持多段 slug） | 向 Composite 上游提交异步任务 |
-| GET | `/api/v1/model/:slug/requests/:requestId/status` | 查询 Composite 异步任务状态 |
-| GET | `/api/v1/model/:slug/requests/:requestId` | 获取 Composite 异步任务结果 |
+| GET | `/api/v1/model/:slug/requests/:requestId` | 轮询 Composite 异步任务状态和结果 |
 | POST | `/api/v1/projects/:id/generations` | 由后端调用 Images 或 Responses API 生成图片，图片落库后返回 |
 | POST | `/api/v1/projects/:id/edits` | 由后端调用 Images Edits 或 Responses API 编辑图片，图片落库后返回 |
 
-生图请求中的 API Key 仅用于本次上游请求，不会写入数据库。上游基址由当前 JWT 的 OIDC provider 配置决定，客户端不能指定任意地址。Composite 代理从 `X-Upstream-API-Key` 读取 Composite Key，并将其转换为上游 `Authorization: Bearer <key>`；代理只转发当前这一次请求，不在 generation 接口中提交或轮询。前端以 2 秒起始、最大 15 秒的指数退避轮询，总超时 10 分钟；网络错误和 HTTP 5xx 最多重试 3 次，HTTP 4xx 直接报错。提交成功后前端会把 `request_id` 和 `status_url` 写入任务记录；页面刷新后会通过本地代理继续查询状态，完成后获取并保存结果。
+生图请求中的 API Key 仅用于本次上游请求，不会写入数据库。上游基址由当前 JWT 的 OIDC provider 配置决定，客户端不能指定任意地址。Composite 代理从 `X-Upstream-API-Key` 读取 Composite Key，并将其转换为上游 `Authorization: Bearer <key>`；代理只转发当前这一次请求，不在 generation 接口中提交或轮询。前端以 2 秒起始、最大 15 秒的指数退避轮询 `/requests/:requestId`，总超时 10 分钟；网络错误和 HTTP 5xx 最多重试 3 次，HTTP 4xx 直接报错。提交成功后前端会把 `request_id` 和 `status_url` 写入任务记录；页面刷新后会通过本地代理继续查询，完成响应中的图片会被保存。
 
 Composite 图片编辑会先把本地参考图和遮罩以 multipart 文件提交到 `/api/v1/files`。后台使用 `file_api.developer_key` 代理到当前 OIDC provider 的 `/api/v1/file/`，密钥不会返回前端。前端会按 Composite API Key 的哈希把返回的 URL 缓存在本地图片记录中；同一 API Key 后续复用该图片时会直接提交 URL，不再重复上传。不同 API Key 之间不会共享缓存。为了保证缓存 URL 持续有效，前端不会在任务结束时自动删除 File API 文件；`DELETE /api/v1/files` 仍保留供显式清理使用。素材库中已有的远程 URL 也会直接复用。
 
@@ -127,6 +126,8 @@ file_api:
 - `server.base_url` 后端对外基础地址（OIDC 回调拼接用）
 - `server.frontend_url` 登录完成后回跳的前端地址
 - `server.cors_origins` 允许跨域的前端来源；同源部署可留空
+- `server.log_file` 日志落盘路径；留空时仅写 stdout。配置后同时写 stdout 和文件
+- `server.log_max_size_mb` / `log_max_backups` / `log_max_age_days` 控制日志轮转，默认 100 MB / 10 个备份 / 30 天，旧文件自动压缩
 - `jwt.secret_key` **必须**设为长随机串，泄漏即代表所有 token 失效
 - `jwt.expire_hours` access token 寿命，默认 24h
 - `jwt.refresh_hours` refresh token 寿命，默认 168h（7 天）
@@ -166,9 +167,11 @@ file_api:
 ```bash
 cd backend/deploy
 cp ../config/config.yaml.example config.yaml
-# 修改 config.yaml 后启动
+# 修改 config.yaml，将 server.log_file 设为 /app/logs/backend.log 后启动
 docker compose up -d
 ```
+
+Compose 会把容器内 `/app/logs` 挂载到当前目录的 `logs/`。日志落盘启用后仍会同步写 stdout，因此 `docker compose logs backend` 继续可用。
 
 ### 前端构建
 

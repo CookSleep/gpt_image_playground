@@ -114,6 +114,44 @@ func TestOIDCResourceHandlerRemovesAPIKeysWithoutScopedModels(t *testing.T) {
 	}
 }
 
+func TestOIDCResourceHandlerKeepsAPIKeyWithInsufficientBalance(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/oidc/resource/api-keys" {
+			_, _ = w.Write([]byte(`{"items":[{"api_key":"empty-balance-key","name":"余额不足 Key"}]}`))
+			return
+		}
+		if r.URL.Path == "/v1/models" && r.Header.Get("Authorization") == "Bearer empty-balance-key" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}`))
+			return
+		}
+		t.Fatalf("unexpected upstream request: path=%s authorization=%q", r.URL.Path, r.Header.Get("Authorization"))
+	}))
+	defer upstream.Close()
+	r := newOIDCResourceRouter(upstream, config.ModelWhitelistConfig{
+		Image: []string{"gpt-image-2"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/api-keys?scope=image", nil)
+	req.Header.Set(oidcAccessTokenHeader, "oidc-token")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	var payload struct {
+		Items []struct {
+			APIKey string `json:"api_key"`
+		} `json:"items"`
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || payload.Count != 1 || len(payload.Items) != 1 || payload.Items[0].APIKey != "empty-balance-key" {
+		t.Fatalf("unexpected response: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestOIDCResourceHandlerFiltersModelsByScope(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer key-a" {

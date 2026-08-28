@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"gopkg.in/natefinch/lumberjack.v2"
 
 	"gpt-image-backend/internal/auth"
 	"gpt-image-backend/internal/database"
@@ -70,7 +74,13 @@ func main() {
 	}
 
 	// 2. 初始化日志（zerolog；gin-contrib/logger 直接用全局 logger）
-	setupLogger(cfg.Server.LogLevel, cfg.Server.Environment)
+	logCloser, err := setupLogger(cfg.Server)
+	if err != nil {
+		log.Fatal().Err(err).Msg("setup logger failed")
+	}
+	if logCloser != nil {
+		defer logCloser.Close()
+	}
 
 	// 3. 初始化数据库
 	db, err := database.Open(cfg.Database)
@@ -171,18 +181,44 @@ func main() {
 	}
 }
 
-// setupLogger 配置 zerolog 全局 logger，gin-contrib/logger 会复用
-func setupLogger(level, env string) {
+// setupLogger 配置 zerolog 全局 logger；配置文件路径后同时写 stdout 和轮转文件。
+func setupLogger(cfg config.ServerConfig) (io.Closer, error) {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	lvl, err := zerolog.ParseLevel(level)
+	lvl, err := zerolog.ParseLevel(cfg.LogLevel)
 	if err != nil || lvl == zerolog.NoLevel {
 		lvl = zerolog.InfoLevel
 	}
 	zerolog.SetGlobalLevel(lvl)
 
-	if env != "production" {
-		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
+	var output io.Writer = os.Stdout
+	var closer io.Closer
+	if cfg.LogFile != "" {
+		path := filepath.Clean(cfg.LogFile)
+		if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+			return nil, fmt.Errorf("create log directory: %w", err)
+		}
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0640)
+		if err != nil {
+			return nil, fmt.Errorf("open log file: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return nil, fmt.Errorf("close log file: %w", err)
+		}
+		rotating := &lumberjack.Logger{
+			Filename:   path,
+			MaxSize:    cfg.LogMaxSizeMB,
+			MaxBackups: cfg.LogMaxBackups,
+			MaxAge:     cfg.LogMaxAgeDays,
+			Compress:   true,
+		}
+		output = io.MultiWriter(os.Stdout, rotating)
+		closer = rotating
 	}
+	if cfg.Environment != "production" {
+		output = zerolog.ConsoleWriter{Out: output}
+	}
+	log.Logger = zerolog.New(output).With().Timestamp().Logger()
+	return closer, nil
 }
 
 // buildCORS 任务 6.4：CORS 中间件

@@ -30,6 +30,7 @@ services:
       BACKEND_CONFIG_PATH: /app/config/config.yaml
     volumes:
       - ./config.yaml:/app/config/config.yaml:ro
+      - ./logs:/app/logs
     ports:
       - "8080:8080"
 

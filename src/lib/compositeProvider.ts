@@ -35,7 +35,7 @@ export const COMPOSITE_IMAGE_EDIT_PROVIDER: CustomProviderDefinition = {
     taskIdPath: 'request_id',
   },
   poll: {
-    path: 'model/{model}/requests/{task_id}/status',
+    path: 'model/{model}/requests/{task_id}',
     method: 'GET',
     intervalSeconds: 2,
     maxIntervalSeconds: 15,
@@ -45,14 +45,12 @@ export const COMPOSITE_IMAGE_EDIT_PROVIDER: CustomProviderDefinition = {
     successValues: ['COMPLETED'],
     failureValues: ['FAILED', 'CANCELED'],
     errorPath: 'error.message',
-    resultPath: 'model/{model}/requests/{task_id}',
-    resultMethod: 'GET',
     result: {
       imageUrlPaths: ['images.*.url'],
     },
   },
   editPoll: {
-    path: 'model/{model}/requests/{task_id}/status',
+    path: 'model/{model}/requests/{task_id}',
     method: 'GET',
     intervalSeconds: 2,
     maxIntervalSeconds: 15,
@@ -62,8 +60,6 @@ export const COMPOSITE_IMAGE_EDIT_PROVIDER: CustomProviderDefinition = {
     successValues: ['COMPLETED'],
     failureValues: ['FAILED', 'CANCELED'],
     errorPath: 'error.message',
-    resultPath: 'model/{model}/requests/{task_id}',
-    resultMethod: 'GET',
     result: {
       imageUrlPaths: ['images.*.url'],
     },

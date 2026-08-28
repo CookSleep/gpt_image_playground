@@ -48,10 +48,10 @@ func TestCompositeModelHandlerForwardsAsyncRequests(t *testing.T) {
 			}
 			return &http.Response{StatusCode: http.StatusAccepted, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"request_id":"request-1"}`)), Request: req}, nil
 		}
-		if req.Method != http.MethodGet || req.URL.String() != "https://provider.example/api/v1/model/openai/gpt-image-2/requests/request-1/status?verbose=true" {
+		if req.Method != http.MethodGet || req.URL.String() != "https://provider.example/api/v1/model/openai/gpt-image-2/requests/request-1?verbose=true" {
 			t.Fatalf("unexpected status request: %s %s", req.Method, req.URL)
 		}
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"status":"COMPLETED","actual_cost":0.0375}`)), Request: req}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"status":"COMPLETED","actual_cost":0.0375,"images":[]}`)), Request: req}, nil
 	})
 	r := newCompositeModelRouter(transport, true)
 
@@ -65,12 +65,12 @@ func TestCompositeModelHandlerForwardsAsyncRequests(t *testing.T) {
 		t.Fatalf("unexpected submit response: status=%d body=%s", submitResponse.Code, submitResponse.Body.String())
 	}
 
-	status := httptest.NewRequest(http.MethodGet, "/api/v1/model/openai/gpt-image-2/requests/request-1/status?verbose=true", nil)
+	status := httptest.NewRequest(http.MethodGet, "/api/v1/model/openai/gpt-image-2/requests/request-1?verbose=true", nil)
 	status.Header.Set(compositeAPIKeyHeader, "composite-key")
 	status.Header.Set("User-Agent", "gpt-image-playground-browser/1.0")
 	statusResponse := httptest.NewRecorder()
 	r.ServeHTTP(statusResponse, status)
-	if statusResponse.Code != http.StatusOK || statusResponse.Body.String() != `{"status":"COMPLETED","actual_cost":0.0375}` {
+	if statusResponse.Code != http.StatusOK || statusResponse.Body.String() != `{"status":"COMPLETED","actual_cost":0.0375,"images":[]}` {
 		t.Fatalf("unexpected status response: status=%d body=%s", statusResponse.Code, statusResponse.Body.String())
 	}
 }
@@ -80,7 +80,7 @@ func TestCompositeModelHandlerRequiresAuthentication(t *testing.T) {
 		t.Fatalf("upstream must not be called: %s", req.URL)
 		return nil, nil
 	}), false)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/model/openai/gpt-image-2/requests/request-1/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/model/openai/gpt-image-2/requests/request-1", nil)
 	req.Header.Set(compositeAPIKeyHeader, "composite-key")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

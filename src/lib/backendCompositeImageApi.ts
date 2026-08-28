@@ -13,9 +13,6 @@ interface CompositeStatusResponse {
   message?: unknown
   error?: unknown
   actual_cost?: unknown
-}
-
-interface CompositeResultResponse {
   images?: unknown
 }
 
@@ -125,15 +122,14 @@ async function readCompositeTaskResult(options: {
 }): Promise<CallApiResult | null> {
   const modelPath = normalizeCompositeModelPath(options.model)
   const resultPath = `/api/v1/model/${modelPath}/requests/${encodeURIComponent(options.requestId)}`
-  const status = await requestJson(`${resultPath}/status`, options.apiKey) as CompositeStatusResponse
+  const status = await requestJson(resultPath, options.apiKey) as CompositeStatusResponse
   const statusText = typeof status.status === 'string' ? status.status.trim().toUpperCase() : ''
   const actualCost = getActualCost(status.actual_cost)
   if (!statusText) throw new Error('Composite 上游返回了无效的任务状态')
   if (statusText === 'FAILED' || statusText === 'CANCELED') throw new Error(getFailureMessage(status))
   if (statusText !== 'COMPLETED') return null
 
-  const result = await requestJson(resultPath, options.apiKey) as CompositeResultResponse
-  const items = Array.isArray(result.images) ? result.images : []
+  const items = Array.isArray(status.images) ? status.images : []
   const urls = items.flatMap((item) => {
     if (!item || typeof item !== 'object') return []
     const url = (item as Record<string, unknown>).url

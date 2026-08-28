@@ -1043,12 +1043,12 @@ describe('callImageApi', () => {
     })
   })
 
-  it('submits composite generations, polls status, then fetches the completed result', async () => {
+  it('submits composite generations and polls the result endpoint', async () => {
     const outputImage = 'data:image/png;base64,aW1hZ2U='
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ request_id: 'request-1' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'COMPLETED',
         images: [{ url: outputImage }],
       }), { status: 200 }))
 
@@ -1085,16 +1085,16 @@ describe('callImageApi', () => {
       num_images: 1,
       output_format: 'png',
     })
-    expect(fetchMock.mock.calls[1][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/requests/request-1/status')
-    expect(fetchMock.mock.calls[2][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/requests/request-1')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/requests/request-1')
   })
 
-  it('submits composite edits, polls status, then fetches the completed result', async () => {
+  it('submits composite edits and polls the result endpoint', async () => {
     const inputImage = 'data:image/png;base64,aW1hZ2U='
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ request_id: 'request-1' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'COMPLETED',
         images: [{ url: inputImage }],
       }), { status: 200 }))
 
@@ -1133,8 +1133,7 @@ describe('callImageApi', () => {
       num_images: 1,
     })
 
-    expect(fetchMock).toHaveBeenCalledTimes(3)
-    expect(fetchMock.mock.calls[1][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/requests/request-1/status')
-    expect(fetchMock.mock.calls[2][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/requests/request-1')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1][0]).toBe('https://localhost:8443/api/v1/model/openai/gpt-image-2/requests/request-1')
   })
 })

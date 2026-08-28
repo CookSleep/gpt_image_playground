@@ -34,7 +34,7 @@
         "taskIdPath": "request_id"
       },
       "poll": {
-        "path": "model/{model}/requests/{task_id}/status",
+        "path": "model/{model}/requests/{task_id}",
         "method": "GET",
         "intervalSeconds": 2,
         "maxIntervalSeconds": 15,
@@ -44,15 +44,13 @@
         "successValues": ["COMPLETED"],
         "failureValues": ["FAILED", "CANCELED"],
         "errorPath": "error.message",
-        "resultPath": "model/{model}/requests/{task_id}",
-        "resultMethod": "GET",
         "result": {
           "imageUrlPaths": ["images.*.url"],
           "b64JsonPaths": []
         }
       },
       "editPoll": {
-        "path": "model/{model}/edit/requests/{task_id}/status",
+        "path": "model/{model}/edit/requests/{task_id}",
         "method": "GET",
         "intervalSeconds": 2,
         "maxIntervalSeconds": 15,
@@ -62,8 +60,6 @@
         "successValues": ["COMPLETED"],
         "failureValues": ["FAILED", "CANCELED"],
         "errorPath": "error.message",
-        "resultPath": "model/{model}/edit/requests/{task_id}",
-        "resultMethod": "GET",
         "result": {
           "imageUrlPaths": ["images.*.url"],
           "b64JsonPaths": []

@@ -12,14 +12,15 @@ describe('callBackendCompositeImageApi', () => {
     vi.mocked(authFetch).mockReset()
   })
 
-  it('submits, polls and reads the result through independent backend endpoints', async () => {
+  it('submits and polls the result endpoint without a status suffix', async () => {
     vi.mocked(authFetch)
       .mockResolvedValueOnce(new Response(JSON.stringify({
         request_id: 'request-1',
-        status_url: 'https://provider.example/api/v1/model/openai/gpt-image-2/requests/request-1/status',
+        status_url: 'https://provider.example/api/v1/model/openai/gpt-image-2/requests/request-1',
       }), { status: 202 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED', actual_cost: 0.0375 }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'COMPLETED',
+        actual_cost: 0.0375,
         images: [{ url: 'data:image/png;base64,AAECAw==' }],
       }), { status: 200 }))
     const onRequestCreated = vi.fn()
@@ -35,7 +36,6 @@ describe('callBackendCompositeImageApi', () => {
 
     expect(vi.mocked(authFetch).mock.calls.map(([path]) => path)).toEqual([
       '/api/v1/model/openai/gpt-image-2',
-      '/api/v1/model/openai/gpt-image-2/requests/request-1/status',
       '/api/v1/model/openai/gpt-image-2/requests/request-1',
     ])
     expect(authFetch).toHaveBeenNthCalledWith(1, '/api/v1/model/openai/gpt-image-2', expect.objectContaining({
@@ -44,7 +44,7 @@ describe('callBackendCompositeImageApi', () => {
     }))
     expect(onRequestCreated).toHaveBeenCalledWith({
       requestId: 'request-1',
-      statusUrl: 'https://provider.example/api/v1/model/openai/gpt-image-2/requests/request-1/status',
+      statusUrl: 'https://provider.example/api/v1/model/openai/gpt-image-2/requests/request-1',
     })
     expect(result).toMatchObject({
       images: ['data:image/png;base64,AAECAw=='],
@@ -56,8 +56,9 @@ describe('callBackendCompositeImageApi', () => {
 
   it('queries a persisted Composite request without submitting it again', async () => {
     vi.mocked(authFetch)
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED', actual_cost: '0.125' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'COMPLETED',
+        actual_cost: '0.125',
         images: [{ url: 'data:image/png;base64,AAECAw==' }],
       }), { status: 200 }))
 
@@ -69,7 +70,6 @@ describe('callBackendCompositeImageApi', () => {
     })
 
     expect(vi.mocked(authFetch).mock.calls.map(([path]) => path)).toEqual([
-      '/api/v1/model/openai/gpt-image-2/requests/persisted-request/status',
       '/api/v1/model/openai/gpt-image-2/requests/persisted-request',
     ])
     expect(result?.images).toEqual(['data:image/png;base64,AAECAw=='])
@@ -81,8 +81,10 @@ describe('callBackendCompositeImageApi', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { url: 'https://files.example/reference.png' } }), { status: 201 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { url: 'https://files.example/mask.png' } }), { status: 201 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ request_id: 'request-edit' }), { status: 202 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ images: [{ url: 'data:image/png;base64,AAECAw==' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'COMPLETED',
+        images: [{ url: 'data:image/png;base64,AAECAw==' }],
+      }), { status: 200 }))
     const onReferenceUploaded = vi.fn()
 
     await callBackendCompositeImageApi({
@@ -99,7 +101,6 @@ describe('callBackendCompositeImageApi', () => {
       '/api/v1/files',
       '/api/v1/files',
       '/api/v1/model/openai/gpt-image-2',
-      '/api/v1/model/openai/gpt-image-2/requests/request-edit/status',
       '/api/v1/model/openai/gpt-image-2/requests/request-edit',
     ])
     const request = JSON.parse(vi.mocked(authFetch).mock.calls[2][1]?.body as string)
@@ -130,11 +131,11 @@ describe('callBackendCompositeImageApi', () => {
       if (path === '/api/v1/model/openai/gpt-image-2' && init?.method === 'POST') {
         return new Response(JSON.stringify({ request_id: 'request-sequential' }), { status: 202 })
       }
-      if (String(path).endsWith('/status')) {
-        return new Response(JSON.stringify({ status: 'COMPLETED' }), { status: 200 })
-      }
       if (path === '/api/v1/model/openai/gpt-image-2/requests/request-sequential') {
-        return new Response(JSON.stringify({ images: [{ url: 'data:image/png;base64,AAECAw==' }] }), { status: 200 })
+        return new Response(JSON.stringify({
+          status: 'COMPLETED',
+          images: [{ url: 'data:image/png;base64,AAECAw==' }],
+        }), { status: 200 })
       }
       return new Response(JSON.stringify({ data: { deleted: true } }), { status: 200 })
     })
@@ -158,8 +159,10 @@ describe('callBackendCompositeImageApi', () => {
   it('reuses remote material URLs without downloading or re-uploading them', async () => {
     vi.mocked(authFetch)
       .mockResolvedValueOnce(new Response(JSON.stringify({ request_id: 'request-remote' }), { status: 202 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ images: [{ url: 'data:image/png;base64,AAECAw==' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'COMPLETED',
+        images: [{ url: 'data:image/png;base64,AAECAw==' }],
+      }), { status: 200 }))
 
     await callBackendCompositeImageApi({
       apiKey: 'composite-key',
@@ -171,7 +174,6 @@ describe('callBackendCompositeImageApi', () => {
 
     expect(vi.mocked(authFetch).mock.calls.map(([path]) => path)).toEqual([
       '/api/v1/model/openai/gpt-image-2',
-      '/api/v1/model/openai/gpt-image-2/requests/request-remote/status',
       '/api/v1/model/openai/gpt-image-2/requests/request-remote',
     ])
     const request = JSON.parse(vi.mocked(authFetch).mock.calls[0][1]?.body as string)
@@ -181,8 +183,10 @@ describe('callBackendCompositeImageApi', () => {
   it('reuses cached File API URLs instead of uploading local references again', async () => {
     vi.mocked(authFetch)
       .mockResolvedValueOnce(new Response(JSON.stringify({ request_id: 'request-cached' }), { status: 202 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ images: [{ url: 'data:image/png;base64,AAECAw==' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'COMPLETED',
+        images: [{ url: 'data:image/png;base64,AAECAw==' }],
+      }), { status: 200 }))
     const onReferenceUploaded = vi.fn()
 
     await callBackendCompositeImageApi({
@@ -197,7 +201,6 @@ describe('callBackendCompositeImageApi', () => {
 
     expect(vi.mocked(authFetch).mock.calls.map(([path]) => path)).toEqual([
       '/api/v1/model/openai/gpt-image-2',
-      '/api/v1/model/openai/gpt-image-2/requests/request-cached/status',
       '/api/v1/model/openai/gpt-image-2/requests/request-cached',
     ])
     expect(JSON.parse(vi.mocked(authFetch).mock.calls[0][1]?.body as string).image_urls).toEqual([
@@ -252,8 +255,10 @@ describe('callBackendCompositeImageApi', () => {
     vi.mocked(authFetch)
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { url: 'https://files.example/reference.png' } }), { status: 201 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ request_id: 'request-suffixed' }), { status: 202 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'COMPLETED' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ images: [{ url: 'data:image/png;base64,AAECAw==' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'COMPLETED',
+        images: [{ url: 'data:image/png;base64,AAECAw==' }],
+      }), { status: 200 }))
 
     await callBackendCompositeImageApi({
       apiKey: 'composite-key',
@@ -266,7 +271,6 @@ describe('callBackendCompositeImageApi', () => {
     expect(vi.mocked(authFetch).mock.calls.map(([path]) => path)).toEqual([
       '/api/v1/files',
       '/api/v1/model/openai/gpt-image-2',
-      '/api/v1/model/openai/gpt-image-2/requests/request-suffixed/status',
       '/api/v1/model/openai/gpt-image-2/requests/request-suffixed',
     ])
   })
