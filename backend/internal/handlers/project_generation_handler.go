@@ -29,6 +29,7 @@ import (
 
 const maxGenerationRequestBytes = 512 << 20
 const promptRewriteGuardPrefix = "Use the following text as the complete prompt. Do not rewrite it:"
+const generationExecutionTimeout = 15 * time.Minute
 const maxGenerationLogResponseBytes = 64 << 10
 
 type generationLogResponseWriter struct {
@@ -175,7 +176,7 @@ func NewProjectGenerationHandler(projects projectGenerationStore, providers imag
 	return &ProjectGenerationHandler{
 		projects:  projects,
 		providers: providers,
-		client:    &http.Client{Timeout: 15 * time.Minute},
+		client:    &http.Client{Timeout: generationExecutionTimeout},
 	}
 }
 
@@ -289,15 +290,25 @@ func buildGenerationTaskRecord(req projectGenerationRequest, result *projectGene
 	if err := json.Unmarshal(req.Task, &task); err != nil {
 		return nil, fmt.Errorf("decode generation task record: %w", err)
 	}
+	task["imageStatusRequestIds"] = req.RequestIDs
+	task["falRecoverable"] = false
+	task["customRecoverable"] = false
+	task["compositeRecoverable"] = false
+
+	if status == http.StatusAccepted && result == nil {
+		task["status"] = "running"
+		task["error"] = nil
+		task["imageStatusRecoverable"] = true
+		task["finishedAt"] = nil
+		task["elapsed"] = nil
+		return json.Marshal(task)
+	}
+
 	finishedAtMillis := finishedAt.UnixMilli()
 	task["finishedAt"] = finishedAtMillis
 	if createdAt, ok := task["createdAt"].(float64); ok {
 		task["elapsed"] = max(0, finishedAtMillis-int64(createdAt))
 	}
-	task["imageStatusRequestIds"] = req.RequestIDs
-	task["falRecoverable"] = false
-	task["customRecoverable"] = false
-	task["compositeRecoverable"] = false
 	task["imageStatusRecoverable"] = false
 
 	if status < http.StatusOK || status >= http.StatusMultipleChoices || result == nil {
@@ -333,18 +344,22 @@ func buildGenerationTaskRecord(req projectGenerationRequest, result *projectGene
 	return json.Marshal(task)
 }
 
-func (h *ProjectGenerationHandler) saveGenerationTaskRecordAsync(requestCtx context.Context, userID, projectID string, req projectGenerationRequest, result *projectGenerationResponse, status int, message string) {
+func (h *ProjectGenerationHandler) saveGenerationTaskRecord(ctx context.Context, userID, projectID string, req projectGenerationRequest, result *projectGenerationResponse, status int, message string) error {
 	task, err := buildGenerationTaskRecord(req, result, status, message, time.Now())
 	if err != nil {
-		log.Ctx(requestCtx).Error().Err(err).Str("project_id", projectID).Str("task_id", req.TaskID).Msg("build generation task record failed")
-		return
+		return err
 	}
 	project := append(json.RawMessage(nil), req.Project...)
+	_, err = h.projects.SaveTaskRecord(ctx, userID, projectID, strings.TrimSpace(req.ProjectTitle), req.TaskID, project, task)
+	return err
+}
+
+func (h *ProjectGenerationHandler) saveGenerationTaskRecordAsync(requestCtx context.Context, userID, projectID string, req projectGenerationRequest, result *projectGenerationResponse, status int, message string) {
 	ctx := context.WithoutCancel(requestCtx)
 	go func() {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		if _, err := h.projects.SaveTaskRecord(ctx, userID, projectID, strings.TrimSpace(req.ProjectTitle), req.TaskID, project, task); err != nil {
+		if err := h.saveGenerationTaskRecord(ctx, userID, projectID, req, result, status, message); err != nil {
 			log.Ctx(ctx).Error().Err(err).Str("project_id", projectID).Str("task_id", req.TaskID).Msg("save generation task record failed")
 		}
 	}()
@@ -841,6 +856,14 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "image provider unavailable"})
 		return
 	}
+	generationCtx := c.Request.Context()
+	if len(req.Task) > 0 {
+		// 在线项目请求需在浏览器断开后继续执行，结果由状态接口和任务归档恢复。
+		var cancel context.CancelFunc
+		generationCtx, cancel = context.WithTimeout(context.WithoutCancel(generationCtx), generationExecutionTimeout)
+		defer cancel()
+		c.Request = c.Request.WithContext(generationCtx)
+	}
 	if err := h.projects.Ensure(c.Request.Context(), userID, projectID, strings.TrimSpace(req.ProjectTitle)); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, database.ErrProjectForbidden) {
@@ -851,6 +874,10 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 	}
 	if len(req.Task) > 0 {
 		recordReq = &req
+		if err := h.saveGenerationTaskRecord(generationCtx, userID, projectID, req, nil, http.StatusAccepted, ""); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError, "message": "save generation task record failed"})
+			return
+		}
 	}
 	if req.APIMode == "responses" {
 		recordResult = h.generateResponses(c, userID, projectID, baseURL, req)

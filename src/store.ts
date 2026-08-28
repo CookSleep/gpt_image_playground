@@ -6198,10 +6198,13 @@ async function executeTask(taskId: string) {
         ...(task.apiOverride.model ? { model: task.apiOverride.model } : {}),
       }
     : baseProfile
-  const activeProfile = { ...resolvedProfile, apiMode: task.apiMode ?? 'images' }
-  const requestSettings = createSettingsForApiProfile(settings, activeProfile)
-  const taskProvider = task.apiProvider ?? activeProfile.provider
+  const taskProvider = task.apiProvider ?? resolvedProfile.provider
   const isCompositeRequest = task.apiOverride?.platform?.trim().toLowerCase() === 'composite' && Boolean(task.apiOverride.apiKey)
+  const taskApiMode = task.sourceMode !== 'agent' && taskProvider === 'openai' && !isCompositeRequest
+    ? 'images'
+    : task.apiMode ?? 'images'
+  const activeProfile = { ...resolvedProfile, apiMode: taskApiMode }
+  const requestSettings = createSettingsForApiProfile(settings, activeProfile)
   const project = task.projectId
     ? useStore.getState().projects.find((item) => item.id === task.projectId)
     : undefined
@@ -6776,12 +6779,17 @@ export async function deleteFavoriteCollection(collectionId: string, deleteTasks
 /** 重试失败的任务：创建新任务并执行 */
 export async function retryTask(task: TaskRecord) {
   const { settings, oidcApiOverride } = useStore.getState()
-  const activeProfile = getActiveApiProfile(settings)
+  const baseProfile = getActiveApiProfile(settings)
   const apiOverride = oidcApiOverride?.apiKey
     ? { ...oidcApiOverride }
     : task.apiOverride && (task.apiOverride.apiKey || task.apiOverride.model)
     ? { ...task.apiOverride }
     : undefined
+  const isCompositeRetry = apiOverride?.platform?.trim().toLowerCase() === 'composite' && Boolean(apiOverride.apiKey)
+  const activeProfile = {
+    ...baseProfile,
+    ...(!isCompositeRetry && task.sourceMode !== 'agent' && (task.apiProvider === 'openai' || (!task.apiProvider && baseProfile.provider === 'openai')) ? { apiMode: 'images' as const } : {}),
+  }
   const requestSettings = createSettingsForApiProfile(settings, {
     ...activeProfile,
     ...(apiOverride?.apiKey ? { apiKey: apiOverride.apiKey } : {}),

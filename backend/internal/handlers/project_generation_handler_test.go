@@ -153,8 +153,27 @@ func TestBuildGenerationTaskRecordStoresFailure(t *testing.T) {
 	}
 }
 
+func TestBuildGenerationTaskRecordStoresRecoverableRunningTask(t *testing.T) {
+	req := projectGenerationRequest{
+		TaskID:     "task-a",
+		Task:       json.RawMessage(`{"id":"task-a","status":"running","error":null,"createdAt":1000,"finishedAt":null,"elapsed":null}`),
+		RequestIDs: []string{"request-a"},
+	}
+	record, err := buildGenerationTaskRecord(req, nil, http.StatusAccepted, "", time.UnixMilli(2500))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var task map[string]any
+	if err := json.Unmarshal(record, &task); err != nil {
+		t.Fatal(err)
+	}
+	if task["status"] != "running" || task["error"] != nil || task["imageStatusRecoverable"] != true || task["finishedAt"] != nil {
+		t.Fatalf("unexpected running task: %s", record)
+	}
+}
+
 func TestProjectGenerationHandlerGeneratesAndSavesBeforeReturning(t *testing.T) {
-	store := &projectGenerationStoreStub{taskRecords: make(chan savedGenerationTaskRecord, 1)}
+	store := &projectGenerationStoreStub{taskRecords: make(chan savedGenerationTaskRecord, 2)}
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		store.events = append(store.events, "upstream")
 		if req.URL.String() != "https://provider.example/v1/images/generations" {
@@ -206,6 +225,18 @@ func TestProjectGenerationHandlerGeneratesAndSavesBeforeReturning(t *testing.T) 
 	}
 	select {
 	case saved := <-store.taskRecords:
+		var runningTask map[string]any
+		if err := json.Unmarshal(saved.task, &runningTask); err != nil {
+			t.Fatal(err)
+		}
+		if runningTask["status"] != "running" || runningTask["imageStatusRecoverable"] != true {
+			t.Fatalf("unexpected initial task: %s", saved.task)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initial generation task record was not saved")
+	}
+	select {
+	case saved := <-store.taskRecords:
 		if saved.userID != "user-a" || saved.projectID != "86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8" || saved.projectTitle != "在线项目" || saved.taskID != "task-a" {
 			t.Fatalf("unexpected task metadata: %#v", saved)
 		}
@@ -224,6 +255,44 @@ func TestProjectGenerationHandlerGeneratesAndSavesBeforeReturning(t *testing.T) 
 		}
 	case <-time.After(time.Second):
 		t.Fatal("generation task record was not saved asynchronously")
+	}
+}
+
+func TestProjectGenerationHandlerContinuesAfterClientCancellation(t *testing.T) {
+	store := &projectGenerationStoreStub{taskRecords: make(chan savedGenerationTaskRecord, 2)}
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if err := req.Context().Err(); err != nil {
+			t.Fatalf("upstream request was canceled with client: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"b64_json":"AAECAw=="}]}`)),
+			Request:    req,
+		}, nil
+	})
+	r := newProjectGenerationRouter(store, transport)
+	requestCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8/generations", generationRequestBody(nil, "")).WithContext(requestCtx)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	select {
+	case saved := <-store.taskRecords:
+		var task map[string]any
+		if err := json.Unmarshal(saved.task, &task); err != nil {
+			t.Fatal(err)
+		}
+		if task["status"] != "running" {
+			t.Fatalf("unexpected initial task status: %s", saved.task)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initial task record was not saved")
 	}
 }
 
