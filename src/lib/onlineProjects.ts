@@ -1,6 +1,7 @@
 import type { AgentConversation, AppSettings, FavoriteCollection, Project, StoredImage, StoredImageThumbnail, TaskRecord } from '../types'
 import { authFetch } from '../auth/api'
 import { dataUrlToBlob } from './canvasImage'
+import { blobToDataUrl } from './dataUrl'
 import { buildExportZip, readExportZip, readExportZipFileAsDataUrl } from './exportZip'
 import { getAgentConversationProjectId } from './agentConversationScope'
 
@@ -25,6 +26,7 @@ export interface OnlineProjectImageResponse {
   image_id: string
   task_id?: string
   source?: StoredImage['source']
+  image_url?: string
   mime_type: string
   width?: number
   height?: number
@@ -261,8 +263,25 @@ export async function listOnlineProjectImages(projectId: string): Promise<Online
     if (!item || typeof item !== 'object') return false
     const record = item as Record<string, unknown>
     const sourceValid = record.source === undefined || record.source === 'upload' || record.source === 'generated' || record.source === 'mask'
-    return typeof record.project_id === 'string' && typeof record.image_id === 'string' && sourceValid && typeof record.mime_type === 'string' && typeof record.image_size === 'number' && typeof record.image_sha256 === 'string' && typeof record.created_at === 'string' && typeof record.updated_at === 'string'
+    return typeof record.project_id === 'string' && typeof record.image_id === 'string' && sourceValid && (record.image_url === undefined || typeof record.image_url === 'string') && typeof record.mime_type === 'string' && typeof record.image_size === 'number' && typeof record.image_sha256 === 'string' && typeof record.created_at === 'string' && typeof record.updated_at === 'string'
   })
+}
+
+export async function downloadOnlineProjectImage(projectId: string, image: OnlineProjectImageResponse): Promise<StoredImage> {
+  const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(image.image_id)}`)
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => null) as { message?: string } | null
+    throw new Error(data?.message || `项目图片加载失败：HTTP ${resp.status}`)
+  }
+  const migratedURL = resp.headers.get('X-Project-Image-URL')
+  return {
+    id: image.image_id,
+    dataUrl: migratedURL || await blobToDataUrl(await resp.blob(), image.mime_type),
+    source: image.source,
+    width: image.width,
+    height: image.height,
+    createdAt: Date.parse(image.created_at) || undefined,
+  }
 }
 
 export async function deleteOnlineProjectImage(projectId: string, imageId: string) {

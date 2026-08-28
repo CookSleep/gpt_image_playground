@@ -88,7 +88,13 @@ export function ProjectApiKeySelect({ scope = 'gallery', compact = false, iconOn
       setApiKeyItems(res.items || [])
       const current = oidcApiOverride?.apiKey
       const cached = readCachedApiKey(user.id, scope)
-      setApiKey(current && keys.includes(current) ? current : cached && keys.includes(cached) ? cached : '')
+      const next = current && keys.includes(current)
+        ? current
+        : cached && keys.includes(cached)
+          ? cached
+          : keys[0] || ''
+      setApiKey(next)
+      writeCachedApiKey(user.id, next, scope)
     }).catch((err) => {
       if (cancelled) return
       setApiKeys([])

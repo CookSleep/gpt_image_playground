@@ -20,6 +20,7 @@ type ProjectImage struct {
 	TaskID    string    `json:"task_id,omitempty"`
 	Source    string    `json:"source,omitempty"`
 	MIMEType  string    `json:"mime_type"`
+	ImageURL  string    `json:"image_url,omitempty"`
 	Width     *int      `json:"width,omitempty"`
 	Height    *int      `json:"height,omitempty"`
 	ImageSize int64     `json:"image_size"`

@@ -156,6 +156,14 @@ vi.mock('./lib/onlineProjects', () => ({
   })),
   listOnlineProjects: vi.fn(async () => []),
   listOnlineProjectImages: vi.fn(async () => []),
+  downloadOnlineProjectImage: vi.fn(async (_projectId: string, image: { image_id: string; source?: StoredImage['source']; width?: number; height?: number; created_at: string }) => ({
+    id: image.image_id,
+    dataUrl: 'data:image/png;base64,AAECAw==',
+    source: image.source,
+    width: image.width,
+    height: image.height,
+    createdAt: Date.parse(image.created_at) || undefined,
+  })),
   uploadOnlineProjectImage: vi.fn(async () => ({
     project_id: 'project-a',
     image_id: 'image-a',

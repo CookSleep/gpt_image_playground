@@ -261,7 +261,9 @@ export default function ProjectHome() {
         setApiKeys(keys)
         setApiKeyItems(res.items || [])
         const cached = readCachedApiKey(user.id)
-        setApiKey(cached && keys.includes(cached) ? cached : '')
+        const next = cached && keys.includes(cached) ? cached : keys[0] || ''
+        setApiKey(next)
+        writeCachedApiKey(user.id, next)
       } catch (err) {
         if (cancelled) return
         console.error('[ProjectHome] fetchApiKeys failed:', err)

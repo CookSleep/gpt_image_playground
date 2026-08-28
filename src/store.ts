@@ -54,7 +54,7 @@ import {
   storeImageWithSize,
 } from './lib/db'
 import { createRequestId, getAccessToken, isAuthEnabled } from './auth/api'
-import { buildLegacyProjectArchive, buildOnlineProjectArchive, clearLegacyProjectUploadId, createOnlineProject, deleteOnlineProject, deleteOnlineProjectImage, deleteOnlineProjectTask, downloadOnlineProject, getAgentConversationReferencedImageIds, getLegacyProjectUploadId, getTaskReferencedImageIds, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectTask, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
+import { buildLegacyProjectArchive, buildOnlineProjectArchive, clearLegacyProjectUploadId, createOnlineProject, deleteOnlineProject, deleteOnlineProjectImage, deleteOnlineProjectTask, downloadOnlineProject, downloadOnlineProjectImage, getAgentConversationReferencedImageIds, getLegacyProjectUploadId, getTaskReferencedImageIds, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectTask, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
 import { callImageApi } from './lib/api'
 import { callBackendImageApi } from './lib/backendImageApi'
 import { callBackendCompositeImageApi, queryBackendCompositeImageTask } from './lib/backendCompositeImageApi'
@@ -235,7 +235,10 @@ export async function ensureImageThumbnailCached(id: string): Promise<{ dataUrl:
   const rec = await getStoredFreshImageThumbnail(id)
   if (!rec?.thumbnailDataUrl) {
     scheduleThumbnailBackfill([id], 'visible')
-    return undefined
+    const image = await getImage(id)
+    if (!image?.dataUrl) return undefined
+    // 远程 URL 可能因跨域限制无法写入 canvas，直接使用原图保证仍可展示。
+    return { dataUrl: image.dataUrl, width: image.width, height: image.height }
   }
 
   const thumbnail = {
@@ -3706,8 +3709,36 @@ async function loadOnlineProjectCache(localProjects: Project[], localTasks: Task
     }
     if (shouldLoadContents) {
       try {
-        // 仅读取图片元数据，图片二进制不再通过项目接口下载。
-        await listOnlineProjectImages(response.id)
+        const remoteImages = await listOnlineProjectImages(response.id)
+        const projectTasks = tasks.filter((task) => task.projectId === project.id)
+        const coverTask = [...projectTasks].sort((a, b) => b.createdAt - a.createdAt)
+          .find((task) => task.outputImages.length > 0) ?? projectTasks[0]
+        const coverImageId = activeProjectId === null ? coverTask?.outputImages[0] : undefined
+        for (const remoteImage of remoteImages) {
+          if (coverImageId && activeProjectId === null && remoteImage.image_id !== coverImageId) continue
+          try {
+            if (remoteImage.image_url) {
+              if (availableImageIds.has(remoteImage.image_id)) continue
+              images.push({
+                id: remoteImage.image_id,
+                dataUrl: remoteImage.image_url,
+                source: remoteImage.source,
+                width: remoteImage.width,
+                height: remoteImage.height,
+                createdAt: Date.parse(remoteImage.created_at) || undefined,
+              })
+            } else {
+              // 旧记录即使本地已有缓存也要请求一次，以便重试后台转存。
+              const image = await downloadOnlineProjectImage(response.id, remoteImage)
+              if (!availableImageIds.has(remoteImage.image_id) || /^https?:\/\//i.test(image.dataUrl)) {
+                images.push(image)
+              }
+            }
+            availableImageIds.add(remoteImage.image_id)
+          } catch (err) {
+            console.warn(`在线项目 ${response.id} 图片 ${remoteImage.image_id} 加载失败：`, err)
+          }
+        }
       } catch (err) {
         console.warn(`在线项目 ${response.id} 图片加载失败：`, err)
       }

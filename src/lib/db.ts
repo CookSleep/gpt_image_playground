@@ -398,6 +398,7 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
     const image = new Image()
     image.onload = () => resolve(image)
     image.onerror = () => reject(new Error('图片加载失败'))
+    if (/^https?:\/\//i.test(dataUrl)) image.crossOrigin = 'anonymous'
     image.src = dataUrl
   })
 }
