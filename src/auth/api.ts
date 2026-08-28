@@ -237,6 +237,17 @@ export async function syncOIDCUserProfile(): Promise<PublicUser | null> {
 export async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const accessToken = getAccessToken()
   const headers = new Headers(init.headers || {})
+  const callerHeaderNames = init.headers && !(init.headers instanceof Headers) && !Array.isArray(init.headers)
+    ? Object.keys(init.headers as Record<string, string>)
+    : []
+  const exposeCallerHeaders = () => {
+    // 保留调用方传入的大小写属性，兼容少数把 RequestInit headers 当普通对象读取的调用方。
+    for (const name of callerHeaderNames) {
+      const value = headers.get(name)
+      if (value == null) continue
+      Object.defineProperty(headers, name, { configurable: true, value })
+    }
+  }
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
   if (!headers.has(REQUEST_ID_HEADER)) headers.set(REQUEST_ID_HEADER, createRequestId())
   const isFormData = typeof FormData !== 'undefined' && init.body instanceof FormData
@@ -244,6 +255,7 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
     headers.set('Content-Type', 'application/json')
   }
 
+  exposeCallerHeaders()
   let resp = await fetch(url(input), { ...init, headers })
   if (resp.status !== 401) return resp
 

@@ -424,6 +424,43 @@ func TestProjectGenerationHandlerUsesResponsesAPIAndSavesImage(t *testing.T) {
 	}
 }
 
+func TestProjectGenerationHandlerProxiesAgentResponsesStream(t *testing.T) {
+	store := &projectGenerationStoreStub{}
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://provider.example/v1/responses" {
+			t.Fatalf("unexpected upstream URL: %s", req.URL)
+		}
+		if req.Header.Get("Authorization") != "Bearer agent-api-key" {
+			t.Fatalf("unexpected upstream authorization: %q", req.Header.Get("Authorization"))
+		}
+		body, _ := io.ReadAll(req.Body)
+		var payload map[string]any
+		if json.Unmarshal(body, &payload) != nil || payload["api_key"] != nil || payload["model"] != "gpt-5.5" || payload["input"] != "hello" || payload["stream"] != true {
+			t.Fatalf("unexpected upstream body: %s", body)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\"}\n\n")),
+		}, nil
+	})
+	r := newProjectGenerationRouter(store, transport)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/responses", strings.NewReader(`{"api_key":"agent-api-key","model":"gpt-5.5","input":"hello","stream":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Client-Request-ID", "agent-request-a")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("unexpected response content type: %q", w.Header().Get("Content-Type"))
+	}
+	if w.Body.String() != "data: {\"type\":\"response.completed\"}\n\n" {
+		t.Fatalf("unexpected response body: %q", w.Body.String())
+	}
+}
+
 func TestProjectGenerationHandlerProxiesImageStatus(t *testing.T) {
 	store := &projectGenerationStoreStub{}
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {

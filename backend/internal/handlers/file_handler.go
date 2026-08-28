@@ -1,9 +1,14 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"time"
@@ -47,6 +52,77 @@ func NewFileAPIHandler(providers imageProviderRegistry, cfg config.FileAPIConfig
 func (h *FileAPIHandler) Register(api *gin.RouterGroup) {
 	api.POST("/files", h.Proxy)
 	api.DELETE("/files", h.Proxy)
+}
+
+type fileUploadResult struct {
+	URL string
+}
+
+// Upload 将项目图片上传到 File API，避免把项目图片写入全局素材库。
+func (h *FileAPIHandler) Upload(ctx context.Context, provider, fileName, contentType string, data []byte) (*fileUploadResult, error) {
+	if !h.cfg.Enabled() {
+		return nil, errors.New("File API developer key is not configured")
+	}
+	baseURL, ok := h.providers.ResourceBaseURL(provider)
+	if !ok {
+		return nil, errors.New("file provider unavailable")
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", fileName)
+	if err != nil {
+		return nil, fmt.Errorf("create File API upload: %w", err)
+	}
+	if _, err := part.Write(data); err != nil {
+		return nil, fmt.Errorf("write File API upload: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close File API upload: %w", err)
+	}
+
+	endpoint := strings.TrimRight(baseURL, "/") + "/api/v1/file/"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &body)
+	if err != nil {
+		return nil, fmt.Errorf("create File API request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(h.cfg.DeveloperKey))
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.ContentLength = int64(body.Len())
+
+	response, err := h.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("File API upload request: %w", err)
+	}
+	defer response.Body.Close()
+	responseData, err := io.ReadAll(io.LimitReader(response.Body, maxFileProxyResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read File API upload response: %w", err)
+	}
+	if len(responseData) > maxFileProxyResponseBytes {
+		return nil, errors.New("File API upload response is too large")
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("File API upload failed: HTTP %d", response.StatusCode)
+	}
+	var payload struct {
+		Data struct {
+			URL     string `json:"url"`
+			FileURL string `json:"file_url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(responseData, &payload); err != nil {
+		return nil, fmt.Errorf("decode File API upload response: %w", err)
+	}
+	url := strings.TrimSpace(payload.Data.URL)
+	if url == "" {
+		url = strings.TrimSpace(payload.Data.FileURL)
+	}
+	if url == "" {
+		return nil, errors.New("File API upload returned no file URL")
+	}
+	return &fileUploadResult{URL: url}, nil
 }
 
 // Proxy 在服务端注入开发者密钥，浏览器不会接触 File API 凭证。

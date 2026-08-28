@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -73,6 +74,32 @@ func TestFileAPIHandlerUploadsWithConfiguredDeveloperKey(t *testing.T) {
 
 	if w.Code != http.StatusCreated || !bytes.Contains(w.Body.Bytes(), []byte(`"url":"https://files.example/reference.png"`)) {
 		t.Fatalf("unexpected response: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestFileAPIHandlerUploadsProjectImage(t *testing.T) {
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost || req.URL.String() != "https://provider.example/api/v1/file/" {
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL)
+		}
+		if req.Header.Get("Authorization") != "Bearer dev_secret" {
+			t.Fatalf("unexpected authorization: %q", req.Header.Get("Authorization"))
+		}
+		return &http.Response{
+			StatusCode: http.StatusCreated,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"code":0,"data":{"url":"https://files.example/generated.png"}}`)),
+			Request:    req,
+		}, nil
+	})
+	handler := NewFileAPIHandler(imageProviderRegistryStub{baseURL: "https://provider.example"}, config.FileAPIConfig{DeveloperKey: "dev_secret", TimeoutSeconds: 30})
+	handler.client = &http.Client{Transport: transport}
+	result, err := handler.Upload(context.Background(), "provider-a", "generated.png", "image/png", []byte("image-data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil || result.URL != "https://files.example/generated.png" {
+		t.Fatalf("unexpected upload result: %#v", result)
 	}
 }
 

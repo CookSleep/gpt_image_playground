@@ -13,7 +13,6 @@ import (
 
 	"gpt-image-backend/internal/middleware"
 	"gpt-image-backend/internal/models"
-	"gpt-image-backend/internal/services"
 )
 
 type projectImageStoreStub struct {
@@ -27,11 +26,11 @@ type projectImageStoreStub struct {
 }
 
 type projectImageUploaderStub struct {
-	result *services.MaterialUpload
+	result *fileUploadResult
 	data   []byte
 }
 
-func (s *projectImageUploaderStub) Upload(_ context.Context, _ string, _ string, _ string, data []byte) (*services.MaterialUpload, error) {
+func (s *projectImageUploaderStub) Upload(_ context.Context, _ string, _ string, _ string, data []byte) (*fileUploadResult, error) {
 	s.data = append([]byte(nil), data...)
 	return s.result, nil
 }
@@ -85,6 +84,7 @@ func newProjectImageRouterWithUploader(store projectImageStore, uploader ...proj
 	r := gin.New()
 	api := r.Group("/api/v1", func(c *gin.Context) {
 		c.Set(middleware.ContextKeyUserID, "user-a")
+		c.Set(middleware.ContextKeyProvider, "provider-a")
 		c.Next()
 	})
 	NewProjectImageHandler(store, uploader...).Register(api)
@@ -153,7 +153,7 @@ func TestProjectImageHandlerGetMigratesLegacyImage(t *testing.T) {
 		image: &models.ProjectImage{ProjectID: "86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8", ImageID: "image-a", MIMEType: "image/png", SHA256: "sha256"},
 		data:  data,
 	}
-	uploader := &projectImageUploaderStub{result: &services.MaterialUpload{URL: "https://cdn.example/image-a.png"}}
+	uploader := &projectImageUploaderStub{result: &fileUploadResult{URL: "https://cdn.example/image-a.png"}}
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8/images/image-a", nil)
 	newProjectImageRouterWithUploader(store, uploader).ServeHTTP(w, req)

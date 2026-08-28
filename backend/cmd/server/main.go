@@ -139,13 +139,14 @@ func main() {
 		})
 	})
 	materialService := services.NewMaterialService(userRepo, cfg.InnerAPI)
+	fileAPIHandler := handlers.NewFileAPIHandler(registry, cfg.FileAPI)
 	handlers.NewProjectHandler(projectRepo).Register(api)
 	handlers.NewProjectTaskHandler(projectRepo).Register(api)
-	handlers.NewProjectImageHandler(projectRepo, materialService).Register(api)
+	handlers.NewProjectImageHandler(projectRepo, fileAPIHandler).Register(api)
 	handlers.NewOIDCResourceHandler(registry, cfg.ModelWhitelist).Register(api)
 	handlers.NewBalanceHandler(services.NewBalanceService(userRepo, cfg.InnerAPI)).Register(api)
 	handlers.NewMaterialHandler(materialService).Register(api)
-	handlers.NewFileAPIHandler(registry, cfg.FileAPI).Register(api)
+	fileAPIHandler.Register(api)
 	handlers.NewCompositeModelHandler(registry).Register(api)
 	handlers.NewProjectGenerationHandler(projectRepo, registry).Register(api)
 
@@ -243,7 +244,7 @@ func buildCORS(origins []string) gin.HandlerFunc {
 	return cors.New(cors.Config{
 		AllowOrigins:     origins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-OIDC-Access-Token", "X-Upstream-API-Key", middleware.RequestIDHeader},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-OIDC-Access-Token", "X-Upstream-API-Key", middleware.RequestIDHeader, "X-Client-Request-ID"},
 		ExposeHeaders:    []string{"Content-Length", middleware.RequestIDHeader, "X-Project-Image-URL"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,

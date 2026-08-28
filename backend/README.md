@@ -1,6 +1,6 @@
 # GPT Image Playground 后端（OIDC 账号体系）
 
-后端提供 **OIDC 登录、在线项目持久化和图片生成**。OpenAI Images/Responses 请求由项目 generation 接口生成并落库；Composite 使用独立的 `/api/v1/model/*` 代理，前端分别提交任务、查询状态和获取结果。
+后端提供 **OIDC 登录、在线项目持久化和图片生成**。OpenAI Images 请求由项目 generation 接口生成并落库；Agent 使用独立的 Responses 代理；Composite 使用独立的 `/api/v1/model/*` 代理，前端分别提交任务、查询状态和获取结果。
 
 - 框架：Gin + zerolog
 - 数据库：PostgreSQL
@@ -83,8 +83,11 @@ backend/
 | GET | `/api/v1/model/:slug/requests/:requestId` | 轮询 Composite 异步任务状态和结果 |
 | POST | `/api/v1/projects/:id/generations` | 由后端调用 Images 或 Responses API 生成图片，图片落库后返回 |
 | POST | `/api/v1/projects/:id/edits` | 由后端调用 Images Edits 或 Responses API 编辑图片，图片落库后返回 |
+| POST | `/api/v1/agent/responses` | 后台代理 Agent 的完整 Responses API 请求，支持 JSON 与 SSE 流式响应 |
 
 生图请求中的 API Key 仅用于本次上游请求，不会写入数据库。上游基址由当前 JWT 的 OIDC provider 配置决定，客户端不能指定任意地址。Composite 代理从 `X-Upstream-API-Key` 读取 Composite Key，并将其转换为上游 `Authorization: Bearer <key>`；代理只转发当前这一次请求，不在 generation 接口中提交或轮询。前端以 2 秒起始、最大 15 秒的指数退避轮询 `/requests/:requestId`，总超时 10 分钟；网络错误和 HTTP 5xx 最多重试 3 次，HTTP 4xx 直接报错。提交成功后前端会把 `request_id` 和 `status_url` 写入任务记录；页面刷新后会通过本地代理继续查询，完成响应中的图片会被保存。
+
+Agent Responses 请求使用 `POST /api/v1/agent/responses`，请求 JSON 在顶层携带一次性 `api_key`，其余字段按 Responses API 原样传递（也兼容放在 `body` 或 `request` 字段中）。后台根据当前 JWT 绑定的 OIDC provider 固定上游地址，不接受客户端指定 provider 或 URL，并原样透传上游 JSON/SSE 响应。
 
 Composite 图片编辑会先把本地参考图和遮罩以 multipart 文件提交到 `/api/v1/files`。后台使用 `file_api.developer_key` 代理到当前 OIDC provider 的 `/api/v1/file/`，密钥不会返回前端。前端会按 Composite API Key 的哈希把返回的 URL 缓存在本地图片记录中；同一 API Key 后续复用该图片时会直接提交 URL，不再重复上传。不同 API Key 之间不会共享缓存。为了保证缓存 URL 持续有效，前端不会在任务结束时自动删除 File API 文件；`DELETE /api/v1/files` 仍保留供显式清理使用。素材库中已有的远程 URL 也会直接复用。
 

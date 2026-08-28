@@ -18,7 +18,6 @@ import (
 	"gpt-image-backend/internal/database"
 	"gpt-image-backend/internal/middleware"
 	"gpt-image-backend/internal/models"
-	"gpt-image-backend/internal/services"
 )
 
 const maxProjectImageBytes = 64 << 20
@@ -37,7 +36,7 @@ type projectImageLegacyStore interface {
 }
 
 type projectImageUploader interface {
-	Upload(ctx context.Context, userID, fileName, contentType string, data []byte) (*services.MaterialUpload, error)
+	Upload(ctx context.Context, provider, fileName, contentType string, data []byte) (*fileUploadResult, error)
 }
 
 // ProjectImageHandler 处理在线项目图片接口。
@@ -88,7 +87,7 @@ func (h *ProjectImageHandler) Get(c *gin.Context) {
 	}
 	if len(data) > 0 && strings.TrimSpace(image.ImageURL) == "" && h.uploader != nil {
 		fileName := filepath.Base(image.ImageID) + mimeExtension(image.MIMEType)
-		result, uploadErr := h.uploader.Upload(c.Request.Context(), userID, fileName, image.MIMEType, data)
+		result, uploadErr := h.uploader.Upload(c.Request.Context(), c.GetString(middleware.ContextKeyProvider), fileName, image.MIMEType, data)
 		if uploadErr == nil && result != nil && strings.TrimSpace(result.URL) != "" {
 			imageURL := strings.TrimSpace(result.URL)
 			if migrateErr := legacyStore.MigrateImageURL(c.Request.Context(), userID, projectID, imageID, imageURL); migrateErr == nil {

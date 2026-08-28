@@ -183,7 +183,117 @@ func NewProjectGenerationHandler(projects projectGenerationStore, providers imag
 func (h *ProjectGenerationHandler) Register(api *gin.RouterGroup) {
 	api.POST("/projects/:id/generations", h.Generate)
 	api.POST("/projects/:id/edits", h.Generate)
+	api.POST("/agent/responses", h.AgentResponses)
 	api.POST("/images/status", h.Status)
+}
+
+// AgentResponses POST /api/v1/agent/responses，代理 Agent 的完整 Responses 请求。
+// Agent 会自行处理多轮工具调用，因此这里仅负责固定 provider 的请求转发和响应透传。
+func (h *ProjectGenerationHandler) AgentResponses(c *gin.Context) {
+	userID := c.GetString(middleware.ContextKeyUserID)
+	providerName := c.GetString(middleware.ContextKeyProvider)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "unauthenticated"})
+		return
+	}
+
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxGenerationRequestBytes)
+	var rawEnvelope map[string]json.RawMessage
+	if err := c.ShouldBindJSON(&rawEnvelope); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "valid Agent responses request required"})
+		return
+	}
+	var apiKey string
+	if err := json.Unmarshal(rawEnvelope["api_key"], &apiKey); err != nil {
+		apiKey = ""
+	}
+	if strings.TrimSpace(apiKey) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "api_key is required"})
+		return
+	}
+	body := rawEnvelope["body"]
+	if len(body) == 0 {
+		body = rawEnvelope["request"]
+	}
+	if len(body) == 0 {
+		delete(rawEnvelope, "api_key")
+		body, _ = json.Marshal(rawEnvelope)
+	}
+	if len(body) == 0 || !json.Valid(body) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "valid Responses body required"})
+		return
+	}
+	var bodyObject map[string]any
+	if err := json.Unmarshal(body, &bodyObject); err != nil || bodyObject == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "Responses body must be a JSON object"})
+		return
+	}
+	if model, ok := bodyObject["model"].(string); !ok || strings.TrimSpace(model) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "Responses model is required"})
+		return
+	}
+
+	baseURL, ok := h.providers.ResourceBaseURL(providerName)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "Agent provider unavailable"})
+		return
+	}
+	endpoint := strings.TrimRight(baseURL, "/") + "/v1/responses"
+	log.Ctx(c.Request.Context()).Info().
+		Str("method", c.Request.Method).
+		Str("path", c.Request.URL.Path).
+		Str("upstream_url", endpoint).
+		Str("user_id", userID).
+		Interface("body", generationLogPayload(body, false)).
+		Msg("agent responses proxy request")
+
+	request, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "create Agent upstream request failed"})
+		return
+	}
+	request.Header.Set("Authorization", "Bearer "+apiKey)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", c.GetHeader("Accept"))
+	request.Header.Set("User-Agent", c.Request.UserAgent())
+	if request.Header.Get("Accept") == "" {
+		request.Header.Set("Accept", "application/json")
+	}
+	if clientRequestID := c.GetHeader("x-client-request-id"); clientRequestID != "" {
+		request.Header.Set("x-client-request-id", clientRequestID)
+	}
+	middleware.SetRequestIDHeader(request)
+	response, err := h.client.Do(request)
+	if err != nil {
+		log.Ctx(c.Request.Context()).Error().Err(err).Str("upstream_url", endpoint).Msg("agent responses proxy response")
+		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "Agent 上游连接失败: " + err.Error()})
+		return
+	}
+	defer response.Body.Close()
+	for _, name := range []string{"Content-Type", "Cache-Control", "Retry-After", "X-Request-ID"} {
+		if value := response.Header.Get(name); value != "" {
+			c.Header(name, value)
+		}
+	}
+	c.Status(response.StatusCode)
+	buffer := make([]byte, 32<<10)
+	for {
+		count, readErr := response.Body.Read(buffer)
+		if count > 0 {
+			if _, writeErr := c.Writer.Write(buffer[:count]); writeErr != nil {
+				return
+			}
+			if flusher, ok := c.Writer.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				log.Ctx(c.Request.Context()).Warn().Err(readErr).Str("upstream_url", endpoint).Msg("read Agent upstream response failed")
+			}
+			break
+		}
+	}
 }
 
 type imageStatusRequest struct {
