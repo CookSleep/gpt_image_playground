@@ -3,7 +3,7 @@ import { LOCAL_PROJECT_ID, initStore, useStore } from './store'
 import { activateFirstImportedProfile, buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
 import { isDefaultConfigOnlyEnabled, mergeImportedSettings } from './lib/apiProfiles'
 import { getCustomProviderConfigUrl, loadCustomProviderSettingsFromUrl } from './lib/customProviderConfigUrl'
-import { getAppViewFromUrl, getProjectIdFromUrl, updateMaterialsUrl, updateWorkspaceUrl } from './lib/projectRoute'
+import { getAppViewFromUrl, getProjectIdFromUrl, updateAdminUrl, updateMaterialsUrl, updateWorkspaceUrl } from './lib/projectRoute'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import type { AppSettings } from './types'
 import Header from './components/Header'
@@ -23,6 +23,8 @@ import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
 import AppSidebar, { type AppView } from './components/AppSidebar'
 import MaterialLibrary from './components/MaterialLibrary'
+import AdminAnnouncements from './components/AdminAnnouncements'
+import AnnouncementNotice from './components/AnnouncementNotice'
 import SupportPromptModal from './components/SupportPromptModal'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
@@ -43,6 +45,11 @@ export default function App() {
 
   const navigateView = (nextView: AppView) => {
     setView(nextView)
+    if (nextView === 'admin') {
+      useStore.getState().setActiveProjectId(null)
+      updateAdminUrl()
+      return
+    }
     if (nextView === 'materials') {
       useStore.getState().setActiveProjectId(null)
       updateMaterialsUrl()
@@ -63,8 +70,9 @@ export default function App() {
 
   useEffect(() => {
     const syncProjectFromUrl = () => {
-      setView(getAppViewFromUrl())
-      useStore.getState().setActiveProjectId(getProjectIdFromUrl())
+      const nextView = getAppViewFromUrl()
+      setView(nextView)
+      useStore.getState().setActiveProjectId(nextView === 'workspace' ? getProjectIdFromUrl() : null)
     }
 
     syncProjectFromUrl()
@@ -151,7 +159,7 @@ export default function App() {
     <>
       <Header view={view} onNavigate={navigateView} />
       <AppSidebar view={view} collapsed={sidebarCollapsed} onChange={navigateView} onCollapsedChange={setSidebarCollapsed} />
-      {view === 'materials' ? (
+      {view === 'admin' ? <div className={`min-h-[calc(100vh-4rem)] pt-11 transition-[padding] duration-200 lg:pt-0 ${sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-56'}`}><AdminAnnouncements /></div> : view === 'materials' ? (
         <div data-material-library-root data-drag-select-surface className={`min-h-[calc(100vh-4rem)] pt-11 transition-[padding] duration-200 lg:pt-0 ${sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-56'}`}>
           <MaterialLibrary />
         </div>
@@ -166,14 +174,6 @@ export default function App() {
               className={`${appMode === 'agent' ? 'hidden xl:block' : ''} relative min-h-0 min-w-0`}
             >
               <div className="relative h-[calc(100dvh-2.75rem)] min-h-[320px] w-full lg:h-[100dvh]">
-                <div className="pointer-events-none absolute inset-x-0 top-4 z-50 flex justify-center px-3 sm:top-5 sm:px-6">
-                  <div className="pointer-events-auto flex w-full max-w-3xl items-center gap-2.5">
-                    <div className="min-w-0 flex-1">
-                      <SearchBar className="m-0" />
-                    </div>
-                    <ProjectApiKeySelect />
-                  </div>
-                </div>
                 {activeProjectId === LOCAL_PROJECT_ID && (
                   <div className="pointer-events-none absolute inset-x-3 top-20 z-40 flex justify-center sm:inset-x-6 sm:top-24">
                     <div className="pointer-events-auto w-full max-w-3xl">
@@ -182,7 +182,19 @@ export default function App() {
                   </div>
                 )}
                 <div className="h-full w-full">
-                  {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <ProjectCanvas agentPanelCollapsed={agentPanelCollapsed} />}
+                  {filterFavorite && !activeFavoriteCollectionId ? (
+                    <>
+                      <div className="pointer-events-none absolute inset-x-0 top-4 z-50 flex justify-center px-3 sm:top-5 sm:px-6">
+                        <div className="pointer-events-auto flex w-full max-w-3xl items-center gap-2.5">
+                          <div className="min-w-0 flex-1">
+                            <SearchBar className="m-0" />
+                          </div>
+                          <ProjectApiKeySelect />
+                        </div>
+                      </div>
+                      <FavoriteCollectionsView />
+                    </>
+                  ) : <ProjectCanvas agentPanelCollapsed={agentPanelCollapsed} canvasHeaderControls={<ProjectApiKeySelect />} />}
                 </div>
               </div>
             </main>
@@ -211,7 +223,7 @@ export default function App() {
           )}
         </div>
       )}
-      {view === 'workspace' && activeProjectId !== null && appMode !== 'agent' && <InputBar hideApiKeyBalance hideModeToggle moveModelToAttachment hideModeration />}
+      {view === 'workspace' && activeProjectId !== null && appMode !== 'agent' && <InputBar hideApiKeyBalance hideModeToggle moveModelToAttachment hideModeration sidebarCollapsed={sidebarCollapsed} agentPanelCollapsed={agentPanelCollapsed} />}
       <DetailModal />
       <Lightbox />
       <SettingsModal />
@@ -222,6 +234,7 @@ export default function App() {
       <Toast />
       <MaskEditorModal />
       <ImageContextMenu />
+      <AnnouncementNotice />
     </>
   )
 }

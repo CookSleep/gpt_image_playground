@@ -399,7 +399,7 @@ function AtImageOptionThumb({ option }: { option: AtImageOption }) {
   )
 }
 
-export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = false, hideModeToggle = false, moveModelToAttachment = false, hideModeration = false }: { embeddedAgent?: boolean; hideApiKeyBalance?: boolean; hideModeToggle?: boolean; moveModelToAttachment?: boolean; hideModeration?: boolean } = {}) {
+export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = false, hideModeToggle = false, moveModelToAttachment = false, hideModeration = false, sidebarCollapsed = false, agentPanelCollapsed = false }: { embeddedAgent?: boolean; hideApiKeyBalance?: boolean; hideModeToggle?: boolean; moveModelToAttachment?: boolean; hideModeration?: boolean; sidebarCollapsed?: boolean; agentPanelCollapsed?: boolean } = {}) {
   const { user } = useAuth()
   const [apiKeys, setApiKeys] = useState<string[]>([])
   const [apiKeyItems, setApiKeyItems] = useState<ApiKeyItem[]>([])
@@ -2420,6 +2420,9 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
 
   const showFavoriteCollectionBatchBar = inputMode !== 'agent' && inCollectionOverview && selectedFavoriteCollectionIds.length > 0
   const showTaskBatchBar = inputMode !== 'agent' && !showFavoriteCollectionBatchBar && selectedTaskIds.length > 0
+  const paramsPositionClass = agentPanelCollapsed
+    ? sidebarCollapsed ? 'xl:left-[calc(50%+32px)] xl:w-[calc(100%-104px)]' : 'xl:left-[calc(50%+112px)] xl:w-[calc(100%-264px)]'
+    : sidebarCollapsed ? 'xl:left-[calc(50%-178px)] xl:w-[calc(100%-524px)]' : 'xl:left-[calc(50%-98px)] xl:w-[calc(100%-684px)]'
 
   return (
     <>
@@ -2428,7 +2431,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       <div
         data-input-bar
         data-input-mode={inputMode === 'agent' ? 'agent' : 'params'}
-        className={`fixed bottom-4 left-1/2 z-40 w-full -translate-x-1/2 px-3 transition-all duration-300 sm:bottom-6 sm:max-w-4xl sm:px-4 ${inputMode === 'agent' ? 'xl:left-auto xl:right-0 xl:w-[420px] xl:max-w-[420px] xl:translate-x-0 xl:px-3' : 'xl:left-[calc(50%-210px)] xl:w-[calc(100%-460px)]'}`}
+        className={`fixed bottom-4 left-1/2 z-40 w-full -translate-x-1/2 px-3 transition-all duration-300 sm:bottom-6 sm:max-w-4xl sm:px-4 ${inputMode === 'agent' ? 'xl:left-auto xl:right-0 xl:w-[420px] xl:max-w-[420px] xl:translate-x-0 xl:px-3' : paramsPositionClass}`}
       >
         <InputBatchBars
           showFavoriteCollectionBatchBar={showFavoriteCollectionBatchBar}

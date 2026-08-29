@@ -1,6 +1,7 @@
-import { ChevronLeftIcon, ChevronRightIcon, CollectionManageIcon, HomeIcon } from './icons'
+import { BellIcon, ChevronLeftIcon, ChevronRightIcon, CollectionManageIcon, HomeIcon } from './icons'
+import { useAuth } from '../auth/AuthContext'
 
-export type AppView = 'workspace' | 'materials'
+export type AppView = 'workspace' | 'materials' | 'admin'
 
 export default function AppSidebar({ view, collapsed, onChange, onCollapsedChange }: {
   view: AppView
@@ -8,6 +9,8 @@ export default function AppSidebar({ view, collapsed, onChange, onCollapsedChang
   onChange: (view: AppView) => void
   onCollapsedChange: (collapsed: boolean) => void
 }) {
+  const { user } = useAuth()
+  const isAdmin = Boolean(user?.is_admin)
   return (
     <>
       <aside className={`fixed bottom-0 left-0 top-16 z-30 hidden overflow-hidden border-r border-gray-200 bg-white/90 py-5 backdrop-blur transition-[width,padding] duration-300 ease-in-out dark:border-white/[0.08] dark:bg-gray-950/90 lg:block ${collapsed ? 'w-16 px-2' : 'w-56 px-3'}`}>
@@ -33,6 +36,16 @@ export default function AppSidebar({ view, collapsed, onChange, onCollapsedChang
             <CollectionManageIcon className="h-[18px] w-[18px] shrink-0" />
             <span className={`overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-200 ease-in-out ${collapsed ? 'pointer-events-none max-w-0 opacity-0' : 'max-w-32 opacity-100 delay-75'}`}>素材库</span>
           </button>
+          {isAdmin && <>
+            <div className="my-3 border-t border-gray-200 dark:border-white/[0.08]" />
+            <div className={`flex h-7 items-center ${collapsed ? 'justify-center' : 'px-3'}`}>
+              <p className={`overflow-hidden whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400 transition-[max-width,opacity] duration-200 ease-in-out dark:text-gray-500 ${collapsed ? 'pointer-events-none max-w-0 opacity-0' : 'max-w-32 opacity-100 delay-75'}`}>管理员</p>
+            </div>
+            <button type="button" onClick={() => onChange('admin')} className={`flex h-10 w-full items-center rounded-lg text-sm font-medium transition ${collapsed ? 'justify-center px-0' : 'gap-3 px-3 text-left'} ${view === 'admin' ? 'bg-gray-100 text-gray-900 dark:bg-white/[0.08] dark:text-white' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/[0.05] dark:hover:text-white'}`} title={collapsed ? '公告' : undefined} aria-label="公告">
+              <BellIcon className="h-[18px] w-[18px] shrink-0" />
+              <span className={`overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-200 ease-in-out ${collapsed ? 'pointer-events-none max-w-0 opacity-0' : 'max-w-32 opacity-100 delay-75'}`}>公告</span>
+            </button>
+          </>}
         </nav>
       </aside>
       <nav className="fixed left-0 right-0 top-16 z-30 flex h-11 items-center gap-1 border-b border-gray-200 bg-white/95 px-3 backdrop-blur dark:border-white/[0.08] dark:bg-gray-950/95 lg:hidden" aria-label="主菜单">
@@ -44,6 +57,14 @@ export default function AppSidebar({ view, collapsed, onChange, onCollapsedChang
           <CollectionManageIcon className="h-4 w-4" />
           素材库
         </button>
+        {isAdmin && <>
+          <div className="mx-1 h-5 border-l border-gray-200 dark:border-white/[0.08]" />
+          <span className="shrink-0 px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400 dark:text-gray-500">管理员</span>
+          <button type="button" onClick={() => onChange('admin')} className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium ${view === 'admin' ? 'bg-gray-100 text-gray-900 dark:bg-white/[0.08] dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}>
+            <BellIcon className="h-4 w-4" />
+            公告
+          </button>
+        </>}
       </nav>
     </>
   )

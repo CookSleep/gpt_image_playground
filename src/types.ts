@@ -286,6 +286,28 @@ export interface ProjectCanvasViewport {
   scale: number
 }
 
+export interface ProjectCanvasCrop {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface ProjectCanvasOperator {
+  /** 图片原始宽度，用于计算缩放比例和恢复原分辨率 */
+  originalWidth?: number
+  /** 相对原始宽度的缩放比例 */
+  scale?: number
+  /** 图片旋转角度 */
+  rotation?: number
+  /** 是否水平翻转 */
+  flipX?: boolean
+  /** 是否垂直翻转 */
+  flipY?: boolean
+  /** 归一化裁剪区域，坐标相对于原图 */
+  crop?: ProjectCanvasCrop
+}
+
 export interface ProjectCanvasItem {
   name?: string
   x: number
@@ -293,6 +315,7 @@ export interface ProjectCanvasItem {
   width: number
   z: number
   rotation?: number
+  operator?: ProjectCanvasOperator
   favoriteCollectionIds?: string[]
 }
 

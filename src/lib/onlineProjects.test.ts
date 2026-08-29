@@ -12,7 +12,7 @@ vi.mock('./db', () => ({
   getAllImages: async () => images,
 }))
 
-import { buildLegacyProjectArchive, buildOnlineProjectArchive, deleteOnlineProject, deleteOnlineProjectTask, downloadOnlineProject, getAgentConversationReferencedImageIds, getTaskReferencedImageIds, listOnlineProjects, saveOnlineProjectCanvas, saveOnlineProjectTask, uploadOnlineProjectImage } from './onlineProjects'
+import { buildLegacyProjectArchive, buildOnlineProjectArchive, deleteOnlineProject, deleteOnlineProjectTask, downloadOnlineProject, getAgentConversationReferencedImageIds, getOnlineProjectCanvas, getTaskReferencedImageIds, listOnlineProjects, saveOnlineProjectCanvas, saveOnlineProjectTask, uploadOnlineProjectImage } from './onlineProjects'
 
 function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
   return {
@@ -286,6 +286,20 @@ describe('onlineProjects', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ canvas }),
     }))
+  })
+
+  it('loads canvas state through the dedicated endpoint', async () => {
+    const canvas = { version: 1, viewport: { x: 4, y: 8, scale: 1 }, items: {} }
+    authFetch.mockResolvedValueOnce(new Response(JSON.stringify({ canvas }), { status: 200 }))
+
+    await expect(getOnlineProjectCanvas('project-a')).resolves.toEqual(canvas)
+    expect(authFetch).toHaveBeenCalledWith(expect.stringMatching(/^\/api\/v1\/projects\/project-a\/canvas\?_\=\d+$/), { cache: 'no-store' })
+  })
+
+  it('returns no canvas for legacy projects', async () => {
+    authFetch.mockResolvedValueOnce(new Response(null, { status: 404 }))
+
+    await expect(getOnlineProjectCanvas('project-a')).resolves.toBeNull()
   })
 
   it('downloads and deletes an online project', async () => {

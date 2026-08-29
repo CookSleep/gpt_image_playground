@@ -12,6 +12,63 @@ import (
 
 const maxProjectManifestBytes = 32 << 20
 
+func readProjectCanvasArchive(archive []byte, projectID string) (json.RawMessage, error) {
+	reader, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+	if err != nil {
+		return nil, fmt.Errorf("open project archive: %w", err)
+	}
+
+	for _, file := range reader.File {
+		if file.Name != "manifest.json" {
+			continue
+		}
+		if file.UncompressedSize64 > maxProjectManifestBytes {
+			return nil, errors.New("project manifest is too large")
+		}
+		content, err := file.Open()
+		if err != nil {
+			return nil, fmt.Errorf("open project manifest: %w", err)
+		}
+		data, readErr := io.ReadAll(io.LimitReader(content, maxProjectManifestBytes+1))
+		closeErr := content.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read project manifest: %w", readErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close project manifest: %w", closeErr)
+		}
+		if len(data) > maxProjectManifestBytes {
+			return nil, errors.New("project manifest is too large")
+		}
+		var manifest struct {
+			Projects []json.RawMessage `json:"projects"`
+		}
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			return nil, fmt.Errorf("decode project manifest: %w", err)
+		}
+		for _, raw := range manifest.Projects {
+			if projectArchiveRecordID(raw) != projectID {
+				continue
+			}
+			var projectRecord map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &projectRecord); err != nil {
+				return nil, fmt.Errorf("decode project record: %w", err)
+			}
+			canvas := projectRecord["canvas"]
+			if len(canvas) == 0 || string(canvas) == "null" {
+				return nil, ErrProjectCanvasNotFound
+			}
+			var valid map[string]any
+			if err := json.Unmarshal(canvas, &valid); err != nil || valid == nil {
+				return nil, ErrProjectCanvasNotFound
+			}
+			return canvas, nil
+		}
+		return nil, ErrProjectCanvasNotFound
+	}
+	return nil, ErrProjectCanvasNotFound
+}
+
 func projectArchiveRecordID(raw json.RawMessage) string {
 	var record struct {
 		ID string `json:"id"`
@@ -251,4 +308,22 @@ func rewriteProjectCanvasArchive(archive []byte, projectID string, canvas json.R
 		return nil, fmt.Errorf("close project archive: %w", err)
 	}
 	return result.Bytes(), nil
+}
+
+// rewriteProjectCanvasViewportArchive 只替换画布视口，保留当前画布中的图片项目。
+func rewriteProjectCanvasViewportArchive(archive []byte, projectID string, viewport json.RawMessage) ([]byte, error) {
+	canvas, err := readProjectCanvasArchive(archive, projectID)
+	if err != nil {
+		return nil, err
+	}
+	var record map[string]json.RawMessage
+	if err := json.Unmarshal(canvas, &record); err != nil || record == nil {
+		return nil, errors.New("decode project canvas")
+	}
+	record["viewport"] = viewport
+	updated, err := json.Marshal(record)
+	if err != nil {
+		return nil, fmt.Errorf("encode project canvas viewport: %w", err)
+	}
+	return rewriteProjectCanvasArchive(archive, projectID, updated)
 }

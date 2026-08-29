@@ -114,6 +114,39 @@ input[type="number"] {
   50% { border-color: #93c5fd; }
 }
 
+@keyframes canvas-generation-glow {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.35); }
+  20% { opacity: 0.55; }
+  70% { opacity: 0.2; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.35); }
+}
+
+.canvas-generation-glow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 130%;
+  height: 130%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(63, 120, 197, 0.62) 0%, rgba(63, 120, 197, 0.32) 34%, rgba(63, 120, 197, 0) 72%);
+  filter: blur(8px);
+  animation: canvas-generation-glow 2.2s ease-out infinite;
+}
+
+.canvas-generation-glow-base {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(63, 120, 197, 0.24) 0%, rgba(63, 120, 197, 0) 70%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-generation-glow {
+    animation: none;
+    opacity: 0.28;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
 @keyframes agent-web-search-text-sweep {
   0% { background-position: 200% center; }
   100% { background-position: -100% center; }

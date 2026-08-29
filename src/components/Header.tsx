@@ -5,10 +5,10 @@ import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { updateWorkspaceUrl } from '../lib/projectRoute'
 import ViewportTooltip from './ViewportTooltip'
-import HelpModal from './HelpModal'
 import HistoryModal from './HistoryModal'
+import AnnouncementHistoryModal from './AnnouncementHistoryModal'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
-import { EditIcon, HelpCircleIcon, HistoryIcon, InstallIcon, SettingsIcon } from './icons'
+import { BellIcon, EditIcon, HistoryIcon, InstallIcon, SettingsIcon } from './icons'
 import UserMenu from '../auth/UserMenu'
 import { useAuth } from '../auth/AuthContext'
 import { ProjectBalance } from './ProjectApiControls'
@@ -34,7 +34,6 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const agentMobileHeaderVisible = useStore((s) => s.agentMobileHeaderVisible)
-  const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const activeProject = projects.find((project) => project.id === activeProjectId)
   const activeProjectTitle = activeProjectId === LOCAL_PROJECT_ID ? '本地数据' : activeProject?.title
@@ -45,11 +44,11 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
   // 新版本 NEW 徽标只给管理员看：普通用户/未登录/未启用认证都不显示
   const { user } = useAuth()
   const showUpdateBadge = hasUpdate && !!latestRelease && !!user?.is_admin
-  const [showHelp, setShowHelp] = useState(false)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [isPwaInstalled, setIsPwaInstalled] = useState(isInstalledPwa)
   const [hintVisible, setHintVisible] = useState(false)
   const [showHistoryModal, setShowHistoryModal] = useState(false)
+  const [showAnnouncementHistory, setShowAnnouncementHistory] = useState(false)
   const [editingProjectName, setEditingProjectName] = useState(false)
   const [projectName, setProjectName] = useState('')
   const historyButtonRef = useRef<HTMLButtonElement>(null)
@@ -90,7 +89,7 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
   }, [appMode, agentMobileHeaderVisible])
 
   const installTooltip = useTooltip()
-  const helpTooltip = useTooltip()
+  const announcementTooltip = useTooltip()
   const settingsTooltip = useTooltip()
 
   useEffect(() => {
@@ -165,7 +164,7 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
                     onClick={openHome}
                     className="hidden text-lg font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:inline"
                   >
-                  {view === 'materials' ? '素材库' : 'OpenToken Images'}
+                  {view === 'materials' ? '素材库' : view === 'admin' ? '公告管理' : 'OpenToken Images'}
                   </button>
                 </>
               ) : (
@@ -229,7 +228,7 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
                     onClick={openHome}
                     className={`${activeProject ? 'hidden sm:inline' : ''} min-w-0 max-w-full truncate whitespace-nowrap text-[17px] font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:text-lg`}
                   >
-                    {view === 'materials' ? '素材库' : 'OpenToken Images'}
+                    {view === 'materials' ? '素材库' : view === 'admin' ? '公告管理' : 'OpenToken Images'}
                   </button>
                 </>
               )}
@@ -338,6 +337,25 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
             </div>
           )}
           <div className="flex items-center gap-1 shrink-0">
+            {user && <div
+              className="relative"
+              {...announcementTooltip.handlers}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  dismissAllTooltips()
+                  setShowAnnouncementHistory(true)
+                }}
+                className="rounded-lg p-2 transition-colors hover:bg-gray-100 dark:hover:bg-gray-900"
+                aria-label="公告"
+              >
+                <BellIcon className="h-5 w-5 text-gray-600 dark:text-gray-400" />
+              </button>
+              <ViewportTooltip visible={announcementTooltip.visible} className="whitespace-nowrap">
+                公告
+              </ViewportTooltip>
+            </div>}
             {!isPwaInstalled && (
               <div
                 className="relative"
@@ -358,24 +376,6 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
                 </ViewportTooltip>
               </div>
             )}
-            <div
-              className="relative"
-              {...helpTooltip.handlers}
-            >
-              <button
-                onClick={() => {
-                  dismissAllTooltips()
-                  setShowHelp(true)
-                }}
-                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
-                aria-label="操作指南"
-              >
-                <HelpCircleIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-              </button>
-              <ViewportTooltip visible={helpTooltip.visible} className="whitespace-nowrap">
-                操作指南
-              </ViewportTooltip>
-            </div>
             <div
               className="relative"
               {...settingsTooltip.handlers}
@@ -407,7 +407,7 @@ export default function Header({ view = 'workspace', onNavigate }: { view?: AppV
       <div className={`safe-area-top invisible pointer-events-none transition-all duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? 'max-h-0 sm:max-h-[500px] opacity-0 sm:opacity-100 overflow-hidden sm:overflow-visible' : 'max-h-[500px] opacity-100'}`} aria-hidden="true">
         <div className="safe-header-inner" />
       </div>
-      {showHelp && <HelpModal appMode={appMode} isFavoriteCollectionOverview={appMode === 'gallery' && filterFavorite && !activeFavoriteCollectionId} onClose={() => setShowHelp(false)} />}
+      {showAnnouncementHistory && <AnnouncementHistoryModal onClose={() => setShowAnnouncementHistory(false)} />}
     </>
   )
 }

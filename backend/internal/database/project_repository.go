@@ -21,6 +21,9 @@ var ErrProjectForbidden = errors.New("project belongs to another user")
 // ErrProjectNotFound 表示当前用户没有对应项目。
 var ErrProjectNotFound = errors.New("project not found")
 
+// ErrProjectCanvasNotFound 表示项目归档中没有可恢复的画布数据。
+var ErrProjectCanvasNotFound = errors.New("project canvas not found")
+
 // ProjectRepository 负责在线项目归档持久化。
 type ProjectRepository struct {
 	db *DB
@@ -103,6 +106,45 @@ func (r *ProjectRepository) SaveCanvas(ctx context.Context, userID, id string, c
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit project canvas: %w", err)
+	}
+	return &saved, nil
+}
+
+// SaveCanvasViewport 只更新项目归档中的画布视口，避免上传完整图片项目数据。
+func (r *ProjectRepository) SaveCanvasViewport(ctx context.Context, userID, id string, viewport json.RawMessage) (*models.OnlineProject, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin canvas viewport update: %w", err)
+	}
+	defer tx.Rollback()
+
+	var archive []byte
+	if err := tx.QueryRowContext(ctx, `
+		SELECT archive FROM online_projects
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+		FOR UPDATE`, id, userID).Scan(&archive); errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrProjectNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("lock online project: %w", err)
+	}
+	archive, err = rewriteProjectCanvasViewportArchive(archive, id, viewport)
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(archive)
+	var saved models.OnlineProject
+	err = tx.QueryRowContext(ctx, `
+		UPDATE online_projects
+		SET archive = $3, archive_size = $4, archive_sha256 = $5, updated_at = NOW()
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+		RETURNING id, user_id, title, archive_size, archive_sha256, created_at, updated_at`,
+		id, userID, archive, len(archive), hex.EncodeToString(digest[:]),
+	).Scan(&saved.ID, &saved.UserID, &saved.Title, &saved.ArchiveSize, &saved.ArchiveSHA256, &saved.CreatedAt, &saved.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("save project canvas viewport: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit project canvas viewport: %w", err)
 	}
 	return &saved, nil
 }
@@ -262,6 +304,19 @@ func (r *ProjectRepository) Get(ctx context.Context, userID, id string) (*models
 		return nil, nil, fmt.Errorf("get online project: %w", err)
 	}
 	return &project, archive, nil
+}
+
+// GetCanvas 只读取项目归档中的画布状态，避免为恢复画布下载完整 ZIP。
+func (r *ProjectRepository) GetCanvas(ctx context.Context, userID, id string) (*models.OnlineProject, json.RawMessage, error) {
+	project, archive, err := r.Get(ctx, userID, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	canvas, err := readProjectCanvasArchive(archive, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	return project, canvas, nil
 }
 
 // Rename 只更新项目名称，归档内容保持不变。

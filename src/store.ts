@@ -14,6 +14,7 @@ import type {
   MaskDraft,
   Project,
   ProjectCanvasState,
+  ProjectCanvasViewport,
   StoredImage,
   StoredImageThumbnail,
   TaskRecord,
@@ -55,7 +56,7 @@ import {
   storeImageWithSize,
 } from './lib/db'
 import { createRequestId, getAccessToken, isAuthEnabled } from './auth/api'
-import { buildLegacyProjectArchive, buildOnlineProjectArchive, clearLegacyProjectUploadId, createOnlineProject, deleteOnlineProject, deleteOnlineProjectImage, deleteOnlineProjectTask, downloadOnlineProject, downloadOnlineProjectImage, getAgentConversationReferencedImageIds, getLegacyProjectUploadId, getTaskReferencedImageIds, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectCanvas, saveOnlineProjectTask, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
+import { buildLegacyProjectArchive, buildOnlineProjectArchive, clearLegacyProjectUploadId, createOnlineProject, deleteOnlineProject, deleteOnlineProjectImage, deleteOnlineProjectTask, downloadOnlineProject, downloadOnlineProjectImage, getAgentConversationReferencedImageIds, getLegacyProjectUploadId, getOnlineProjectCanvas, getTaskReferencedImageIds, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectCanvas, saveOnlineProjectTask, saveOnlineProjectViewport, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
 import { callImageApi } from './lib/api'
 import { callBackendImageApi } from './lib/backendImageApi'
 import { callBackendCompositeImageApi, queryBackendCompositeImageTask } from './lib/backendCompositeImageApi'
@@ -76,6 +77,7 @@ import { buildExportZip, readExportZip, readExportZipFileAsDataUrl } from './lib
 import { getAgentConversationProjectId, getChangedAgentConversationProjectIds } from './lib/agentConversationScope'
 import { ensureProjectCanvas, normalizeProjectCanvas, removeCanvasFavoriteCollection } from './lib/projectCanvas'
 import { getTaskOutputImageSlots, removeTaskOutputImage as removeTaskOutputImageRecord } from './lib/singleImageOperations'
+import { playCompletionSound } from './lib/completionSound'
 
 export const ALL_FAVORITES_COLLECTION_ID = '__all_favorites__'
 export const ALL_PROJECTS_ID = '__all_projects__'
@@ -235,7 +237,13 @@ export async function ensureImageCached(id: string): Promise<string | undefined>
 
 export async function ensureImageThumbnailCached(id: string): Promise<{ dataUrl: string; width?: number; height?: number } | undefined> {
   const cached = getCachedThumbnail(id)
-  if (cached) return cached
+  if (cached) {
+    const image = await getImage(id)
+    if (!image?.width || !image.height || (cached.width === image.width && cached.height === image.height)) return cached
+    const corrected = { ...cached, width: image.width, height: image.height }
+    cacheThumbnail(id, corrected)
+    return corrected
+  }
 
   const rec = await getStoredFreshImageThumbnail(id)
   if (!rec?.thumbnailDataUrl) {
@@ -246,10 +254,12 @@ export async function ensureImageThumbnailCached(id: string): Promise<{ dataUrl:
     return { dataUrl: image.dataUrl, width: image.width, height: image.height }
   }
 
+  const image = await getImage(id)
+
   const thumbnail = {
     dataUrl: rec.thumbnailDataUrl,
-    width: rec.width,
-    height: rec.height,
+    width: image?.width ?? rec.width,
+    height: image?.height ?? rec.height,
     thumbnailVersion: rec.thumbnailVersion,
   }
   cacheThumbnail(id, thumbnail)
@@ -350,18 +360,18 @@ function startThumbnailBackfill(id: string) {
   void (async () => {
     if (getCachedThumbnail(id)) return
 
-    const thumbnail = await getImageThumbnail(id)
+    const [thumbnail, image] = await Promise.all([getImageThumbnail(id), getImage(id)])
     if (thumbnail?.thumbnailDataUrl) {
       cacheThumbnail(id, {
         dataUrl: thumbnail.thumbnailDataUrl,
-        width: thumbnail.width,
-        height: thumbnail.height,
+        width: image?.width ?? thumbnail.width,
+        height: image?.height ?? thumbnail.height,
         thumbnailVersion: thumbnail.thumbnailVersion,
       })
       notifyImageThumbnail(id, {
         dataUrl: thumbnail.thumbnailDataUrl,
-        width: thumbnail.width,
-        height: thumbnail.height,
+        width: image?.width ?? thumbnail.width,
+        height: image?.height ?? thumbnail.height,
       })
     }
   })().catch(() => {
@@ -949,6 +959,8 @@ interface AppState {
   createProject: (prompt: string, options?: { autoRecord?: boolean }) => string
   renameProject: (id: string, title: string) => void
   updateProjectCanvas: (id: string, canvas: ProjectCanvasState) => void
+  updateProjectCanvasViewport: (id: string, viewport: ProjectCanvasViewport) => void
+  flushProjectCanvasOnExit: (id: string, canvas: ProjectCanvasState, force?: boolean) => void
   setActiveProjectId: (id: string | null) => void
   deleteProject: (id: string) => Promise<void>
   legacyProjectSaving: boolean
@@ -1425,6 +1437,61 @@ export const useStore = create<AppState>()(
         }))
         queueProjectSave(updated)
         if (updated.storage === 'online' && updated.remoteId) queueOnlineProjectCanvasSync(updated)
+      },
+      updateProjectCanvasViewport: (id, viewport) => {
+        const project = get().projects.find((item) => item.id === id)
+        const baseCanvas = project?.canvas ?? get().projectCanvasCache[id]
+        if (!baseCanvas && id !== LOCAL_PROJECT_ID) return
+        if (baseCanvas && baseCanvas.viewport.x === viewport.x && baseCanvas.viewport.y === viewport.y && baseCanvas.viewport.scale === viewport.scale) return
+        const canvas = { ...(baseCanvas ?? ensureProjectCanvas(undefined, [])), viewport }
+        const now = Date.now()
+        const updated: Project | null = project
+          ? { ...project, canvas, updatedAt: now }
+          : id === LOCAL_PROJECT_ID
+            ? {
+                id: LOCAL_PROJECT_ID,
+                title: '本地数据',
+                initialPrompt: '',
+                storage: 'local',
+                canvas,
+                createdAt: now,
+                updatedAt: now,
+              }
+            : null
+        if (!updated) return
+        set((state) => ({
+          projectCanvasCache: { ...state.projectCanvasCache, [id]: canvas },
+          projects: project
+            ? state.projects.map((item) => item.id === id ? updated : item)
+            : [updated, ...state.projects],
+        }))
+        queueProjectSave(updated)
+        if (updated.storage === 'online' && updated.remoteId) queueOnlineProjectViewportSync(updated)
+      },
+      flushProjectCanvasOnExit: (id, canvas, force = false) => {
+        const project = get().projects.find((item) => item.id === id)
+        if (!project) return
+        const hasPendingSave = force
+          || projectPersistenceQueues.has(id)
+          || onlineProjectSyncTimers.has(id)
+          || onlineProjectSyncQueues.has(id)
+          || onlineProjectCanvasSyncQueues.has(id)
+          || Boolean(project.syncPending)
+        if (!hasPendingSave) return
+        const updated: Project = {
+          ...project,
+          canvas,
+          ...(project.storage === 'online' ? { syncPending: true } : {}),
+          updatedAt: Date.now(),
+        }
+        set((state) => ({
+          projectCanvasCache: { ...state.projectCanvasCache, [id]: canvas },
+          projects: state.projects.map((item) => item.id === id ? updated : item),
+        }))
+        queueProjectSave(updated)
+        if (updated.storage === 'online' && updated.remoteId) {
+          void saveOnlineProjectCanvas(updated, canvas, { keepalive: true }).catch(() => undefined)
+        }
       },
       setActiveProjectId: (activeProjectId) => {
         const changed = get().activeProjectId !== activeProjectId
@@ -2384,6 +2451,40 @@ function queueOnlineProjectCanvasSync(project: Project) {
       if (onlineProjectCanvasSyncErrors.has(project.id)) return
       onlineProjectCanvasSyncErrors.add(project.id)
       useStore.getState().showToast('画布位置保存失败，请稍后重试', 'error')
+    })
+    .finally(() => {
+      if (onlineProjectCanvasSyncQueues.get(project.id) === syncing) onlineProjectCanvasSyncQueues.delete(project.id)
+    })
+}
+
+function queueOnlineProjectViewportSync(project: Project) {
+  const previous = onlineProjectCanvasSyncQueues.get(project.id)
+  const syncing = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(async () => {
+    const latest = useStore.getState().projects.find((item) => item.id === project.id)
+    if (latest?.storage !== 'online' || !latest.remoteId || !latest.canvas) return
+    const version = latest.updatedAt
+    const response = await saveOnlineProjectViewport(latest, latest.canvas.viewport)
+    const current = useStore.getState().projects.find((item) => item.id === latest.id)
+    if (!current) return
+    const hasArchiveSync = onlineProjectSyncTimers.has(current.id) || onlineProjectSyncQueues.has(current.id)
+    const updated = {
+      ...current,
+      remoteArchiveSha256: response.archive_sha256,
+      syncPending: hasArchiveSync || current.updatedAt !== version,
+    }
+    useStore.setState((state) => ({
+      projects: state.projects.map((item) => item.id === current.id ? updated : item),
+    }))
+    queueProjectSave(updated)
+    onlineProjectCanvasSyncErrors.delete(project.id)
+  })
+  onlineProjectCanvasSyncQueues.set(project.id, syncing)
+  void syncing
+    .catch((err) => {
+      console.error('在线项目视口保存失败：', err)
+      if (onlineProjectCanvasSyncErrors.has(project.id)) return
+      onlineProjectCanvasSyncErrors.add(project.id)
+      useStore.getState().showToast('画布视口保存失败，请稍后重试', 'error')
     })
     .finally(() => {
       if (onlineProjectCanvasSyncQueues.get(project.id) === syncing) onlineProjectCanvasSyncQueues.delete(project.id)
@@ -3747,6 +3848,11 @@ async function recoverImageStatusTask(taskId: string) {
 
 async function loadOnlineProjectCache(localProjects: Project[], localTasks: TaskRecord[], localConversations: AgentConversation[], localImageIds: string[], activeProjectId: string | null) {
   const responses = await listOnlineProjects()
+  console.info('[项目画布] 在线项目列表', {
+    activeProjectId,
+    count: responses.length,
+    projectIds: responses.map((response) => response.id),
+  })
   const remoteIds = new Set(responses.map((response) => response.id))
   const retainedProjects = localProjects.filter((project) =>
     project.storage !== 'online' || remoteIds.has(project.remoteId ?? project.id) || (project.syncPending && !project.remoteArchiveSha256),
@@ -3767,12 +3873,24 @@ async function loadOnlineProjectCache(localProjects: Project[], localTasks: Task
     const cached = localProjects.find((project) => project.id === response.id || project.remoteId === response.id)
     const remote = createOnlineProject(response)
     const shouldLoadContents = activeProjectId === null || activeProjectId === ALL_PROJECTS_ID || activeProjectId === response.id || cached?.id === activeProjectId
+    const shouldRefreshArchive = shouldLoadContents && cached?.remoteArchiveSha256 !== response.archive_sha256
+    const shouldRefreshCanvas = shouldRefreshArchive && activeProjectId !== null && activeProjectId !== ALL_PROJECTS_ID
+    console.info('[项目画布] 本地缓存信息', {
+      projectId: response.id,
+      localArchiveSha256: cached?.remoteArchiveSha256 ?? null,
+      remoteArchiveSha256: response.archive_sha256,
+      canvas: cached?.canvas ?? null,
+      shouldRefreshArchive,
+    })
     let project: Project = {
       ...remote,
       initialPrompt: cached?.initialPrompt ?? '',
       ...(cached?.canvas ? { canvas: cached.canvas } : {}),
       ...(!shouldLoadContents ? { remoteArchiveSha256: cached?.remoteArchiveSha256 } : {}),
     }
+    let remoteCanvas: ProjectCanvasState | null = null
+    let canvasMigrationNeeded = false
+    let shouldLoadArchiveContents = shouldRefreshArchive
     if (cached?.syncPending) {
       project = {
         ...cached,
@@ -3780,41 +3898,56 @@ async function loadOnlineProjectCache(localProjects: Project[], localTasks: Task
         remoteId: response.id,
         syncPending: true,
       }
-    } else if (shouldLoadContents && cached?.remoteArchiveSha256 !== response.archive_sha256) {
-      try {
-        const parsed = readOnlineProjectArchive(await downloadOnlineProject(response.id))
-        const archivedProject = normalizeProjects(parsed.project ? [parsed.project] : [])[0]
-        const projectFavoriteCollections = normalizeFavoriteCollections(parsed.favoriteCollections)
-          .map((collection) => ({ ...collection, projectId: remote.id }))
-        const defaultFavoriteCollectionId = resolveDefaultFavoriteCollectionId(
-          projectFavoriteCollections,
-          parsed.defaultFavoriteCollectionId,
-        )
-        project = {
-          ...remote,
-          initialPrompt: archivedProject?.initialPrompt ?? cached?.initialPrompt ?? '',
-          defaultFavoriteCollectionId,
-          ...(cached?.canvas ?? archivedProject?.canvas
-            ? { canvas: cached?.canvas ?? archivedProject?.canvas }
-            : {}),
+    } else {
+      if (shouldRefreshCanvas) {
+        try {
+          remoteCanvas = await getOnlineProjectCanvas(response.id)
+          canvasMigrationNeeded = !remoteCanvas
+          shouldLoadArchiveContents = shouldRefreshArchive && (!cached || !remoteCanvas)
+          if (remoteCanvas) project = { ...project, canvas: remoteCanvas }
+        } catch (err) {
+          canvasMigrationNeeded = true
+          shouldLoadArchiveContents = shouldRefreshArchive
+          console.warn(`在线项目 ${response.id} 画布读取失败，将使用图片列表恢复：`, err)
         }
-        tasks = [
-          ...tasks.filter((task) => task.projectId !== project.id),
-          ...parsed.tasks.map((task) => ({ ...task, projectId: project.id })),
-        ]
-        agentConversations = mergeAgentConversationsForStorage(
-          agentConversations.filter((conversation) => conversation.projectId !== project.id),
-          normalizeAgentConversations(parsed.agentConversations).map((conversation) => ({ ...conversation, projectId: project.id })),
-        )
-        images.push(...parsed.images)
-        for (const image of parsed.images) availableImageIds.add(image.id)
-        thumbnails.push(...parsed.thumbnails)
-        favoriteCollections.push(...projectFavoriteCollections)
-      } catch (err) {
-        console.warn(`在线项目 ${response.id} 内容加载失败：`, err)
-        project = {
-          ...project,
-          remoteArchiveSha256: cached?.remoteArchiveSha256,
+      }
+      if (shouldLoadArchiveContents) {
+        try {
+          const parsed = readOnlineProjectArchive(await downloadOnlineProject(response.id))
+          const archivedProject = normalizeProjects(parsed.project ? [parsed.project] : [])[0]
+          if (archivedProject?.canvas) canvasMigrationNeeded = false
+          const projectFavoriteCollections = normalizeFavoriteCollections(parsed.favoriteCollections)
+            .map((collection) => ({ ...collection, projectId: remote.id }))
+          const defaultFavoriteCollectionId = resolveDefaultFavoriteCollectionId(
+            projectFavoriteCollections,
+            parsed.defaultFavoriteCollectionId,
+          )
+          project = {
+            ...remote,
+            initialPrompt: archivedProject?.initialPrompt ?? cached?.initialPrompt ?? '',
+            defaultFavoriteCollectionId,
+            ...(remoteCanvas ?? cached?.canvas ?? archivedProject?.canvas
+              ? { canvas: remoteCanvas ?? cached?.canvas ?? archivedProject?.canvas }
+              : {}),
+          }
+          tasks = [
+            ...tasks.filter((task) => task.projectId !== project.id),
+            ...parsed.tasks.map((task) => ({ ...task, projectId: project.id })),
+          ]
+          agentConversations = mergeAgentConversationsForStorage(
+            agentConversations.filter((conversation) => conversation.projectId !== project.id),
+            normalizeAgentConversations(parsed.agentConversations).map((conversation) => ({ ...conversation, projectId: project.id })),
+          )
+          images.push(...parsed.images)
+          for (const image of parsed.images) availableImageIds.add(image.id)
+          thumbnails.push(...parsed.thumbnails)
+          favoriteCollections.push(...projectFavoriteCollections)
+        } catch (err) {
+          console.warn(`在线项目 ${response.id} 内容加载失败：`, err)
+          project = {
+            ...project,
+            remoteArchiveSha256: cached?.remoteArchiveSha256,
+          }
         }
       }
     }
@@ -3828,26 +3961,36 @@ async function loadOnlineProjectCache(localProjects: Project[], localTasks: Task
         for (const remoteImage of remoteImages) {
           if (coverImageId && activeProjectId === null && remoteImage.image_id !== coverImageId) continue
           try {
-            if (remoteImage.image_url) {
-              if (availableImageIds.has(remoteImage.image_id)) continue
-              images.push({
-                id: remoteImage.image_id,
-                dataUrl: remoteImage.image_url,
-                source: remoteImage.source,
-                width: remoteImage.width,
-                height: remoteImage.height,
-                createdAt: Date.parse(remoteImage.created_at) || undefined,
-              })
-            } else {
-              // 旧记录即使本地已有缓存也要请求一次，以便重试后台转存。
-              const image = await downloadOnlineProjectImage(response.id, remoteImage)
-              if (!availableImageIds.has(remoteImage.image_id) || /^https?:\/\//i.test(image.dataUrl)) {
-                images.push(image)
-              }
+            const hasLocalImage = availableImageIds.has(remoteImage.image_id)
+            if (remoteImage.image_url && hasLocalImage) continue
+            // 本地没有图片时必须下载并转成 Data URL，供 Responses API 使用。
+            const image = await downloadOnlineProjectImage(response.id, remoteImage, { forceDataUrl: true })
+            if (!hasLocalImage) {
+              images.push(image)
             }
             availableImageIds.add(remoteImage.image_id)
           } catch (err) {
             console.warn(`在线项目 ${response.id} 图片 ${remoteImage.image_id} 加载失败：`, err)
+          }
+        }
+        if (canvasMigrationNeeded && shouldRefreshCanvas) {
+          const projectTasks = tasks.filter((task) => task.projectId === project.id)
+          const imageIds = Array.from(new Set([
+            ...projectTasks.flatMap((task) => task.outputImages),
+            ...remoteImages.map((image) => image.image_id),
+          ]))
+          const initializedCanvas = ensureProjectCanvas(undefined, imageIds)
+          try {
+            const saved = await saveOnlineProjectCanvas(project, initializedCanvas)
+            project = {
+              ...project,
+              canvas: initializedCanvas,
+              remoteArchiveSha256: saved.archive_sha256,
+              syncPending: false,
+            }
+            canvasMigrationNeeded = false
+          } catch (err) {
+            console.warn(`在线项目 ${response.id} 画布迁移保存失败：`, err)
           }
         }
       } catch (err) {
@@ -3893,6 +4036,11 @@ async function initializeStore() {
     ...storedProjectRecords,
   ]).sort((a, b) => b.updatedAt - a.updatedAt)
   const projectCanvasCache = useStore.getState().projectCanvasCache
+  console.info('[项目画布] 启动本地缓存', {
+    activeProjectId: useStore.getState().activeProjectId,
+    localProjectCount: projects.length,
+    canvasCacheProjectIds: Object.keys(projectCanvasCache),
+  })
   if (Object.keys(projectCanvasCache).length > 0) {
     projects = projects.map((project) => projectCanvasCache[project.id]
       ? { ...project, canvas: projectCanvasCache[project.id] }
@@ -3904,7 +4052,10 @@ async function initializeStore() {
   let onlineListLoaded = false
   useStore.setState({ projects, projectsLoaded: true })
   const publishedProjectState = useStore.getState().projects
-  if (isAuthEnabled() && getAccessToken()) {
+  const authEnabled = isAuthEnabled()
+  const hasAccessToken = Boolean(getAccessToken())
+  console.info('[项目画布] 在线同步条件', { authEnabled, hasAccessToken })
+  if (authEnabled && hasAccessToken) {
     try {
       const online = await loadOnlineProjectCache(projects, storedTasks, storedAgentConversations, storedImageIds, useStore.getState().activeProjectId)
       projects = online.projects
@@ -5956,6 +6107,7 @@ async function executeAgentRound(
         input: apiInputForTurn,
         maskDataUrl,
         signal: controller.signal,
+        forceStream: requestSettings.agentApiConfigMode !== 'hybrid',
         onImageStatusRequestCreated: (request) => {
           addImageStatusRequestIdToAgentRound(conversationId, roundId, request.requestId, activeProfile.id)
         },
@@ -5981,37 +6133,29 @@ async function executeAgentRound(
               }))
             }
           : undefined,
-        onImageToolStarted: shouldStreamAssistantMessage
-          ? async ({ toolCallId }) => {
-              if (controller.signal.aborted) return
-              await ensureStreamingAgentTask(toolCallId)
-            }
-          : undefined,
-        onImagePartialImage: shouldStreamAssistantMessage
-          ? async ({ toolCallId, image, partialImageIndex }) => {
-              if (controller.signal.aborted) return
-              const taskId = await ensureStreamingAgentTask(toolCallId)
-              if (controller.signal.aborted) return
-              useStore.getState().setTaskStreamPreview(taskId, image, partialImageIndex)
-              if (partialImageIndex === 0 || partialImageIndex == null) {
-                void persistTaskStreamPartialImage(taskId, image)
-              }
-            }
-          : undefined,
-        onImageToolCompleted: shouldStreamAssistantMessage
-          ? async (image) => {
-              if (controller.signal.aborted) return
-              await completeAgentImageTask(image)
-            }
-          : undefined,
-        onImageToolFailed: shouldStreamAssistantMessage
-          ? async ({ toolCallId, error }) => {
-              if (controller.signal.aborted) return
-              await ensureStreamingAgentTask(toolCallId)
-              if (controller.signal.aborted) return
-              failAgentImageTask(toolCallId, error)
-            }
-          : undefined,
+        onImageToolStarted: async ({ toolCallId }) => {
+          if (controller.signal.aborted) return
+          await ensureStreamingAgentTask(toolCallId)
+        },
+        onImagePartialImage: async ({ toolCallId, image, partialImageIndex }) => {
+          if (controller.signal.aborted) return
+          const taskId = await ensureStreamingAgentTask(toolCallId)
+          if (controller.signal.aborted) return
+          useStore.getState().setTaskStreamPreview(taskId, image, partialImageIndex)
+          if (partialImageIndex === 0 || partialImageIndex == null) {
+            void persistTaskStreamPartialImage(taskId, image)
+          }
+        },
+        onImageToolCompleted: async (image) => {
+          if (controller.signal.aborted) return
+          await completeAgentImageTask(image)
+        },
+        onImageToolFailed: async ({ toolCallId, error }) => {
+          if (controller.signal.aborted) return
+          await ensureStreamingAgentTask(toolCallId)
+          if (controller.signal.aborted) return
+          failAgentImageTask(toolCallId, error)
+        },
       })
       if (controller.signal.aborted) throw createAgentAbortError()
 
@@ -6088,6 +6232,7 @@ async function executeAgentRound(
           agentToolAction: image.action,
         }
         useStore.getState().setTasks([task, ...useStore.getState().tasks])
+        playCompletionSound()
         attachTaskToAgentRound(task.id)
         await putTask(task)
         await uploadGeneratedProjectImages(task, [{ ...stored, dataUrl: image.dataUrl, source: 'generated' }])
@@ -6717,11 +6862,13 @@ function normalizeFavoritePatch(task: TaskRecord, patch: Partial<TaskRecord>, de
 export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>, syncOnline = true) {
   const state = useStore.getState()
   const { tasks, setTasks } = state
+  const previousTask = tasks.find((task) => task.id === taskId)
   const updated = tasks.map((t) =>
     t.id === taskId ? { ...t, ...normalizeFavoritePatch(t, patch, getFavoriteDefaultForProject(state, t.projectId)) } : t,
   )
   const task = updated.find((t) => t.id === taskId)
   setTasks(updated)
+  if (previousTask?.status !== 'done' && task?.status === 'done' && task.outputImages.length > 0) playCompletionSound()
   maybeOpenSupportPrompt(tasks, updated, taskId)
   return task ? putTask(task, syncOnline) : undefined
 }
@@ -7111,14 +7258,8 @@ export async function editOutputImage(task: TaskRecord, imageId: string) {
   showToast('已添加当前图片到输入', 'success')
 }
 
-export function reuseImageConfig(task: TaskRecord, imageId: string) {
-  return reuseConfig({
-    ...task,
-    inputImageIds: [imageId],
-    maskTargetImageId: null,
-    maskImageId: null,
-    outputImages: [imageId],
-  })
+export function reuseImageConfig(task: TaskRecord, _imageId?: string) {
+  return reuseConfig(task)
 }
 
 export function retryImage(task: TaskRecord) {

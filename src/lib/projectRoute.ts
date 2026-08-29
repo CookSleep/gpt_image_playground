@@ -1,8 +1,12 @@
 const PROJECT_QUERY_PARAM = 'project'
 const MATERIALS_PATH = '/materials'
+const ADMIN_PATH = '/admin/announcements'
 
-export function getAppViewFromUrl(href = window.location.href): 'workspace' | 'materials' {
-  return new URL(href).pathname.replace(/\/+$/, '') === MATERIALS_PATH ? 'materials' : 'workspace'
+export function getAppViewFromUrl(href = window.location.href): 'workspace' | 'materials' | 'admin' {
+  const path = new URL(href).pathname.replace(/\/+$/, '')
+  if (path === MATERIALS_PATH) return 'materials'
+  if (path === ADMIN_PATH) return 'admin'
+  return 'workspace'
 }
 
 export function getProjectIdFromUrl(href = window.location.href) {
@@ -29,6 +33,16 @@ export function updateProjectUrl(projectId: string | null, replace = false) {
 export function updateMaterialsUrl(replace = false) {
   const url = new URL(window.location.href)
   url.pathname = MATERIALS_PATH
+  url.search = ''
+  url.hash = ''
+  const next = `${url.pathname}${url.search}${url.hash}`
+  if (replace) window.history.replaceState(null, '', next)
+  else window.history.pushState(null, '', next)
+}
+
+export function updateAdminUrl(replace = false) {
+  const url = new URL(window.location.href)
+  url.pathname = ADMIN_PATH
   url.search = ''
   url.hash = ''
   const next = `${url.pathname}${url.search}${url.hash}`

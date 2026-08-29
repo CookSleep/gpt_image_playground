@@ -24,6 +24,7 @@ type projectStoreStub struct {
 	archive  []byte
 	sha256   string
 	canvas   json.RawMessage
+	viewport json.RawMessage
 	deleted  bool
 }
 
@@ -41,6 +42,19 @@ func (s *projectStoreStub) SaveCanvas(_ context.Context, userID, id string, canv
 	s.id = id
 	s.canvas = canvas
 	return s.project, nil
+}
+
+func (s *projectStoreStub) SaveCanvasViewport(_ context.Context, userID, id string, viewport json.RawMessage) (*models.OnlineProject, error) {
+	s.userID = userID
+	s.id = id
+	s.viewport = viewport
+	return s.project, nil
+}
+
+func (s *projectStoreStub) GetCanvas(_ context.Context, userID, id string) (*models.OnlineProject, json.RawMessage, error) {
+	s.userID = userID
+	s.id = id
+	return s.project, s.canvas, nil
 }
 
 func (s *projectStoreStub) List(_ context.Context, userID string) ([]models.OnlineProject, error) {
@@ -137,6 +151,47 @@ func TestProjectHandlerSaveCanvas(t *testing.T) {
 
 	if w.Code != http.StatusOK || store.userID != "user-a" || store.id != project.ID || string(store.canvas) != `{"version":1,"viewport":{"x":1,"y":2,"scale":1},"items":{}}` {
 		t.Fatalf("unexpected canvas save: status=%d user=%q id=%q canvas=%s", w.Code, store.userID, store.id, store.canvas)
+	}
+}
+
+func TestProjectHandlerSaveCanvasViewport(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	project := &models.OnlineProject{ID: "86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8", Title: "项目 A"}
+	store := &projectStoreStub{project: project}
+	r := gin.New()
+	api := r.Group("/api/v1", func(c *gin.Context) {
+		c.Set(middleware.ContextKeyUserID, "user-a")
+		c.Next()
+	})
+	NewProjectHandler(store).Register(api)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/projects/86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8/canvas/viewport", bytes.NewBufferString(`{"viewport":{"x":12,"y":8,"scale":1.25}}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK || store.userID != "user-a" || store.id != project.ID || string(store.viewport) != `{"x":12,"y":8,"scale":1.25}` {
+		t.Fatalf("unexpected canvas viewport save: status=%d user=%q id=%q viewport=%s", w.Code, store.userID, store.id, store.viewport)
+	}
+}
+
+func TestProjectHandlerGetCanvas(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	project := &models.OnlineProject{ID: "86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8", Title: "项目 A"}
+	store := &projectStoreStub{project: project, canvas: json.RawMessage(`{"version":1,"viewport":{"x":4,"y":8,"scale":1},"items":{}}`)}
+	r := gin.New()
+	api := r.Group("/api/v1", func(c *gin.Context) {
+		c.Set(middleware.ContextKeyUserID, "user-a")
+		c.Next()
+	})
+	NewProjectHandler(store).Register(api)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8/canvas", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK || store.userID != "user-a" || store.id != project.ID || w.Body.String() != `{"canvas":{"version":1,"viewport":{"x":4,"y":8,"scale":1},"items":{}}}` {
+		t.Fatalf("unexpected canvas response: status=%d user=%q id=%q body=%s", w.Code, store.userID, store.id, w.Body.String())
 	}
 }
 

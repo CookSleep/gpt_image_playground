@@ -1,9 +1,10 @@
-import type { AgentConversation, AppSettings, FavoriteCollection, Project, StoredImage, StoredImageThumbnail, TaskRecord } from '../types'
+import type { AgentConversation, AppSettings, FavoriteCollection, Project, ProjectCanvasState, ProjectCanvasViewport, StoredImage, StoredImageThumbnail, TaskRecord } from '../types'
 import { authFetch } from '../auth/api'
 import { dataUrlToBlob } from './canvasImage'
 import { blobToDataUrl } from './dataUrl'
 import { buildExportZip, readExportZip, readExportZipFileAsDataUrl } from './exportZip'
 import { getAgentConversationProjectId } from './agentConversationScope'
+import { normalizeProjectCanvas } from './projectCanvas'
 
 const LEGACY_PROJECT_UPLOAD_ID_KEY = 'gpt-image-playground:legacy-project-upload-id'
 
@@ -269,16 +270,27 @@ export async function listOnlineProjectImages(projectId: string): Promise<Online
   })
 }
 
-export async function downloadOnlineProjectImage(projectId: string, image: OnlineProjectImageResponse): Promise<StoredImage> {
+export async function downloadOnlineProjectImage(projectId: string, image: OnlineProjectImageResponse, options: { forceDataUrl?: boolean } = {}): Promise<StoredImage> {
   const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(image.image_id)}`)
   if (!resp.ok) {
     const data = await resp.json().catch(() => null) as { message?: string } | null
     throw new Error(data?.message || `项目图片加载失败：HTTP ${resp.status}`)
   }
   const migratedURL = resp.headers.get('X-Project-Image-URL')
+  if (migratedURL && !options.forceDataUrl) {
+    return {
+      id: image.image_id,
+      dataUrl: migratedURL,
+      source: image.source,
+      width: image.width,
+      height: image.height,
+      createdAt: Date.parse(image.created_at) || undefined,
+    }
+  }
+  const dataUrl = await blobToDataUrl(await resp.blob(), image.mime_type)
   return {
     id: image.image_id,
-    dataUrl: migratedURL || await blobToDataUrl(await resp.blob(), image.mime_type),
+    dataUrl: options.forceDataUrl ? dataUrl : migratedURL || dataUrl,
     source: image.source,
     width: image.width,
     height: image.height,
@@ -316,18 +328,44 @@ export async function renameOnlineProject(id: string, title: string): Promise<On
   return await resp.json() as OnlineProjectResponse
 }
 
-export async function saveOnlineProjectCanvas(project: Project, canvas: Project['canvas']): Promise<OnlineProjectResponse> {
+export async function saveOnlineProjectCanvas(project: Project, canvas: Project['canvas'], options: { keepalive?: boolean } = {}): Promise<OnlineProjectResponse> {
   const remoteId = project.remoteId ?? project.id
   const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(remoteId)}/canvas`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ canvas }),
+    keepalive: options.keepalive,
   })
   if (!resp.ok) {
     const data = await resp.json().catch(() => null) as { message?: string } | null
     throw new Error(data?.message || `项目画布保存失败：HTTP ${resp.status}`)
   }
   return await resp.json() as OnlineProjectResponse
+}
+
+export async function saveOnlineProjectViewport(project: Project, viewport: ProjectCanvasViewport): Promise<OnlineProjectResponse> {
+  const remoteId = project.remoteId ?? project.id
+  const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(remoteId)}/canvas/viewport`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ viewport }),
+  })
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => null) as { message?: string } | null
+    throw new Error(data?.message || `项目视口保存失败：HTTP ${resp.status}`)
+  }
+  return await resp.json() as OnlineProjectResponse
+}
+
+export async function getOnlineProjectCanvas(projectId: string): Promise<ProjectCanvasState | null> {
+  const resp = await fetchOnlineProjectResource(`/api/v1/projects/${encodeURIComponent(projectId)}/canvas`)
+  if (resp.status === 404) return null
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => null) as { message?: string } | null
+    throw new Error(data?.message || `项目画布加载失败：HTTP ${resp.status}`)
+  }
+  const data = await resp.json().catch(() => null) as { canvas?: unknown } | null
+  return normalizeProjectCanvas(data?.canvas) ?? null
 }
 
 export function createOnlineProject(response: OnlineProjectResponse): Project {

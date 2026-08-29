@@ -42,6 +42,7 @@ vi.mock('../lib/clipboard', () => ({
 
 vi.mock('../lib/downloadImages', () => ({
   downloadImageIds: vi.fn(async () => ({ successCount: 1, failCount: 0 })),
+  exportImage: vi.fn(async () => undefined),
 }))
 
 vi.mock('../lib/materialApi', () => ({
@@ -106,6 +107,7 @@ describe('ProjectCanvas interactions', () => {
       tasks: [createTask()],
       projects: [createProject()],
       activeProjectId: 'project-a',
+      projectsLoaded: true,
       searchQuery: '',
       filterStatus: 'all',
       filterFavorite: false,
@@ -145,6 +147,12 @@ describe('ProjectCanvas interactions', () => {
     expect(host.querySelector('[aria-label="收藏"]')).toBeNull()
   })
 
+  it('shows development origin and image world coordinates', () => {
+    expect(host.querySelector('[data-canvas-origin]')).not.toBeNull()
+    const position = host.querySelector<HTMLElement>('[data-canvas-debug-position]')
+    expect(position?.textContent).toBe('x: 0, y: 0')
+  })
+
   it('does not persist when clicking blank canvas without moving it', () => {
     const canvas = host.querySelector<HTMLElement>('[data-project-canvas]')!
     mocks.updateProjectCanvas.mockClear()
@@ -169,15 +177,37 @@ describe('ProjectCanvas interactions', () => {
     expect(mocks.updateProjectCanvas).not.toHaveBeenCalled()
   })
 
+  it('renames an image by double-clicking its name', () => {
+    const node = host.querySelector<HTMLElement>('[data-canvas-node]')!
+    act(() => node.dispatchEvent(pointerEvent('pointerdown', 1, 80, 80)))
+    const name = host.querySelector<HTMLElement>('[data-canvas-image-name]')!
+    act(() => name.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })))
+
+    const input = host.querySelector<HTMLInputElement>('[data-canvas-image-name]')!
+    expect(input.value).toBe('图片 1')
+  })
+
   it('resets the viewport to the canvas origin', () => {
     const resetButton = host.querySelector<HTMLButtonElement>('[aria-label="回到画布原点"]')!
     mocks.updateProjectCanvas.mockClear()
 
     act(() => resetButton.click())
 
-    expect(mocks.updateProjectCanvas).toHaveBeenLastCalledWith('project-a', expect.objectContaining({
-      viewport: { x: 400, y: 300, scale: 1 },
-    }))
+    expect(mocks.updateProjectCanvas).not.toHaveBeenCalled()
+  })
+
+  it('resets only the viewport position without changing zoom', async () => {
+    const project = createProject()
+    project.canvas!.viewport.scale = 2
+    mocks.state.current = { ...mocks.state.current, projects: [project] }
+    await act(async () => root.render(<ProjectCanvas />))
+
+    const resetButton = host.querySelector<HTMLButtonElement>('[aria-label="回到画布原点"]')!
+    expect(host.querySelector('[aria-label="选择画布缩放比例"]')?.textContent).toBe('200%')
+
+    act(() => resetButton.click())
+
+    expect(host.querySelector('[aria-label="选择画布缩放比例"]')?.textContent).toBe('200%')
   })
 
   it('raises the selected node until it is deselected and keeps the zoom controls visible', () => {
@@ -196,7 +226,69 @@ describe('ProjectCanvas interactions', () => {
     expect(node.style.zIndex).toBe('0')
   })
 
-  it('does not write an empty local canvas before project records finish loading', async () => {
+  it('keeps selection handles screen-sized and outside the image when zoomed', async () => {
+    const project = createProject()
+    project.canvas!.viewport.scale = 2
+    mocks.state.current = { ...mocks.state.current, projects: [project] }
+    await act(async () => root.render(<ProjectCanvas />))
+
+    const node = host.querySelector<HTMLElement>('[data-canvas-node]')!
+    act(() => node.dispatchEvent(pointerEvent('pointerdown', 1, 80, 80)))
+
+    const nw = host.querySelector<HTMLButtonElement>('[aria-label="调整图片nw"]')!
+    const rotate = host.querySelector<HTMLButtonElement>('[aria-label="旋转图片"]')!
+    expect(nw.style.transform).toBe('scale(0.5)')
+    expect(nw.style.left).toBe('-5px')
+    expect(nw.style.top).toBe('-5px')
+    expect(rotate.style.transform).toBe('translateX(-50%) scale(0.5)')
+    expect(rotate.style.top).toBe('-29px')
+  })
+
+  it('centers the first generated image on the world origin', async () => {
+    const project = { ...createProject(), id: 'project-b', canvas: undefined }
+    const task = { ...createTask(), projectId: 'project-b' }
+    mocks.state.current = { ...mocks.state.current, projects: [project], tasks: [task], activeProjectId: 'project-b', projectsLoaded: true }
+    mocks.updateProjectCanvas.mockClear()
+    await act(async () => root.render(<ProjectCanvas />))
+
+    expect(mocks.updateProjectCanvas).toHaveBeenCalledWith('project-b', expect.objectContaining({
+      viewport: { x: 400, y: 300, scale: 1 },
+      items: { 'image-a': expect.objectContaining({ x: -120, y: -120, width: 240 }) },
+    }))
+  })
+
+  it('centers the generating placeholder on the world origin', async () => {
+    const project = { ...createProject(), canvas: undefined }
+    const task = { ...createTask(), outputImages: [], status: 'running' as const }
+    mocks.state.current = { ...mocks.state.current, projects: [project], tasks: [task], activeProjectId: 'project-a', projectsLoaded: true }
+    await act(async () => root.render(<ProjectCanvas />))
+
+    const node = host.querySelector<HTMLElement>('[data-canvas-node]')!
+    expect(node.style.left).toBe('-512px')
+    expect(node.style.top).toBe('-512px')
+    expect(node.style.width).toBe('1024px')
+  })
+
+  it('allows the generating placeholder to move without persisting a canvas patch', async () => {
+    const project = { ...createProject(), canvas: undefined }
+    const task = { ...createTask(), outputImages: [], status: 'running' as const }
+    mocks.state.current = { ...mocks.state.current, projects: [project], tasks: [task], activeProjectId: 'project-a', projectsLoaded: true }
+    mocks.updateProjectCanvas.mockClear()
+    await act(async () => root.render(<ProjectCanvas />))
+
+    const node = host.querySelector<HTMLElement>('[data-canvas-node]')!
+    act(() => {
+      node.dispatchEvent(pointerEvent('pointerdown', 7, 80, 80))
+      node.dispatchEvent(pointerEvent('pointermove', 7, 120, 100))
+      node.dispatchEvent(pointerEvent('pointerup', 7, 120, 100))
+    })
+
+    expect(Number.parseFloat(node.style.left)).toBeCloseTo(-414.4762, 3)
+    expect(Number.parseFloat(node.style.top)).toBeCloseTo(-463.2381, 3)
+    expect(mocks.updateProjectCanvas).not.toHaveBeenCalled()
+  })
+
+  it('does not write the canvas while restoring project records', async () => {
     const legacyTask = { ...createTask(), projectId: undefined }
     mocks.state.current = {
       ...mocks.state.current,
@@ -211,7 +303,7 @@ describe('ProjectCanvas interactions', () => {
 
     mocks.state.current = { ...mocks.state.current, projectsLoaded: true }
     await act(async () => root.render(<ProjectCanvas />))
-    expect(mocks.updateProjectCanvas).toHaveBeenCalledWith('__local_project__', expect.anything())
+    expect(mocks.updateProjectCanvas).not.toHaveBeenCalled()
   })
 
   it('moves every image in a Ctrl-selected group by the same offset', async () => {
@@ -257,27 +349,25 @@ describe('ProjectCanvas interactions', () => {
         'image-a': expect.objectContaining({ x: 40, y: 20 }),
       }),
     }))
+    mocks.updateProjectCanvas.mockClear()
 
     act(() => {
       canvas.dispatchEvent(pointerEvent('pointerdown', 2, 300, 300))
       canvas.dispatchEvent(pointerEvent('pointermove', 2, 330, 320))
       canvas.dispatchEvent(pointerEvent('pointerup', 2, 330, 320))
     })
-    expect(mocks.updateProjectCanvas).toHaveBeenLastCalledWith('project-a', expect.objectContaining({
-      viewport: expect.objectContaining({ x: 62, y: 52 }),
-    }))
+    expect(mocks.updateProjectCanvas).not.toHaveBeenCalled()
 
     act(() => {
       world.dispatchEvent(pointerEvent('pointerdown', 3, 500, 500))
       world.dispatchEvent(pointerEvent('pointermove', 3, 520, 510))
       world.dispatchEvent(pointerEvent('pointerup', 3, 520, 510))
     })
-    expect(mocks.updateProjectCanvas).toHaveBeenLastCalledWith('project-a', expect.objectContaining({
-      viewport: expect.objectContaining({ x: 82, y: 62 }),
-    }))
+    expect(mocks.updateProjectCanvas).not.toHaveBeenCalled()
 
     act(() => canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 300, clientY: 300, deltaY: -120 })))
     expect(world.style.transform).not.toContain('scale(1)')
+    expect(mocks.updateProjectCanvas).not.toHaveBeenCalled()
   })
 
   it('prefers the persisted canvas cache over a stale project canvas snapshot', async () => {

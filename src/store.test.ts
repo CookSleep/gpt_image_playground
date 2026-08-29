@@ -189,6 +189,7 @@ vi.mock('./lib/onlineProjects', () => ({
     created_at: '2026-08-16T00:00:00Z',
     updated_at: '2026-08-16T00:00:00Z',
   })),
+  getOnlineProjectCanvas: vi.fn(async () => null),
   deleteOnlineProjectTask: vi.fn(async () => ({
     id: 'project-a',
     title: '项目 A',

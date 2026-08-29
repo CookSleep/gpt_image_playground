@@ -1,10 +1,10 @@
-import type { ProjectCanvasItem, ProjectCanvasState, ProjectCanvasViewport } from '../types'
+import type { ProjectCanvasCrop, ProjectCanvasItem, ProjectCanvasOperator, ProjectCanvasState, ProjectCanvasViewport } from '../types'
 
 export const PROJECT_CANVAS_VERSION = 1
 export const DEFAULT_CANVAS_VIEWPORT: ProjectCanvasViewport = { x: 32, y: 32, scale: 1 }
 export const DEFAULT_CANVAS_ITEM_WIDTH = 240
-export const MIN_CANVAS_SCALE = 0.2
-export const MAX_CANVAS_SCALE = 4
+export const MIN_CANVAS_SCALE = 0.01
+export const MAX_CANVAS_SCALE = 10
 
 const ITEM_GAP = 32
 const DEFAULT_COLUMNS = 4
@@ -28,10 +28,38 @@ function normalizeRotation(value: unknown) {
   return normalized < 0 ? normalized + 360 : normalized
 }
 
+function normalizeCrop(value: unknown): ProjectCanvasCrop | undefined {
+  if (!isRecord(value)) return undefined
+  const x = Math.min(0.99, Math.max(0, finiteNumber(value.x, 0)))
+  const y = Math.min(0.99, Math.max(0, finiteNumber(value.y, 0)))
+  const width = Math.min(1 - x, Math.max(0.01, finiteNumber(value.width, 1)))
+  const height = Math.min(1 - y, Math.max(0.01, finiteNumber(value.height, 1)))
+  return { x, y, width, height }
+}
+
 function normalizeCanvasItemName(value: unknown) {
   if (typeof value !== 'string') return undefined
   const name = value.trim()
   return name || undefined
+}
+
+function normalizeOperator(value: unknown): ProjectCanvasOperator | undefined {
+  if (!isRecord(value)) return undefined
+  const originalWidth = finiteNumber(value.originalWidth, 0)
+  const scale = finiteNumber(value.scale, 0)
+  const rotation = normalizeRotation(value.rotation)
+  const flipX = value.flipX === true
+  const flipY = value.flipY === true
+  const crop = normalizeCrop(value.crop)
+  if (originalWidth <= 0 && scale <= 0 && rotation === undefined && !flipX && !flipY && !crop) return undefined
+  return {
+    ...(originalWidth > 0 ? { originalWidth } : {}),
+    ...(scale > 0 ? { scale } : {}),
+    ...(rotation !== undefined ? { rotation } : {}),
+    ...(flipX ? { flipX: true } : {}),
+    ...(flipY ? { flipY: true } : {}),
+    ...(crop ? { crop } : {}),
+  }
 }
 
 export function clampCanvasScale(scale: number) {
@@ -49,13 +77,16 @@ export function normalizeProjectCanvas(value: unknown): ProjectCanvasState | und
     const width = Math.max(80, finiteNumber(rawItem.width, DEFAULT_CANVAS_ITEM_WIDTH))
     const rotation = normalizeRotation(rawItem.rotation)
     const name = normalizeCanvasItemName(rawItem.name)
+    const operator = normalizeOperator(rawItem.operator)
+    const effectiveRotation = rotation ?? operator?.rotation
     items[imageId] = {
       ...(name ? { name } : {}),
       x: finiteNumber(rawItem.x, 0),
       y: finiteNumber(rawItem.y, 0),
       width,
       z: Math.max(0, Math.floor(finiteNumber(rawItem.z, 0))),
-      ...(rotation !== undefined ? { rotation } : {}),
+      ...(effectiveRotation !== undefined ? { rotation: effectiveRotation } : {}),
+      ...(operator ? { operator } : {}),
       ...(normalizeFavoriteCollectionIds(rawItem.favoriteCollectionIds) !== undefined
         ? { favoriteCollectionIds: normalizeFavoriteCollectionIds(rawItem.favoriteCollectionIds) }
         : {}),
@@ -88,11 +119,61 @@ export function getDefaultCanvasItem(index: number, total = index + 1): ProjectC
   }
 }
 
+function rectanglesOverlap(
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number },
+  gap: number,
+) {
+  return a.x - gap < b.x + b.width && a.x + a.width + gap > b.x && a.y - gap < b.y + b.height && a.y + a.height + gap > b.y
+}
+
+export function findAvailableCanvasItemPosition(
+  items: Record<string, Pick<ProjectCanvasItem, 'x' | 'y' | 'width'> & { height?: number }>,
+  viewport: ProjectCanvasViewport,
+  size: { width: number; height: number },
+  item: { width: number; height: number },
+  gap = ITEM_GAP,
+) {
+  const centerX = (size.width / 2 - viewport.x) / viewport.scale
+  const centerY = (size.height / 2 - viewport.y) / viewport.scale
+  const stepX = item.width + gap
+  const stepY = item.height + gap
+  const candidates: Array<[number, number]> = [[0, 0]]
+  for (let radius = 1; radius <= 12; radius++) {
+    candidates.push([0, -radius], [radius, 0], [0, radius], [-radius, 0])
+    for (let offset = -radius; offset <= radius; offset++) {
+      if (offset !== 0 && offset !== -radius && offset !== radius) candidates.push([offset, -radius], [offset, radius], [-radius, offset], [radius, offset])
+    }
+  }
+
+  for (const [offsetX, offsetY] of candidates) {
+    const candidate = {
+      x: centerX - item.width / 2 + offsetX * stepX,
+      y: centerY - item.height / 2 + offsetY * stepY,
+      width: item.width,
+      height: item.height,
+    }
+    const overlaps = Object.values(items).some((existing) => rectanglesOverlap(candidate, {
+      x: existing.x,
+      y: existing.y,
+      width: existing.width,
+      height: existing.height ?? existing.width,
+    }, gap))
+    if (!overlaps) return { x: candidate.x, y: candidate.y }
+  }
+
+  return {
+    x: centerX - item.width / 2 + 13 * stepX,
+    y: centerY - item.height / 2,
+  }
+}
+
 export function ensureProjectCanvas(
   canvas: ProjectCanvasState | undefined,
   imageIds: string[],
   legacyFavoriteIdsByImage: Record<string, string[]> = {},
   zByImage: Record<string, number> = {},
+  extraItemIds: string[] = [],
 ): ProjectCanvasState {
   const normalized = normalizeProjectCanvas(canvas) ?? {
     version: PROJECT_CANVAS_VERSION,
@@ -121,6 +202,11 @@ export function ensureProjectCanvas(
       ...(Number.isFinite(zByImage[imageId]) ? { z: zByImage[imageId] } : {}),
       ...(favoriteCollectionIds !== undefined ? { favoriteCollectionIds } : {}),
     }
+  }
+
+  for (const itemId of extraItemIds) {
+    if (items[itemId] || !normalized.items[itemId]) continue
+    items[itemId] = normalized.items[itemId]
   }
 
   return { ...normalized, version: PROJECT_CANVAS_VERSION, items }

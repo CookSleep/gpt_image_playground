@@ -59,7 +59,7 @@ func (c FileAPIConfig) Enabled() bool {
 
 // AdminConfig 管理员身份配置
 // emails 里的邮箱（大小写不敏感）会在 /auth/user 返回时被标记 is_admin=true，
-// 仅用于放开管理员专属的前端提示/入口（例如新版本 NEW 徽标）。
+// 同时用于后端管理员接口的权限校验。
 type AdminConfig struct {
 	Emails []string `yaml:"emails"`
 }

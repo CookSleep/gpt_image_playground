@@ -33,7 +33,7 @@ jwt:
   refresh_hours: 168              # 7 天
 
 # 管理员身份配置：命中 emails 的账号会在 /auth/user 返回 is_admin=true，
-# 前端凭此开放管理员专属提示/入口（例如新版本 NEW 徽标）。留空表示无管理员。
+# 前端凭此开放管理员入口，后端也会用同一配置校验管理员接口。留空表示无管理员。
 admin:
   emails: []
     # - admin@example.com

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
 	"strings"
@@ -26,6 +27,8 @@ var projectUUIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8
 type projectStore interface {
 	Save(ctx context.Context, userID, id, title string, archive []byte, sha256 string) (*models.OnlineProject, error)
 	SaveCanvas(ctx context.Context, userID, id string, canvas json.RawMessage) (*models.OnlineProject, error)
+	SaveCanvasViewport(ctx context.Context, userID, id string, viewport json.RawMessage) (*models.OnlineProject, error)
+	GetCanvas(ctx context.Context, userID, id string) (*models.OnlineProject, json.RawMessage, error)
 	List(ctx context.Context, userID string) ([]models.OnlineProject, error)
 	Get(ctx context.Context, userID, id string) (*models.OnlineProject, []byte, error)
 	Rename(ctx context.Context, userID, id, title string) (*models.OnlineProject, error)
@@ -44,14 +47,49 @@ func NewProjectHandler(projects projectStore) *ProjectHandler {
 func (h *ProjectHandler) Register(api *gin.RouterGroup) {
 	api.GET("/projects", h.List)
 	api.GET("/projects/:id", h.Get)
+	api.GET("/projects/:id/canvas", h.GetCanvas)
 	api.POST("/projects", h.Save)
 	api.PATCH("/projects/:id", h.Rename)
 	api.PATCH("/projects/:id/canvas", h.SaveCanvas)
+	api.PATCH("/projects/:id/canvas/viewport", h.SaveCanvasViewport)
 	api.DELETE("/projects/:id", h.Delete)
 }
 
 type saveProjectCanvasRequest struct {
 	Canvas json.RawMessage `json:"canvas"`
+}
+
+type saveProjectCanvasViewportRequest struct {
+	Viewport json.RawMessage `json:"viewport"`
+}
+
+type projectCanvasResponse struct {
+	Canvas json.RawMessage `json:"canvas"`
+}
+
+// GetCanvas GET /api/v1/projects/:id/canvas，只读取项目归档中的画布状态。
+func (h *ProjectHandler) GetCanvas(c *gin.Context) {
+	userID := c.GetString(middleware.ContextKeyUserID)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "unauthenticated"})
+		return
+	}
+
+	id := strings.TrimSpace(c.Param("id"))
+	if !projectUUIDPattern.MatchString(id) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "valid project id required"})
+		return
+	}
+	_, canvas, err := h.projects.GetCanvas(c.Request.Context(), userID, id)
+	if errors.Is(err, database.ErrProjectNotFound) || errors.Is(err, database.ErrProjectCanvasNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "message": err.Error()})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, projectCanvasResponse{Canvas: canvas})
 }
 
 // SaveCanvas PATCH /api/v1/projects/:id/canvas，只更新项目归档中的画布状态。
@@ -80,6 +118,53 @@ func (h *ProjectHandler) SaveCanvas(c *gin.Context) {
 
 	project, err := h.projects.SaveCanvas(c.Request.Context(), userID, id, req.Canvas)
 	if errors.Is(err, database.ErrProjectNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "message": err.Error()})
+		return
+	}
+	if errors.Is(err, database.ErrProjectForbidden) {
+		c.JSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": err.Error()})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, project)
+}
+
+// SaveCanvasViewport PATCH /api/v1/projects/:id/canvas/viewport，只更新画布视口。
+func (h *ProjectHandler) SaveCanvasViewport(c *gin.Context) {
+	userID := c.GetString(middleware.ContextKeyUserID)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "unauthenticated"})
+		return
+	}
+
+	id := strings.TrimSpace(c.Param("id"))
+	if !projectUUIDPattern.MatchString(id) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "valid project id required"})
+		return
+	}
+	var req saveProjectCanvasViewportRequest
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Viewport) == 0 || string(req.Viewport) == "null" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "valid viewport required"})
+		return
+	}
+	var viewport map[string]any
+	if err := json.Unmarshal(req.Viewport, &viewport); err != nil || viewport == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "valid viewport required"})
+		return
+	}
+	for _, key := range []string{"x", "y", "scale"} {
+		value, ok := viewport[key].(float64)
+		if !ok || math.IsNaN(value) || math.IsInf(value, 0) || (key == "scale" && value <= 0) {
+			c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "valid viewport required"})
+			return
+		}
+	}
+
+	project, err := h.projects.SaveCanvasViewport(c.Request.Context(), userID, id, req.Viewport)
+	if errors.Is(err, database.ErrProjectNotFound) || errors.Is(err, database.ErrProjectCanvasNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "message": err.Error()})
 		return
 	}

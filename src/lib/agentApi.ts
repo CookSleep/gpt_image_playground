@@ -707,6 +707,7 @@ export async function callAgentResponsesApi(opts: {
   input: unknown
   maskDataUrl?: string
   signal?: AbortSignal
+  forceStream?: boolean
   onTextDelta?: (delta: string) => void
   onOutputItems?: (outputItems: ResponsesOutputItem[]) => void
   onImageToolStarted?: (event: { toolCallId: string; outputIndex?: number }) => void | Promise<void>
@@ -732,7 +733,8 @@ export async function callAgentResponsesApi(opts: {
       input,
       tools: createAgentTools(params, profile, settings, maskDataUrl),
     }
-    if (profile.streamImages) {
+    const useStream = profile.streamImages === true || opts.forceStream === true
+    if (useStream) {
       body.stream = true
     }
 
@@ -746,10 +748,10 @@ export async function callAgentResponsesApi(opts: {
 
     if (!response.ok) {
       const errorMessage = await getApiErrorMessage(response)
-      throw new Error(maybeAppendStreamingHint(errorMessage, response.status, profile.streamImages))
+      throw new Error(maybeAppendStreamingHint(errorMessage, response.status, useStream))
     }
 
-    if (profile.streamImages && isEventStreamResponse(response)) {
+    if (useStream && isEventStreamResponse(response)) {
       return parseAgentStreamResponse(response, mime, controller.signal, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted, onImageToolFailed)
     }
 
