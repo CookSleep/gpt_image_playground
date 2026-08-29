@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,7 @@ type projectStoreStub struct {
 	title    string
 	archive  []byte
 	sha256   string
+	canvas   json.RawMessage
 	deleted  bool
 }
 
@@ -31,6 +33,13 @@ func (s *projectStoreStub) Save(_ context.Context, userID, id, title string, arc
 	s.title = title
 	s.archive = archive
 	s.sha256 = sha256
+	return s.project, nil
+}
+
+func (s *projectStoreStub) SaveCanvas(_ context.Context, userID, id string, canvas json.RawMessage) (*models.OnlineProject, error) {
+	s.userID = userID
+	s.id = id
+	s.canvas = canvas
 	return s.project, nil
 }
 
@@ -107,6 +116,27 @@ func TestProjectHandlerSave(t *testing.T) {
 	}
 	if !bytes.Equal(store.archive, []byte("PK\x03\x04data")) || len(store.sha256) != 64 {
 		t.Fatal("archive or sha256 was not saved")
+	}
+}
+
+func TestProjectHandlerSaveCanvas(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	project := &models.OnlineProject{ID: "86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8", Title: "项目 A"}
+	store := &projectStoreStub{project: project}
+	r := gin.New()
+	api := r.Group("/api/v1", func(c *gin.Context) {
+		c.Set(middleware.ContextKeyUserID, "user-a")
+		c.Next()
+	})
+	NewProjectHandler(store).Register(api)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/projects/86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8/canvas", bytes.NewBufferString(`{"canvas":{"version":1,"viewport":{"x":1,"y":2,"scale":1},"items":{}}}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK || store.userID != "user-a" || store.id != project.ID || string(store.canvas) != `{"version":1,"viewport":{"x":1,"y":2,"scale":1},"items":{}}` {
+		t.Fatalf("unexpected canvas save: status=%d user=%q id=%q canvas=%s", w.Code, store.userID, store.id, store.canvas)
 	}
 }
 

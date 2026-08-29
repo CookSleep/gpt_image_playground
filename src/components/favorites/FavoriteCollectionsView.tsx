@@ -12,10 +12,11 @@ import {
 import { useDragSelect } from '../../hooks/useDragSelect'
 import { FavoriteIcon } from '../icons'
 import { FavoriteCollectionOverviewCard } from './FavoriteCollectionOverviewCard'
-import { getCollectionTasks, getLatestCoverTask, type CollectionCard } from './favoriteUtils'
+import { getCollectionImageIds, getCollectionTasks, getLatestCoverImageId, type CollectionCard } from './favoriteUtils'
 
 export function FavoriteCollectionsView() {
   const tasks = useStore((s) => s.tasks)
+  const projects = useStore((s) => s.projects)
   const allCollections = useStore((s) => s.favoriteCollections)
   const activeProjectId = useStore((s) => s.activeProjectId)
   const projectId = getFavoriteScopeProjectId(activeProjectId)
@@ -39,15 +40,16 @@ export function FavoriteCollectionsView() {
     const projectTasks = tasks.filter((task) => task.projectId === projectId)
     const allTasks = getCollectionTasks(ALL_FAVORITES_COLLECTION_ID, projectTasks)
     return [
-      { id: ALL_FAVORITES_COLLECTION_ID, name: '全部', tasks: allTasks },
+      { id: ALL_FAVORITES_COLLECTION_ID, name: '全部', tasks: allTasks, imageIds: getCollectionImageIds(ALL_FAVORITES_COLLECTION_ID, projectTasks) },
       ...collections.map((collection) => ({
         id: collection.id,
         name: collection.name,
         collection,
         tasks: getCollectionTasks(collection.id, projectTasks),
+        imageIds: getCollectionImageIds(collection.id, projectTasks),
       })),
     ]
-  }, [collections, projectId, tasks])
+  }, [collections, projectId, projects, tasks])
 
   const filteredCards = useMemo(() => {
     if (!searchQuery.trim()) return cards
@@ -94,9 +96,9 @@ export function FavoriteCollectionsView() {
     }
   }
 
-  const handleDelete = (collection: FavoriteCollection, collectionTasks: TaskRecord[]) => {
+  const handleDelete = (collection: FavoriteCollection, collectionTasks: TaskRecord[], imageIds: string[]) => {
     if (collections.length <= 1) return
-    const imageCount = new Set(collectionTasks.flatMap((task) => task.outputImages || [])).size
+    const imageCount = imageIds.length
     setConfirmDialog({
       title: '删除收藏夹',
       message: `确定要删除收藏夹「${collection.name}」吗？`,
@@ -139,7 +141,7 @@ export function FavoriteCollectionsView() {
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 pb-10">
           {filteredCards.map((card) => {
-            const coverTask = getLatestCoverTask(card.tasks)
+            const coverImageId = getLatestCoverImageId(card.imageIds, card.tasks)
             const isVirtualAll = card.id === ALL_FAVORITES_COLLECTION_ID
             const isDefault = card.id === defaultFavoriteCollectionId
             const canDelete = collections.length > 1
@@ -151,7 +153,7 @@ export function FavoriteCollectionsView() {
               >
                 <FavoriteCollectionOverviewCard
                   card={card}
-                  coverTask={coverTask}
+                  coverImageId={coverImageId}
                   isVirtualAll={isVirtualAll}
                   isDefault={isDefault}
                   canDelete={canDelete}

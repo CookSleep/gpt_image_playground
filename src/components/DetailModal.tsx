@@ -19,6 +19,7 @@ import ViewportTooltip from './ViewportTooltip'
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
   const detailTaskId = useStore((s) => s.detailTaskId)
+  const detailImageId = useStore((s) => s.detailImageId)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
@@ -105,9 +106,7 @@ export default function DetailModal() {
   useCloseOnEscape(showDebugInfoModal, () => setShowDebugInfoModal(false))
   usePreventBackgroundScroll(Boolean(task), [modalRef, debugInfoModalRef, rawUrlsModalRef, rawResponseModalRef])
 
-  // Reset index when task changes
   useEffect(() => {
-    setImageIndex(0)
     setShowDebugInfoModal(false)
   }, [detailTaskId])
 
@@ -179,6 +178,14 @@ export default function DetailModal() {
       return slot
     })
   }, [task])
+  useEffect(() => {
+    if (!detailImageId) {
+      setImageIndex(0)
+      return
+    }
+    const index = outputSlots.findIndex((slot) => slot.imageId === detailImageId)
+    setImageIndex(index >= 0 ? index : 0)
+  }, [detailImageId, detailTaskId, outputSlots])
   const currentOutputSlot = outputSlots[imageIndex]
   const currentOutputImageId = currentOutputSlot?.imageId || ''
   const currentOutputImageIndex = currentOutputSlot?.outputImageIndex ?? -1
@@ -373,6 +380,16 @@ export default function DetailModal() {
       showToast(taskIds.length === 1 ? 'task_id 已复制' : 'task_id 已全部复制', 'success')
     } catch (err) {
       showToast(getClipboardFailureMessage('复制 task_id 失败', err), 'error')
+    }
+  }
+
+  const handleCopyImageId = async () => {
+    if (!currentOutputImageId) return
+    try {
+      await copyTextToClipboard(currentOutputImageId)
+      showToast('image_id 已复制', 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制 image_id 失败', err), 'error')
     }
   }
 
@@ -1142,7 +1159,7 @@ export default function DetailModal() {
         </div>
       </div>
 
-      {showDebugInfoModal && (task.requestId || taskIds.length > 0) && (
+      {showDebugInfoModal && (task.requestId || taskIds.length > 0 || currentOutputImageId) && (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm sm:p-6"
           onPointerDown={(e) => {
@@ -1203,6 +1220,23 @@ export default function DetailModal() {
                       className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
                       title={taskIds.length === 1 ? '复制 task_id' : '复制全部 task_id'}
                       aria-label={taskIds.length === 1 ? '复制 task_id' : '复制全部 task_id'}
+                    >
+                      <CopyIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+                {currentOutputImageId && (
+                  <div className="grid min-h-12 grid-cols-[5.5rem_minmax(0,1fr)_2rem] items-center gap-3 px-4 py-2">
+                    <dt className="font-mono text-[10px] font-semibold uppercase text-gray-400 dark:text-gray-500">image_id</dt>
+                    <dd className="min-w-0">
+                      <code className="block select-text break-all text-xs font-medium text-gray-700 dark:text-gray-300">{currentOutputImageId}</code>
+                    </dd>
+                    <button
+                      type="button"
+                      onClick={handleCopyImageId}
+                      className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                      title="复制 image_id"
+                      aria-label="复制 image_id"
                     >
                       <CopyIcon className="h-3.5 w-3.5" />
                     </button>

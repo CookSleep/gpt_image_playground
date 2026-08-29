@@ -19,7 +19,7 @@ const round = (patch: Partial<AgentRound>): AgentRound => ({
   ...(patch.assistantMessageId ? { assistantMessageId: patch.assistantMessageId } : {}),
 })
 
-const task = (id: string, outputImages: string[]): TaskRecord => ({
+const task = (id: string, outputImages: string[], outputImageSlots?: Array<string | null>): TaskRecord => ({
   id,
   prompt: 'prompt',
   params: { ...DEFAULT_PARAMS },
@@ -27,6 +27,7 @@ const task = (id: string, outputImages: string[]): TaskRecord => ({
   maskTargetImageId: null,
   maskImageId: null,
   outputImages,
+  ...(outputImageSlots ? { outputImageSlots } : {}),
   status: 'done',
   error: null,
   createdAt: 1,
@@ -119,5 +120,19 @@ describe('agent image references', () => {
       [firstRound, currentRound],
       [task('task-live', ['image-live'])],
     )).toBe('参考 <removed_ref id="round-1-image-1" /> 和 <ref id="round-1-image-2" /> 生成')
+  })
+
+  it('keeps later image references stable after deleting one output from a task', () => {
+    const firstRound = round({ index: 1, outputTaskIds: ['task-a'] })
+    const currentRound = round({ index: 2, inputImageIds: [] })
+    const tasks = [task('task-a', ['image-a1', 'image-a3'], ['image-a1', null, 'image-a3'])]
+
+    expect(resolveAgentPromptImageReferences('参考 @第1轮图2 和 @第1轮图3', [firstRound], tasks)).toEqual(['image-a3'])
+    expect(replaceAgentPromptImageReferencesForApi(
+      '参考 @第1轮图2 和 @第1轮图3 生成',
+      currentRound,
+      [firstRound, currentRound],
+      tasks,
+    )).toBe('参考 <removed_ref id="round-1-image-2" /> 和 <ref id="round-1-image-3" /> 生成')
   })
 })

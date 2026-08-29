@@ -99,3 +99,24 @@ func TestRewriteProjectTaskArchiveDeletesOnlySelectedTask(t *testing.T) {
 		t.Fatalf("unexpected tasks: %s", manifest["tasks"])
 	}
 }
+
+func TestRewriteProjectCanvasArchiveUpdatesOnlyCanvas(t *testing.T) {
+	archive := projectArchiveForTest(t, `{"version":4,"projects":[{"id":"project-a","title":"A","canvas":{"version":1,"viewport":{"x":0}}}],"tasks":[{"id":"task-a"}]}`)
+	updated, err := rewriteProjectCanvasArchive(archive, "project-a", json.RawMessage(`{"version":1,"viewport":{"x":12,"y":8,"scale":1.2},"items":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := projectManifestForTest(t, updated)
+	var projects []map[string]json.RawMessage
+	if err := json.Unmarshal(manifest["projects"], &projects); err != nil {
+		t.Fatal(err)
+	}
+	var canvas map[string]any
+	if len(projects) != 1 || json.Unmarshal(projects[0]["canvas"], &canvas) != nil || canvas["version"] != float64(1) || canvas["viewport"].(map[string]any)["x"] != float64(12) {
+		t.Fatalf("unexpected project canvas: %s", manifest["projects"])
+	}
+	var tasks []map[string]any
+	if err := json.Unmarshal(manifest["tasks"], &tasks); err != nil || len(tasks) != 1 || tasks[0]["id"] != "task-a" {
+		t.Fatalf("unrelated tasks changed: %s", manifest["tasks"])
+	}
+}

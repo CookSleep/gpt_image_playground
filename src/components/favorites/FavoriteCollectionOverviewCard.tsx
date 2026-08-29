@@ -13,9 +13,8 @@ function FolderIcon(props: SVGProps<SVGSVGElement>) {
   )
 }
 
-function CoverThumbnail({ task }: { task?: TaskRecord }) {
+function CoverThumbnail({ imageId }: { imageId?: string }) {
   const [src, setSrc] = useState('')
-  const imageId = task?.outputImages?.[0]
 
   useEffect(() => {
     setSrc('')
@@ -44,7 +43,7 @@ function CoverThumbnail({ task }: { task?: TaskRecord }) {
 
 export function FavoriteCollectionOverviewCard({
   card,
-  coverTask,
+  coverImageId,
   isVirtualAll,
   isDefault,
   canDelete,
@@ -62,7 +61,7 @@ export function FavoriteCollectionOverviewCard({
   suppressClickUntilRef,
 }: {
   card: CollectionCard
-  coverTask?: TaskRecord
+  coverImageId?: string
   isVirtualAll: boolean
   isDefault: boolean
   canDelete: boolean
@@ -74,7 +73,7 @@ export function FavoriteCollectionOverviewCard({
   handleRenameKeyDown: (e: React.KeyboardEvent) => void
   startRename: (e: React.MouseEvent, collection: FavoriteCollection) => void
   handleSetDefault: (collection: FavoriteCollection) => void
-  handleDelete: (collection: FavoriteCollection, collectionTasks: TaskRecord[]) => void
+  handleDelete: (collection: FavoriteCollection, collectionTasks: TaskRecord[], imageIds: string[]) => void
   onOpen: () => void
   onToggleSelection: () => void
   suppressClickUntilRef: { current: number }
@@ -230,7 +229,7 @@ export function FavoriteCollectionOverviewCard({
       >
         <div className="flex h-40">
           <div className="w-40 min-w-[10rem] h-full bg-gray-100 dark:bg-black/20 relative flex items-center justify-center overflow-hidden flex-shrink-0">
-            <CoverThumbnail task={coverTask} />
+            <CoverThumbnail imageId={coverImageId} />
           </div>
           <div className="flex-1 p-3 flex flex-col min-w-0">
             <div className="flex-1 min-h-0 mb-2 overflow-hidden">
@@ -251,7 +250,7 @@ export function FavoriteCollectionOverviewCard({
                   <span className="truncate" title={card.name}>{card.name}</span>
                 )}
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">{card.tasks.length} 条任务</p>
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{card.imageIds.length} 张图片</p>
             </div>
             <div className="mt-auto flex items-center justify-end gap-1">
               {!isVirtualAll && card.collection && (
@@ -294,7 +293,7 @@ export function FavoriteCollectionOverviewCard({
                     disabled={!canDelete}
                     onClick={(e) => {
                       e.stopPropagation()
-                      handleDelete(card.collection!, card.tasks)
+                      handleDelete(card.collection!, card.tasks, card.imageIds)
                     }}
                     className={`p-1.5 rounded-md transition ${canDelete ? 'hover:bg-red-50 dark:hover:bg-red-950/30 text-gray-400 hover:text-red-500' : 'text-gray-300 dark:text-gray-600 cursor-not-allowed'}`}
                   >

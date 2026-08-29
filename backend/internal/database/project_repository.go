@@ -68,6 +68,45 @@ func (r *ProjectRepository) SaveTaskRecord(ctx context.Context, userID, id, titl
 	return &saved, nil
 }
 
+// SaveCanvas 只更新项目归档中的画布状态，避免为一次位置变化重新上传完整项目 ZIP。
+func (r *ProjectRepository) SaveCanvas(ctx context.Context, userID, id string, canvas json.RawMessage) (*models.OnlineProject, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin canvas update: %w", err)
+	}
+	defer tx.Rollback()
+
+	var archive []byte
+	if err := tx.QueryRowContext(ctx, `
+		SELECT archive FROM online_projects
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+		FOR UPDATE`, id, userID).Scan(&archive); errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrProjectNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("lock online project: %w", err)
+	}
+	archive, err = rewriteProjectCanvasArchive(archive, id, canvas)
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(archive)
+	var saved models.OnlineProject
+	err = tx.QueryRowContext(ctx, `
+		UPDATE online_projects
+		SET archive = $3, archive_size = $4, archive_sha256 = $5, updated_at = NOW()
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+		RETURNING id, user_id, title, archive_size, archive_sha256, created_at, updated_at`,
+		id, userID, archive, len(archive), hex.EncodeToString(digest[:]),
+	).Scan(&saved.ID, &saved.UserID, &saved.Title, &saved.ArchiveSize, &saved.ArchiveSHA256, &saved.CreatedAt, &saved.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("save project canvas: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit project canvas: %w", err)
+	}
+	return &saved, nil
+}
+
 // DeleteTaskRecord 从项目归档移除任务记录。
 func (r *ProjectRepository) DeleteTaskRecord(ctx context.Context, userID, id, taskID string) (*models.OnlineProject, error) {
 	tx, err := r.db.BeginTx(ctx, nil)

@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { ALL_FAVORITES_COLLECTION_ID, ALL_PROJECTS_ID, LOCAL_PROJECT_ID, deleteFavoriteCollection, getFavoriteCollectionsForProject, getFavoriteScopeProjectId, getTaskFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
+import { ALL_FAVORITES_COLLECTION_ID, ALL_PROJECTS_ID, LOCAL_PROJECT_ID, deleteFavoriteCollection, getFavoriteCollectionsForProject, getFavoriteScopeProjectId, getImageFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { useAuth } from '../auth/AuthContext'
 import { getOIDCIssuer } from '../auth/api'
 import { estimateModelPricing, fetchApiKeys, fetchBalance, fetchModels, extractBalance, invalidateApiKeysCache, type ModelInfo, type ApiKeyItem } from '../auth/oidcResource'
@@ -341,10 +341,11 @@ function setContentEditableSelection(el: HTMLElement, start: number, end: number
 /** API 支持的最大参考图数量 */
 const API_MAX_IMAGES = 16
 
-function getFavoriteCollectionTasksForBatch(collectionId: string, tasks: TaskRecord[]) {
-  const favoriteTasks = tasks.filter((task) => task.isFavorite)
-  if (collectionId === ALL_FAVORITES_COLLECTION_ID) return favoriteTasks
-  return favoriteTasks.filter((task) => getTaskFavoriteCollectionIds(task).includes(collectionId))
+function getFavoriteCollectionImageIdsForBatch(collectionId: string, tasks: TaskRecord[]) {
+  return tasks.flatMap((task) => task.outputImages.filter((imageId) => {
+    const ids = getImageFavoriteCollectionIds(imageId, task)
+    return collectionId === ALL_FAVORITES_COLLECTION_ID ? ids.length > 0 : ids.includes(collectionId)
+  }))
 }
 
 function delay(ms: number) {
@@ -513,6 +514,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
   const setSelectedFavoriteCollectionIds = useStore((s) => s.setSelectedFavoriteCollectionIds)
   const clearFavoriteCollectionSelection = useStore((s) => s.clearFavoriteCollectionSelection)
   const tasks = useStore((s) => s.tasks)
+  const projects = useStore((s) => s.projects)
   const allFavoriteCollections = useStore((s) => s.favoriteCollections)
   const agentConversations = useStore((s) => s.agentConversations)
   const filterStatus = useStore((s) => s.filterStatus)
@@ -728,13 +730,18 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       if (activeProjectId === LOCAL_PROJECT_ID && t.projectId) return false
       if (activeProjectId && activeProjectId !== ALL_PROJECTS_ID && activeProjectId !== LOCAL_PROJECT_ID && t.projectId !== activeProjectId) return false
       if (filterFavorite) {
-        if (!t.isFavorite) return false
-        if (activeFavoriteCollectionId && activeFavoriteCollectionId !== ALL_FAVORITES_COLLECTION_ID && !getTaskFavoriteCollectionIds(t).includes(activeFavoriteCollectionId)) return false
+        const matchesFavorite = t.outputImages.some((imageId) => {
+          const ids = getImageFavoriteCollectionIds(imageId, t)
+          return activeFavoriteCollectionId && activeFavoriteCollectionId !== ALL_FAVORITES_COLLECTION_ID
+            ? ids.includes(activeFavoriteCollectionId)
+            : ids.length > 0
+        })
+        if (!matchesFavorite) return false
       }
       if (!taskMatchesFilterStatus(t, filterStatus)) return false
       return taskMatchesSearchQuery(t, q)
     })
-  }, [tasks, searchQuery, filterStatus, filterFavorite, activeFavoriteCollectionId, activeProjectId])
+  }, [tasks, projects, searchQuery, filterStatus, filterFavorite, activeFavoriteCollectionId, activeProjectId])
 
   const inCollectionOverview = filterFavorite && !activeFavoriteCollectionId
 
@@ -744,16 +751,18 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       {
         id: ALL_FAVORITES_COLLECTION_ID,
         name: '全部',
-        tasks: getFavoriteCollectionTasksForBatch(ALL_FAVORITES_COLLECTION_ID, projectTasks),
+        tasks: projectTasks,
+        imageIds: getFavoriteCollectionImageIdsForBatch(ALL_FAVORITES_COLLECTION_ID, projectTasks),
       },
       ...favoriteCollections.map((collection) => ({
         id: collection.id,
         name: collection.name,
         collection,
-        tasks: getFavoriteCollectionTasksForBatch(collection.id, projectTasks),
+        tasks: projectTasks,
+        imageIds: getFavoriteCollectionImageIdsForBatch(collection.id, projectTasks),
       })),
     ]
-  }, [favoriteCollections, favoriteProjectId, tasks])
+  }, [favoriteCollections, favoriteProjectId, projects, tasks])
 
   const filteredFavoriteCollectionCards = useMemo(() => {
     if (!searchQuery.trim()) return favoriteCollectionCards
@@ -849,7 +858,8 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
 
     try {
       for (const collection of selectedCollections) {
-        const entries = getTaskOutputImageZipEntries(collection.tasks)
+        const imageIds = new Set(collection.imageIds)
+        const entries = getTaskOutputImageZipEntries(collection.tasks).filter((entry) => imageIds.has(entry.imageId))
         if (entries.length === 0) continue
         const zipName = collection.id === ALL_FAVORITES_COLLECTION_ID
           ? `favorites-all-${timeStr}`
@@ -889,11 +899,10 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
       return
     }
 
-    const selectedCollectionIds = new Set(selectedCollections.map((collection) => collection.id))
     const imageCount = new Set(
-      tasks
-        .filter((task) => task.projectId === favoriteProjectId && getTaskFavoriteCollectionIds(task).some((id) => selectedCollectionIds.has(id)))
-        .flatMap((task) => task.outputImages || []),
+      favoriteCollectionCards
+        .filter((collection) => selectedIdSet.has(collection.id))
+        .flatMap((collection) => collection.imageIds),
     ).size
     setConfirmDialog({
       title: '批量删除收藏夹',
@@ -911,7 +920,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
         clearFavoriteCollectionSelection()
       },
     })
-  }, [clearFavoriteCollectionSelection, favoriteCollections, favoriteProjectId, selectedFavoriteCollectionIds, setConfirmDialog, showToast, tasks])
+  }, [clearFavoriteCollectionSelection, favoriteCollectionCards, favoriteCollections, selectedFavoriteCollectionIds, setConfirmDialog, showToast])
 
   const maskDraft = useStore((s) => embeddedAgent && s.activeAgentConversationId
     ? s.agentInputDrafts[s.activeAgentConversationId]?.maskDraft ?? null
@@ -1843,7 +1852,7 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
 
     const placeholderEl = el.parentElement?.querySelector('.prompt-placeholder')
     const placeholderH = placeholderEl ? placeholderEl.scrollHeight : 0
-    const minH = Math.max(42, placeholderH)
+    const minH = Math.max(38, placeholderH)
 
     const desired = Math.max(scrollH, minH)
     const targetH = desired > maxH ? maxH : desired
@@ -2644,10 +2653,10 @@ export default function InputBar({ embeddedAgent = false, hideApiKeyBalance = fa
                 syncMentionTagSelection(el)
               }}
               aria-label={promptPlaceholder}
-              className="col-start-1 row-start-1 min-h-[42px] w-full overflow-hidden ios-rounded-scroll-fix whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 pl-4 pr-10 py-3 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30"
+              className="col-start-1 row-start-1 min-h-[38px] w-full overflow-hidden ios-rounded-scroll-fix whitespace-pre-wrap break-words rounded-xl border border-gray-200/60 bg-white/50 pl-3.5 pr-9 py-2 text-sm leading-5 shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30"
             />
             {prompt.length === 0 && (
-              <div className={`prompt-placeholder col-start-1 row-start-1 pointer-events-none pl-4 pr-10 py-3 text-sm leading-relaxed text-gray-400 dark:text-gray-500${
+              <div className={`prompt-placeholder col-start-1 row-start-1 pointer-events-none pl-3.5 pr-9 py-2 text-sm leading-5 text-gray-400 dark:text-gray-500${
                 isMobile && mobileCollapsed ? ' truncate' : ''
               }`}>
                 {promptPlaceholder}

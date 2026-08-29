@@ -12,3 +12,6 @@ dev-proxy.config.json
 # 本地环境变量（含密钥，不入库）
 .env.local
 .env.*.local
+*/t.json
+*/test.json
+*/Untitled-2.json

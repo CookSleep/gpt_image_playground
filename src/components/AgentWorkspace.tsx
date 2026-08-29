@@ -1177,7 +1177,7 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
                                 return (
                                   <div key={block.key} className="mt-4 w-full min-w-[16rem] max-w-sm rounded-xl bg-gray-50/50 dark:bg-white/[0.02] border border-dashed border-gray-200 dark:border-white/[0.08] p-4 flex min-h-[120px] flex-col items-center justify-center text-gray-400 dark:text-gray-500" onClick={e => e.stopPropagation()}>
                                     <TrashIcon className="w-6 h-6 mb-2 opacity-50" />
-                                    <span className="text-xs">[Image Removed]</span>
+                                    <span className="text-xs">图片已删除</span>
                                   </div>
                                 )
                               }
@@ -1191,6 +1191,12 @@ export default function AgentWorkspace({ embedded = false, onCollapse }: { embed
                                     onEditOutputs={() => editOutputs(block.task)}
                                     onDelete={() => setConfirmDialog({ title: '删除任务', message: '确定要删除这个任务吗？', action: () => removeTask(block.task) })}
                                   />
+                                  {block.task.outputImageSlots?.map((imageId, imageIndex) => imageId === null ? (
+                                    <div key={imageIndex} className="mt-2 flex h-9 items-center gap-2 rounded-md border border-dashed border-gray-200 px-3 text-xs text-gray-400 dark:border-white/[0.08] dark:text-gray-500">
+                                      <TrashIcon className="h-3.5 w-3.5 opacity-60" />
+                                      第 {imageIndex + 1} 张图片已删除
+                                    </div>
+                                  ) : null)}
                                 </div>
                               )
                             }) : isStreamingAssistant ? <AgentStreamingCursor /> : null}

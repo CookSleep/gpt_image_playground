@@ -162,7 +162,9 @@ export default function ProjectHome() {
   const tasks = useStore((s) => s.tasks)
   const createProject = useStore((s) => s.createProject)
   const sortedProjects = useMemo(
-    () => [...projects].sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt || a.id.localeCompare(b.id)),
+    () => projects
+      .filter((project) => project.id !== LOCAL_PROJECT_ID)
+      .sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt || a.id.localeCompare(b.id)),
     [projects],
   )
   const [prompt, setPrompt] = useState('')

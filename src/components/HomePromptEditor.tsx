@@ -238,7 +238,7 @@ export default function HomePromptEditor({ value, images, placeholder, onChange,
         onKeyUp={() => setCursorPos(getCursorOffset(editorRef.current!))}
         onKeyDown={handleKeyDown}
         aria-label={placeholder}
-        className="col-start-1 row-start-1 min-h-28 w-full overflow-hidden whitespace-pre-wrap break-words rounded-2xl bg-transparent px-3 py-3 text-base leading-7 text-gray-900 outline-none placeholder:text-gray-400 dark:text-gray-100 dark:placeholder:text-gray-600 sm:px-4 sm:text-lg"
+        className="col-start-1 row-start-1 min-h-20 w-full overflow-hidden whitespace-pre-wrap break-words rounded-2xl bg-transparent px-3 py-3 text-base leading-6 text-gray-900 outline-none placeholder:text-gray-400 dark:text-gray-100 dark:placeholder:text-gray-600 sm:px-4"
       />
       {visibleValue.length === 0 && (
         <div className="pointer-events-none col-start-1 row-start-1 px-3 py-3 text-base leading-7 text-gray-400 dark:text-gray-600 sm:px-4 sm:text-lg">

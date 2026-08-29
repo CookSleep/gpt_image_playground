@@ -11,7 +11,7 @@ import ProjectHome from './components/ProjectHome'
 import LegacyProjectToolbar from './components/LegacyProjectToolbar'
 import SearchBar from './components/SearchBar'
 import { ProjectApiKeySelect } from './components/ProjectApiControls'
-import TaskGrid from './components/TaskGrid'
+import ProjectCanvas from './components/ProjectCanvas'
 import AgentWorkspace from './components/AgentWorkspace'
 import InputBar from './components/InputBar'
 import DetailModal from './components/DetailModal'
@@ -158,21 +158,33 @@ export default function App() {
       ) : (
         <div className={`pt-11 transition-[padding] duration-200 lg:pt-0 ${sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-56'}`}>
           {activeProjectId === null ? <ProjectHome /> : (
-        <div data-project-workspace data-drag-select-surface className="relative min-h-[calc(100vh-4rem)] w-full">
-          <div className={`safe-area-x mx-auto grid w-full max-w-[1600px] transition-[grid-template-columns,gap] duration-300 ease-in-out ${agentPanelCollapsed ? 'xl:grid-cols-1' : 'xl:grid-cols-[minmax(0,1fr)_420px] xl:gap-4'}`}>
+        <div data-project-workspace data-drag-select-surface className="relative h-[calc(100dvh-2.75rem)] w-full overflow-hidden lg:h-[100dvh]">
+          <div className={`mx-auto grid w-full max-w-none transition-[grid-template-columns,gap] duration-300 ease-in-out ${agentPanelCollapsed ? 'xl:grid-cols-1' : 'xl:grid-cols-[minmax(0,1fr)_420px]'}`}>
             <main
               data-home-main
               data-drag-select-surface
-              className={`${appMode === 'agent' ? 'hidden xl:block' : ''} relative min-h-[calc(100vh-4rem)] min-w-0 pb-48`}
+              className={`${appMode === 'agent' ? 'hidden xl:block' : ''} relative min-h-0 min-w-0`}
             >
-              <div className="mt-6 mb-4 flex min-w-0 items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <SearchBar className="m-0" />
+              <div className="relative h-[calc(100dvh-2.75rem)] min-h-[320px] w-full lg:h-[100dvh]">
+                <div className="pointer-events-none absolute inset-x-0 top-4 z-50 flex justify-center px-3 sm:top-5 sm:px-6">
+                  <div className="pointer-events-auto flex w-full max-w-3xl items-center gap-2.5">
+                    <div className="min-w-0 flex-1">
+                      <SearchBar className="m-0" />
+                    </div>
+                    <ProjectApiKeySelect />
+                  </div>
                 </div>
-                <ProjectApiKeySelect />
+                {activeProjectId === LOCAL_PROJECT_ID && (
+                  <div className="pointer-events-none absolute inset-x-3 top-20 z-40 flex justify-center sm:inset-x-6 sm:top-24">
+                    <div className="pointer-events-auto w-full max-w-3xl">
+                      <LegacyProjectToolbar />
+                    </div>
+                  </div>
+                )}
+                <div className="h-full w-full">
+                  {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <ProjectCanvas agentPanelCollapsed={agentPanelCollapsed} />}
+                </div>
               </div>
-              {activeProjectId === LOCAL_PROJECT_ID && <LegacyProjectToolbar />}
-              {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
             </main>
             <div data-no-drag-select className={`${appMode === 'gallery' ? 'hidden xl:block' : ''} relative min-w-0 border-gray-200 transition-[transform,opacity] duration-300 ease-in-out xl:border-l xl:fixed xl:right-0 xl:top-14 xl:bottom-0 xl:z-30 xl:w-[420px] xl:overflow-hidden dark:border-white/[0.08] ${agentPanelCollapsed ? 'pointer-events-none translate-x-full opacity-0' : 'translate-x-0 opacity-100'}`}>
               <AgentWorkspace embedded onCollapse={() => setAgentPanelCollapsed(true)} />

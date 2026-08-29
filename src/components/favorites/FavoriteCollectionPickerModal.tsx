@@ -7,10 +7,11 @@ import {
   getActiveDefaultFavoriteCollectionId,
   getFavoriteCollectionsForProject,
   getFavoriteScopeProjectId,
-  getTaskFavoriteCollectionIds,
+  getImageFavoriteCollectionIds,
   replaceActiveFavoriteCollections,
   renameFavoriteCollection,
   updateTasksFavoriteCollections,
+  updateImagesFavoriteCollections,
   useStore,
 } from '../../store'
 import { useCloseOnEscape } from '../../hooks/useCloseOnEscape'
@@ -22,7 +23,9 @@ import { getInitialCheckedCollectionIds } from './favoriteUtils'
 
 export function FavoriteCollectionPickerModal() {
   const taskIds = useStore((s) => s.favoritePickerTaskIds)
+  const imageIds = useStore((s) => s.favoritePickerImageIds)
   const tasks = useStore((s) => s.tasks)
+  const projects = useStore((s) => s.projects)
   const allCollections = useStore((s) => s.favoriteCollections)
   const activeProjectId = useStore((s) => s.activeProjectId)
   const collections = useMemo(
@@ -38,7 +41,7 @@ export function FavoriteCollectionPickerModal() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const modalRef = useRef<HTMLDivElement>(null)
-  const open = Boolean(taskIds?.length)
+  const open = Boolean(taskIds?.length || imageIds?.length)
 
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
@@ -60,11 +63,20 @@ export function FavoriteCollectionPickerModal() {
 
   useEffect(() => {
     if (!open) return
-    setCheckedIds(getInitialCheckedCollectionIds(selectedTasks, defaultFavoriteCollectionId))
+    if (imageIds?.length) {
+      const first = getImageFavoriteCollectionIds(imageIds[0])
+      const same = imageIds.every((imageId) => {
+        const ids = getImageFavoriteCollectionIds(imageId)
+        return ids.length === first.length && ids.every((id) => first.includes(id))
+      })
+      setCheckedIds(same ? first : [])
+    } else {
+      setCheckedIds(getInitialCheckedCollectionIds(selectedTasks, defaultFavoriteCollectionId))
+    }
     setDraft('')
     setEditingId(null)
     setEditingName('')
-  }, [defaultFavoriteCollectionId, open, selectedTasks])
+  }, [defaultFavoriteCollectionId, imageIds, open, selectedTasks])
 
   useCloseOnEscape(open, closePicker)
   usePreventBackgroundScroll(open, modalRef)
@@ -90,7 +102,7 @@ export function FavoriteCollectionPickerModal() {
     }
   }, [touchDragPreview])
 
-  if (!open || !taskIds) return null
+  if (!open) return null
 
   const toggleChecked = (id: string, checked: boolean) => {
     setCheckedIds((current) => checked ? Array.from(new Set([...current, id])) : current.filter((item) => item !== id))
@@ -104,7 +116,8 @@ export function FavoriteCollectionPickerModal() {
   }
 
   const handleConfirm = () => {
-    void updateTasksFavoriteCollections(taskIds, checkedIds)
+    if (imageIds?.length) void updateImagesFavoriteCollections(imageIds, checkedIds)
+    else if (taskIds?.length) void updateTasksFavoriteCollections(taskIds, checkedIds)
     closePicker()
   }
 
@@ -282,8 +295,10 @@ export function FavoriteCollectionPickerModal() {
     e.preventDefault()
     e.stopPropagation()
     if (collections.length <= 1) return
-    const collectionTasks = tasks.filter((task) => task.projectId === collection.projectId && getTaskFavoriteCollectionIds(task).includes(collection.id))
-    const imageCount = new Set(collectionTasks.flatMap((task) => task.outputImages || [])).size
+    const imageCount = tasks
+      .filter((task) => task.projectId === collection.projectId)
+      .flatMap((task) => task.outputImages.filter((imageId) => getImageFavoriteCollectionIds(imageId, task).includes(collection.id)))
+      .length
     setConfirmDialog({
       title: '删除收藏夹',
       message: `确定要删除收藏夹「${collection.name}」吗？`,
@@ -318,6 +333,7 @@ export function FavoriteCollectionPickerModal() {
     })
   }
 
+  void projects
   return createPortal(
     <div data-no-drag-select className="fixed inset-0 z-[105] flex items-center justify-center p-4 sm:p-0" onClick={closePicker}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-overlay-in" />
@@ -331,7 +347,7 @@ export function FavoriteCollectionPickerModal() {
             保存到收藏夹
           </h2>
           <p className="text-[13px] text-gray-500 dark:text-gray-400 leading-relaxed">
-            取消勾选会将任务从对应的收藏夹中移除。
+            取消勾选会将图片从对应的收藏夹中移除。
           </p>
         </div>
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden pt-3 pb-1">

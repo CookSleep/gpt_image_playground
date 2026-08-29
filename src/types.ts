@@ -234,6 +234,8 @@ export interface TaskRecord {
   maskImageId?: string | null
   /** 输出图片的 image store id 列表 */
   outputImages: string[]
+  /** Agent 引用使用的稳定输出槽位；删除单图时保留 null，避免后续引用编号漂移 */
+  outputImageSlots?: Array<string | null>
   /** 并发多图中失败的输出槽位，requestIndex 为从 0 开始的请求序号 */
   outputErrors?: Array<{ requestIndex: number; error: string }>
   /** 流式生成的中间步骤图片 id 列表，仅失败时保留供排查/下载 */
@@ -278,6 +280,28 @@ export interface FavoriteCollection {
 
 // ===== 项目 =====
 
+export interface ProjectCanvasViewport {
+  x: number
+  y: number
+  scale: number
+}
+
+export interface ProjectCanvasItem {
+  name?: string
+  x: number
+  y: number
+  width: number
+  z: number
+  rotation?: number
+  favoriteCollectionIds?: string[]
+}
+
+export interface ProjectCanvasState {
+  version: number
+  viewport: ProjectCanvasViewport
+  items: Record<string, ProjectCanvasItem>
+}
+
 export interface Project {
   id: string
   title: string
@@ -287,6 +311,7 @@ export interface Project {
   remoteArchiveSha256?: string
   syncPending?: boolean
   defaultFavoriteCollectionId?: string | null
+  canvas?: ProjectCanvasState
   createdAt: number
   updatedAt: number
 }

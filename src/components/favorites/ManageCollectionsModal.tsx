@@ -7,7 +7,7 @@ import {
   getActiveDefaultFavoriteCollectionId,
   getFavoriteCollectionsForProject,
   getFavoriteScopeProjectId,
-  getTaskFavoriteCollectionIds,
+  getImageFavoriteCollectionIds,
   replaceActiveFavoriteCollections,
   renameFavoriteCollection,
   useStore,
@@ -30,6 +30,7 @@ export function ManageCollectionsModal() {
   const setDefaultFavoriteCollectionId = useStore((s) => s.setDefaultFavoriteCollectionId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const tasks = useStore((s) => s.tasks)
+  const projects = useStore((s) => s.projects)
   
   const [draft, setDraft] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -266,8 +267,10 @@ export function ManageCollectionsModal() {
     e.preventDefault()
     e.stopPropagation()
     if (collections.length <= 1) return
-    const collectionTasks = tasks.filter((task) => task.projectId === getFavoriteScopeProjectId(activeProjectId) && getTaskFavoriteCollectionIds(task).includes(collection.id))
-    const imageCount = new Set(collectionTasks.flatMap((task) => task.outputImages || [])).size
+    const imageCount = tasks
+      .filter((task) => task.projectId === getFavoriteScopeProjectId(activeProjectId))
+      .flatMap((task) => task.outputImages.filter((imageId) => getImageFavoriteCollectionIds(imageId, task).includes(collection.id)))
+      .length
     setConfirmDialog({
       title: '删除收藏夹',
       message: `确定要删除收藏夹「${collection.name}」吗？`,
@@ -302,6 +305,7 @@ export function ManageCollectionsModal() {
     })
   }
 
+  void projects
   return createPortal(
     <div data-no-drag-select className="fixed inset-0 z-[105] flex items-center justify-center p-4 sm:p-0" onClick={closeManage}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-overlay-in" />

@@ -45,6 +45,7 @@ export function getOnlineProjectRecord(project: Project) {
     storage: project.storage,
     remoteId,
     defaultFavoriteCollectionId: project.defaultFavoriteCollectionId,
+    canvas: project.canvas,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
   }
@@ -92,6 +93,7 @@ async function buildProjectArchive(state: ProjectArchiveState, project: Project 
     storage: project.storage,
     remoteId: project.remoteId,
     defaultFavoriteCollectionId: project.defaultFavoriteCollectionId,
+    canvas: project.canvas,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
   }] : []
@@ -310,6 +312,20 @@ export async function renameOnlineProject(id: string, title: string): Promise<On
   if (!resp.ok) {
     const data = await resp.json().catch(() => null) as { message?: string } | null
     throw new Error(data?.message || `在线项目重命名失败：HTTP ${resp.status}`)
+  }
+  return await resp.json() as OnlineProjectResponse
+}
+
+export async function saveOnlineProjectCanvas(project: Project, canvas: Project['canvas']): Promise<OnlineProjectResponse> {
+  const remoteId = project.remoteId ?? project.id
+  const resp = await authFetch(`/api/v1/projects/${encodeURIComponent(remoteId)}/canvas`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ canvas }),
+  })
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => null) as { message?: string } | null
+    throw new Error(data?.message || `项目画布保存失败：HTTP ${resp.status}`)
   }
   return await resp.json() as OnlineProjectResponse
 }

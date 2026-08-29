@@ -181,6 +181,14 @@ vi.mock('./lib/onlineProjects', () => ({
     created_at: '2026-08-16T00:00:00Z',
     updated_at: '2026-08-16T00:00:00Z',
   })),
+  saveOnlineProjectCanvas: vi.fn(async (project: { id: string; title: string }) => ({
+    id: project.id,
+    title: project.title,
+    archive_size: 7,
+    archive_sha256: 'canvas-sha256',
+    created_at: '2026-08-16T00:00:00Z',
+    updated_at: '2026-08-16T00:00:00Z',
+  })),
   deleteOnlineProjectTask: vi.fn(async () => ({
     id: 'project-a',
     title: '项目 A',
@@ -297,7 +305,7 @@ import { queryImageStatuses } from './lib/imageStatusApi'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { callBackendImageApi } from './lib/backendImageApi'
 import { callBackendCompositeImageApi, queryBackendCompositeImageTask } from './lib/backendCompositeImageApi'
-import { buildLegacyProjectArchive, clearLegacyProjectUploadId, deleteOnlineProject, downloadOnlineProject, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectTask, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
+import { buildLegacyProjectArchive, clearLegacyProjectUploadId, deleteOnlineProject, downloadOnlineProject, listOnlineProjectImages, listOnlineProjects, readOnlineProjectArchive, renameOnlineProject, saveOnlineProjectCanvas, saveOnlineProjectTask, uploadOnlineProject, uploadOnlineProjectImage } from './lib/onlineProjects'
 import { LOCAL_PROJECT_ID, cleanStaleAgentInputDrafts, clearFailedTasks, createFavoriteCollection, deleteAgentRoundFromConversation, deleteFavoriteCollection, editOutputs, getActiveAgentRounds, getActiveDefaultFavoriteCollectionId, getActiveFavoriteCollections, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, renameFavoriteCollection, reuseConfig, retryTask, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
@@ -371,18 +379,47 @@ describe('favorite collection deletion', () => {
     })
   })
 
-  it('keeps tasks that are still referenced by another collection when deleting collection tasks', async () => {
+  it('deletes only collection images while preserving siblings and parent tasks', async () => {
+    const project: Project = {
+      id: 'project-favorites',
+      title: '收藏项目',
+      initialPrompt: '',
+      storage: 'local',
+      defaultFavoriteCollectionId: collectionA.id,
+      createdAt: 1,
+      updatedAt: 1,
+      canvas: {
+        version: 1,
+        viewport: { x: 32, y: 32, scale: 1 },
+        items: {
+          'image-shared': { x: 0, y: 0, width: 240, z: 0, favoriteCollectionIds: [collectionA.id, collectionB.id] },
+          'image-only': { x: 272, y: 0, width: 240, z: 1, favoriteCollectionIds: [collectionA.id] },
+          'image-sibling': { x: 544, y: 0, width: 240, z: 2, favoriteCollectionIds: [] },
+        },
+      },
+    }
+    const scopedCollectionA = { ...collectionA, projectId: project.id }
+    const scopedCollectionB = { ...collectionB, projectId: project.id }
     const sharedTask = task({
       id: 'shared-task',
+      projectId: project.id,
+      outputImages: ['image-shared'],
       isFavorite: true,
       favoriteCollectionIds: [collectionA.id, collectionB.id],
     })
     const collectionOnlyTask = task({
       id: 'collection-only-task',
+      projectId: project.id,
+      outputImages: ['image-only', 'image-sibling'],
       isFavorite: true,
       favoriteCollectionIds: [collectionA.id],
     })
-    useStore.setState({ tasks: [sharedTask, collectionOnlyTask] })
+    useStore.setState({
+      projects: [project],
+      activeProjectId: project.id,
+      favoriteCollections: [scopedCollectionA, scopedCollectionB],
+      tasks: [sharedTask, collectionOnlyTask],
+    })
     await putDbTask(sharedTask)
     await putDbTask(collectionOnlyTask)
 
@@ -392,13 +429,20 @@ describe('favorite collection deletion', () => {
     expect(state.favoriteCollections.map((collection) => collection.id)).toEqual([collectionB.id])
     expect(state.activeFavoriteCollectionId).toBeNull()
     expect(state.selectedFavoriteCollectionIds).toEqual([])
-    expect(state.tasks).toHaveLength(1)
-    expect(state.tasks[0]).toMatchObject({
+    expect(state.tasks).toHaveLength(2)
+    expect(state.tasks.find((item) => item.id === sharedTask.id)).toMatchObject({
       id: sharedTask.id,
       isFavorite: true,
       favoriteCollectionIds: [collectionB.id],
     })
-    expect((await getAllTasks()).map((item) => item.id)).toEqual([sharedTask.id])
+    expect(state.tasks.find((item) => item.id === collectionOnlyTask.id)).toMatchObject({
+      outputImages: ['image-sibling'],
+      isFavorite: false,
+      favoriteCollectionIds: [],
+    })
+    expect(state.projects[0].canvas?.items['image-only']).toBeUndefined()
+    expect(state.projects[0].canvas?.items['image-sibling']).toBeDefined()
+    expect((await getAllTasks()).map((item) => item.id).sort()).toEqual([collectionOnlyTask.id, sharedTask.id].sort())
   })
 })
 
@@ -468,6 +512,33 @@ describe('project favorite collection scope', () => {
       id: projectA.id,
       syncPending: true,
     })
+  })
+})
+
+describe('online canvas persistence', () => {
+  it('saves canvas metadata independently and clears pending archive sync', async () => {
+    const project: Project = {
+      id: 'project-canvas',
+      remoteId: 'project-canvas',
+      title: '画布项目',
+      initialPrompt: '',
+      storage: 'online',
+      syncPending: false,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const canvas = {
+      version: 1,
+      viewport: { x: 12, y: 24, scale: 1.25 },
+      items: {},
+    }
+    useStore.setState({ projects: [project], tasks: [] })
+    vi.mocked(saveOnlineProjectCanvas).mockClear()
+
+    useStore.getState().updateProjectCanvas(project.id, canvas)
+
+    await vi.waitFor(() => expect(saveOnlineProjectCanvas).toHaveBeenCalledWith(expect.objectContaining({ id: project.id }), canvas))
+    expect(useStore.getState().projects[0]).toMatchObject({ syncPending: false, remoteArchiveSha256: 'canvas-sha256' })
   })
 })
 

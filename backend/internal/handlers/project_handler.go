@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -24,6 +25,7 @@ var projectUUIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8
 
 type projectStore interface {
 	Save(ctx context.Context, userID, id, title string, archive []byte, sha256 string) (*models.OnlineProject, error)
+	SaveCanvas(ctx context.Context, userID, id string, canvas json.RawMessage) (*models.OnlineProject, error)
 	List(ctx context.Context, userID string) ([]models.OnlineProject, error)
 	Get(ctx context.Context, userID, id string) (*models.OnlineProject, []byte, error)
 	Rename(ctx context.Context, userID, id, title string) (*models.OnlineProject, error)
@@ -44,7 +46,52 @@ func (h *ProjectHandler) Register(api *gin.RouterGroup) {
 	api.GET("/projects/:id", h.Get)
 	api.POST("/projects", h.Save)
 	api.PATCH("/projects/:id", h.Rename)
+	api.PATCH("/projects/:id/canvas", h.SaveCanvas)
 	api.DELETE("/projects/:id", h.Delete)
+}
+
+type saveProjectCanvasRequest struct {
+	Canvas json.RawMessage `json:"canvas"`
+}
+
+// SaveCanvas PATCH /api/v1/projects/:id/canvas，只更新项目归档中的画布状态。
+func (h *ProjectHandler) SaveCanvas(c *gin.Context) {
+	userID := c.GetString(middleware.ContextKeyUserID)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "unauthenticated"})
+		return
+	}
+
+	id := strings.TrimSpace(c.Param("id"))
+	if !projectUUIDPattern.MatchString(id) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "valid project id required"})
+		return
+	}
+	var req saveProjectCanvasRequest
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Canvas) == 0 || string(req.Canvas) == "null" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "valid canvas required"})
+		return
+	}
+	var canvas map[string]any
+	if err := json.Unmarshal(req.Canvas, &canvas); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "valid canvas required"})
+		return
+	}
+
+	project, err := h.projects.SaveCanvas(c.Request.Context(), userID, id, req.Canvas)
+	if errors.Is(err, database.ErrProjectNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "message": err.Error()})
+		return
+	}
+	if errors.Is(err, database.ErrProjectForbidden) {
+		c.JSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": err.Error()})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, project)
 }
 
 // List GET /api/v1/projects，返回当前用户的项目元数据。

@@ -1,4 +1,5 @@
 import type { AgentConversation, Project, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
+import { nanoid } from 'nanoid'
 
 const DB_NAME = 'gpt-image-playground'
 const DB_VERSION = 4
@@ -81,7 +82,16 @@ export function getAllProjects(): Promise<Project[]> {
 }
 
 export function putProject(project: Project): Promise<IDBValidKey> {
-  return dbTransaction(STORE_PROJECTS, 'readwrite', (s) => s.put(project))
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_PROJECTS, 'readwrite')
+        tx.objectStore(STORE_PROJECTS).put(project)
+        tx.oncomplete = () => resolve(project.id)
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      }),
+  )
 }
 
 export function deleteProject(id: string): Promise<undefined> {
@@ -289,7 +299,7 @@ export function clearImages(): Promise<undefined> {
   )
 }
 
-// ===== Image hashing & dedup =====
+// ===== Image hashing & storage =====
 
 export async function hashDataUrl(dataUrl: string): Promise<string> {
   if (!globalThis.crypto?.subtle) {
@@ -324,12 +334,16 @@ export interface StoreImageResult {
   height?: number
 }
 
-/**
- * 存储图片，若已存在（按 hash 去重）则跳过。
- * 返回 image id 及图片真实宽高。
- */
-export async function storeImage(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload'): Promise<string> {
-  return (await storeImageWithSize(dataUrl, source)).id
+export interface StoreImageOptions {
+  /** 提交已有输入图片时沿用它的稳定 ID。 */
+  preferredId?: string
+  /** 当前项目画布和本批次输出中不可复用的 ID。 */
+  reservedIds?: ReadonlySet<string>
+}
+
+/** 使用 Nano ID 存储图片，返回 image ID 及图片真实宽高。 */
+export async function storeImage(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload', options?: StoreImageOptions): Promise<string> {
+  return (await storeImageWithSize(dataUrl, source, options)).id
 }
 
 /** 保存远程图片引用，不读取图片内容；Composite 素材接口只需要 URL。 */
@@ -347,9 +361,25 @@ export async function storeImageReference(id: string, url: string, source: NonNu
   return id
 }
 
-export async function storeImageWithSize(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload'): Promise<StoreImageResult> {
-  const id = await hashDataUrl(dataUrl)
-  const existing = await getImage(id)
+export async function storeImageWithSize(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload', options: StoreImageOptions = {}): Promise<StoreImageResult> {
+  const reservedIds = options.reservedIds ?? new Set<string>()
+  let id = options.preferredId?.trim() || ''
+  let existing: StoredImage | undefined
+  if (id) {
+    existing = await getImage(id)
+  } else {
+    let available = false
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      id = nanoid()
+      if (reservedIds.has(id)) continue
+      existing = await getImage(id)
+      if (!existing) {
+        available = true
+        break
+      }
+    }
+    if (!available) throw new Error('图片 ID 冲突，已重试 3 次，生成失败')
+  }
   if (!existing) {
     const thumbnail = await safeCreateImageThumbnail(dataUrl)
     await putImage({
