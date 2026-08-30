@@ -75,12 +75,15 @@ jwt:
 
 func TestNormalizeUpstreamConfigSupportsHostPort(t *testing.T) {
 	cfg := NormalizeUpstreamConfig(UpstreamConfig{
-		ImageAPI: ImageAPIUpstreamConfig{BaseURL: "10.0.0.5:8080"},
+		ImageAPI: ImageAPIUpstreamConfig{BaseURL: "10.0.0.5:8080", CodexCLI: true},
 		FileAPI:  FileAPIUpstreamConfig{BaseURL: "https://files.example.com/"},
 	})
 
 	if cfg.ImageAPI.BaseURL != "http://10.0.0.5:8080" {
 		t.Fatalf("unexpected image upstream base URL: %q", cfg.ImageAPI.BaseURL)
+	}
+	if !cfg.ImageAPI.CodexCLI {
+		t.Fatal("expected image upstream codex CLI setting to be preserved")
 	}
 	if cfg.FileAPI.BaseURL != "https://files.example.com" {
 		t.Fatalf("unexpected file upstream base URL: %q", cfg.FileAPI.BaseURL)

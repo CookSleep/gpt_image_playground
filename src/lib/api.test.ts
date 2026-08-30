@@ -539,10 +539,9 @@ describe('callImageApi', () => {
     })
   })
 
-  it('keeps successful Responses API concurrent results when one request fails', async () => {
+  it('uses one Responses API request even when n is greater than 1', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
       const callIndex = fetchMock.mock.calls.length
-      if (callIndex === 3) throw new TypeError('Failed to fetch')
       return new Response(JSON.stringify({
         output: [{ type: 'image_generation_call', result: `aW1hZ2Ut${callIndex}` }],
       }), {
@@ -558,16 +557,14 @@ describe('callImageApi', () => {
       inputImageDataUrls: [],
     })
 
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(result.images).toEqual([
       'data:image/png;base64,aW1hZ2Ut1',
-      'data:image/png;base64,aW1hZ2Ut2',
     ])
-    expect(result.failedRequests).toEqual([{ requestIndex: 2, error: 'Failed to fetch' }])
-    expect(result.actualParams).toMatchObject({ n: 2 })
+    expect(result.failedRequests).toBeUndefined()
   })
 
-  it('tracks concurrent Responses API image requests with request indexes', async () => {
+  it('tracks one Responses API image request without a request index', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       output: [{ type: 'image_generation_call', result: 'aW1hZ2U=' }],
     }), {
@@ -584,8 +581,8 @@ describe('callImageApi', () => {
       onImageStatusRequestCreated: (request) => tracked.push(request),
     })
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(tracked.map((request) => request.requestIndex)).toEqual([0, 1])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(tracked.map((request) => request.requestIndex)).toEqual([undefined])
     for (let i = 0; i < fetchMock.mock.calls.length; i += 1) {
       const [, init] = fetchMock.mock.calls[i]
       const headers = (init as RequestInit).headers as Record<string, string>

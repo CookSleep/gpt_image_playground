@@ -53,6 +53,8 @@ model_whitelist:
 upstreams:
   image_api:
     base_url: ""
+    # OpenAI 平台分组启用 Codex CLI 兼容模式时，Images Generations/Edits 的 n > 1 会由后端拆分；Responses 不拆分。
+    codex_cli: false
   resource_api:
     base_url: ""
   composite_api:

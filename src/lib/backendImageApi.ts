@@ -58,16 +58,13 @@ export async function callBackendImageApi(options: {
   model: string
   apiMode: 'images' | 'responses'
   allowPromptRewrite: boolean
-  codexCli: boolean
   prompt: string
   params: TaskParams
   inputImageDataUrls: string[]
   maskDataUrl?: string
   onImageStatusRequestCreated?: (request: { requestId: string; requestIndex?: number }) => void
 }): Promise<CallApiResult> {
-  const requestCount = options.apiMode === 'responses' || (options.codexCli && options.params.n > 1)
-    ? Math.max(1, options.params.n)
-    : 1
+  const requestCount = options.apiMode === 'responses' ? 1 : Math.max(1, options.params.n)
   const requestIds = Array.from({ length: requestCount }, (_, requestIndex) => {
     const requestId = createImageStatusRequestId()
     options.onImageStatusRequestCreated?.({
@@ -99,7 +96,6 @@ export async function callBackendImageApi(options: {
     model: options.model,
     api_mode: options.apiMode,
     allow_prompt_rewrite: options.allowPromptRewrite,
-    codex_cli: options.codexCli,
     request_ids: requestIds,
     prompt: options.prompt,
     params: options.params,

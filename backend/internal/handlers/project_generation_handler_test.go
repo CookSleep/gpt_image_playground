@@ -17,6 +17,7 @@ import (
 
 	"gpt-image-backend/internal/middleware"
 	"gpt-image-backend/internal/models"
+	"gpt-image-backend/pkg/config"
 )
 
 type projectGenerationStoreStub struct {
@@ -117,6 +118,56 @@ func generationRequestBody(inputImages []string, mask string) io.Reader {
 		"mask":         mask,
 	})
 	return bytes.NewReader(data)
+}
+
+func TestCreateUpstreamGenerationRequestUsesConfiguredCodexCLIForOpenAI(t *testing.T) {
+	req := projectGenerationRequest{
+		Provider:   "openai",
+		Model:      "gpt-image-2",
+		Prompt:     "画一张图",
+		RequestIDs: []string{"request-a"},
+		Params: projectGenerationParams{
+			Size: "1024x1024", Quality: "medium", OutputFormat: "png", Moderation: "auto", N: 2,
+		},
+	}
+	upstreamRequest, err := createUpstreamGenerationRequest(context.Background(), "https://provider.example", "test", req, config.UpstreamConfig{
+		ImageAPI: config.ImageAPIUpstreamConfig{CodexCLI: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(upstreamRequest.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["n"]; ok {
+		t.Fatalf("codex CLI config should omit n: %#v", payload)
+	}
+	if _, ok := payload["quality"]; ok {
+		t.Fatalf("codex CLI config should omit quality: %#v", payload)
+	}
+	req.Provider = "other"
+	standardRequest, err := createUpstreamGenerationRequest(context.Background(), "https://provider.example", "test", req, config.UpstreamConfig{
+		ImageAPI: config.ImageAPIUpstreamConfig{CodexCLI: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	standardBody, err := io.ReadAll(standardRequest.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var standardPayload map[string]any
+	if err := json.Unmarshal(standardBody, &standardPayload); err != nil {
+		t.Fatal(err)
+	}
+	if standardPayload["n"] != float64(2) || standardPayload["quality"] != "medium" {
+		t.Fatalf("codex CLI config must be scoped to OpenAI: %#v", standardPayload)
+	}
 }
 
 func TestSanitizeGenerationLogValueRedactsSecretsAndImageData(t *testing.T) {
@@ -425,6 +476,8 @@ func TestProjectGenerationHandlerUsesResponsesAPIAndSavesImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload["api_mode"] = "responses"
+	payload["request_ids"] = []string{"img-request-a", "img-request-b"}
+	payload["params"].(map[string]any)["n"] = 2
 	body, _ = json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/86d80cf2-976f-4b2c-8b2e-64fc0d4e77e8/generations", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

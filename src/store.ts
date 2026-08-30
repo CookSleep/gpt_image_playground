@@ -6638,7 +6638,6 @@ async function executeTask(taskId: string) {
           model: activeProfile.model,
           apiMode: activeProfile.apiMode,
           allowPromptRewrite: requestSettings.allowPromptRewrite,
-          codexCli: activeProfile.codexCli,
           prompt,
           params: task.params,
           inputImageDataUrls: inputDataUrls,

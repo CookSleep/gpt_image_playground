@@ -111,6 +111,7 @@ Composite 图片编辑会先把本地参考图和遮罩以 multipart 文件提�
 upstreams:
   image_api:
     base_url: "http://10.0.0.5:8080"
+    codex_cli: false
   resource_api:
     base_url: ""
   composite_api:
@@ -162,6 +163,7 @@ file_api:
 - `oidc.providers` OIDC 提供商列表，支持任意标准 OIDC discovery 协议
 - `oidc.providers[].resource_base_url` 资源上游基址；为空时使用 `issuer_url`，支持域名、域名端口和 IP 端口
 - `upstreams.image_api.base_url` Images/Responses 生成、编辑和状态接口的上游基址；接口路径固定，见上方接口表
+- `upstreams.image_api.codex_cli` 是否为 OpenAI 平台分组启用 Codex CLI 兼容模式；开启后通过 Images Generations/Edits 的 `n > 1` 请求由后端并发拆成多个单图请求，同时不向上游发送 `n` 和 `quality`。Responses 接口始终只请求一次
 - `upstreams.resource_api.base_url` API Key 列表和模型列表的上游基址；接口路径固定，见上方接口表
 - `upstreams.composite_api.base_url` Composite 模型代理的上游基址；接口路径固定，见上方接口表
 - `upstreams.file_api.base_url` Composite File API 的上游基址；接口路径固定，见上方接口表

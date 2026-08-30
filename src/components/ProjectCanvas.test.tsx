@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   openImageFavoritePicker: vi.fn(),
   setDetailImage: vi.fn(),
   setLightboxImageId: vi.fn(),
+  setSelectedTaskIds: vi.fn(),
   setConfirmDialog: vi.fn(),
   showToast: vi.fn(),
 }))
@@ -115,9 +116,11 @@ describe('ProjectCanvas interactions', () => {
       agentPanelCollapsed: false,
       streamPreviewSlots: {},
       projectCanvasCache: {},
+      selectedTaskIds: [],
       updateProjectCanvas: mocks.updateProjectCanvas,
       setDetailImage: mocks.setDetailImage,
       setLightboxImageId: mocks.setLightboxImageId,
+      setSelectedTaskIds: mocks.setSelectedTaskIds,
       openImageFavoritePicker: mocks.openImageFavoritePicker,
       setConfirmDialog: mocks.setConfirmDialog,
       showToast: mocks.showToast,
@@ -319,6 +322,7 @@ describe('ProjectCanvas interactions', () => {
     const second = host.querySelector<HTMLElement>('[data-node-key="image-b"]')!
     act(() => first.dispatchEvent(pointerEvent('pointerdown', 1, 80, 80, { ctrlKey: true })))
     act(() => second.dispatchEvent(pointerEvent('pointerdown', 2, 380, 80, { ctrlKey: true })))
+    expect(mocks.setSelectedTaskIds).toHaveBeenCalledWith(['task-a', 'task-b'])
     act(() => {
       first.dispatchEvent(pointerEvent('pointerdown', 3, 80, 80))
       first.dispatchEvent(pointerEvent('pointermove', 3, 120, 100))
@@ -368,6 +372,110 @@ describe('ProjectCanvas interactions', () => {
     act(() => canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 300, clientY: 300, deltaY: -120 })))
     expect(world.style.transform).not.toContain('scale(1)')
     expect(mocks.updateProjectCanvas).not.toHaveBeenCalled()
+  })
+
+  it('undoes and redoes canvas edits with keyboard shortcuts', () => {
+    const node = host.querySelector<HTMLElement>('[data-canvas-node]')!
+    mocks.updateProjectCanvas.mockClear()
+
+    act(() => {
+      node.dispatchEvent(pointerEvent('pointerdown', 30, 80, 80))
+      node.dispatchEvent(pointerEvent('pointermove', 30, 120, 100))
+      node.dispatchEvent(pointerEvent('pointerup', 30, 120, 100))
+    })
+    expect(mocks.updateProjectCanvas).toHaveBeenLastCalledWith('project-a', expect.objectContaining({
+      items: expect.objectContaining({ 'image-a': expect.objectContaining({ x: 40, y: 20 }) }),
+    }))
+
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })))
+    expect(mocks.updateProjectCanvas).toHaveBeenLastCalledWith('project-a', expect.objectContaining({
+      items: expect.objectContaining({ 'image-a': expect.objectContaining({ x: 0, y: 0 }) }),
+    }))
+
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true, cancelable: true })))
+    expect(mocks.updateProjectCanvas).toHaveBeenLastCalledWith('project-a', expect.objectContaining({
+      items: expect.objectContaining({ 'image-a': expect.objectContaining({ x: 40, y: 20 }) }),
+    }))
+  })
+
+  it('does not rearrange automatically laid out images when undo history is empty', async () => {
+    const secondTask = { ...createTask(), id: 'task-b', outputImages: ['image-b'], createdAt: 2, finishedAt: 3 }
+    const project = { ...createProject(), canvas: undefined }
+    mocks.state.current = { ...mocks.state.current, tasks: [createTask(), secondTask], projects: [project] }
+    await act(async () => root.render(<ProjectCanvas />))
+    const canvas = host.querySelector<HTMLElement>('[data-project-canvas]')!
+    const before = [...canvas.querySelectorAll<HTMLElement>('[data-canvas-node]')].map((node) => ({ key: node.dataset.nodeKey, left: node.style.left, top: node.style.top }))
+    mocks.updateProjectCanvas.mockClear()
+
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })))
+
+    const after = [...canvas.querySelectorAll<HTMLElement>('[data-canvas-node]')].map((node) => ({ key: node.dataset.nodeKey, left: node.style.left, top: node.style.top }))
+    expect(after).toEqual(before)
+    expect(mocks.updateProjectCanvas).not.toHaveBeenCalled()
+  })
+
+  it('keeps other image positions when undoing a move after automatic layout', async () => {
+    const secondTask = { ...createTask(), id: 'task-b', outputImages: ['image-b'], createdAt: 2, finishedAt: 3 }
+    const project = { ...createProject(), canvas: undefined }
+    mocks.state.current = { ...mocks.state.current, tasks: [createTask(), secondTask], projects: [project] }
+    await act(async () => root.render(<ProjectCanvas />))
+    const first = host.querySelector<HTMLElement>('[data-node-key="image-a"]')!
+    const second = host.querySelector<HTMLElement>('[data-node-key="image-b"]')!
+    const before = { left: second.style.left, top: second.style.top }
+
+    act(() => {
+      first.dispatchEvent(pointerEvent('pointerdown', 31, 80, 80))
+      first.dispatchEvent(pointerEvent('pointermove', 31, 120, 100))
+      first.dispatchEvent(pointerEvent('pointerup', 31, 120, 100))
+    })
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })))
+
+    expect({ left: second.style.left, top: second.style.top }).toEqual(before)
+  })
+
+  it('keeps persisted layout when undoing a move after refresh', async () => {
+    const secondTask = { ...createTask(), id: 'task-b', outputImages: ['image-b'], createdAt: 2, finishedAt: 3 }
+    const project = createProject()
+    project.canvas!.items['image-b'] = { x: 360, y: 140, width: 240, z: 1, favoriteCollectionIds: [] }
+    mocks.state.current = { ...mocks.state.current, tasks: [createTask(), secondTask], projects: [project] }
+    await act(async () => root.render(<ProjectCanvas />))
+    const first = host.querySelector<HTMLElement>('[data-node-key="image-a"]')!
+    const second = host.querySelector<HTMLElement>('[data-node-key="image-b"]')!
+    const before = { left: second.style.left, top: second.style.top }
+    mocks.updateProjectCanvas.mockClear()
+
+    act(() => {
+      first.dispatchEvent(pointerEvent('pointerdown', 32, 80, 80))
+      first.dispatchEvent(pointerEvent('pointermove', 32, 120, 100))
+      first.dispatchEvent(pointerEvent('pointerup', 32, 120, 100))
+    })
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })))
+
+    expect({ left: second.style.left, top: second.style.top }).toEqual(before)
+  })
+
+  it('keeps wheel events inside the layer panel from zooming the canvas', () => {
+    const layerButton = host.querySelector<HTMLButtonElement>('[aria-label="图层"]')!
+    act(() => layerButton.click())
+    const panel = host.querySelector<HTMLElement>('[data-canvas-layers-panel]')!
+    const world = host.querySelector<HTMLElement>('[data-project-canvas]')!.firstElementChild as HTMLElement
+    const before = world.style.transform
+
+    act(() => panel.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120 })))
+
+    expect(world.style.transform).toBe(before)
+  })
+
+  it('closes the zoom preset menu when clicking the canvas', () => {
+    const zoomButton = host.querySelector<HTMLButtonElement>('[aria-label="选择画布缩放比例"]')!
+    const canvas = host.querySelector<HTMLElement>('[data-project-canvas]')!
+
+    act(() => zoomButton.click())
+    expect(host.querySelector('[data-canvas-zoom-preset]')).not.toBeNull()
+
+    act(() => canvas.dispatchEvent(pointerEvent('pointerdown', 20, 700, 500)))
+
+    expect(host.querySelector('[data-canvas-zoom-preset]')).toBeNull()
   })
 
   it('prefers the persisted canvas cache over a stale project canvas snapshot', async () => {

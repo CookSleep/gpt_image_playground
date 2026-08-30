@@ -61,7 +61,8 @@ type UpstreamConfig struct {
 }
 
 type ImageAPIUpstreamConfig struct {
-	BaseURL string `yaml:"base_url"`
+	BaseURL  string `yaml:"base_url"`
+	CodexCLI bool   `yaml:"codex_cli"`
 }
 
 type ResourceAPIUpstreamConfig struct {

@@ -7,11 +7,13 @@ import ViewportTooltip from '../ViewportTooltip'
 function BatchActionButton({
   tooltip,
   className,
+  disabled = false,
   onClick,
   children,
 }: {
   tooltip: string
   className: string
+  disabled?: boolean
   onClick: () => void | Promise<void>
   children: ReactNode
 }) {
@@ -21,11 +23,12 @@ function BatchActionButton({
     <span className="relative inline-flex" {...tooltipState.handlers}>
       <button
         type="button"
+        disabled={disabled}
         onClick={() => {
           tooltipState.dismiss()
           void onClick()
         }}
-        className={className}
+        className={`${className} ${disabled ? 'cursor-not-allowed opacity-40' : ''}`}
         aria-label={tooltip}
       >
         {children}
@@ -131,6 +134,9 @@ export default function InputBatchBars({
 
   if (!showTaskBatchBar) return null
 
+  const selectedTasks = tasks.filter((task) => selectedTaskIds.includes(task.id))
+  const hasCompletedImages = selectedTasks.some((task) => task.outputImages.length > 0)
+
   return (
     <div className="flex justify-center mb-3">
       <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-lg rounded-full flex items-center p-1 border border-gray-200/50 dark:border-white/10 pointer-events-auto">
@@ -167,6 +173,7 @@ export default function InputBatchBars({
         <div className="w-px h-5 bg-gray-200 dark:bg-white/20 mx-1"></div>
         <BatchActionButton
           onClick={onToggleFavorite}
+          disabled={!hasCompletedImages}
           className="p-2 text-yellow-500 dark:text-yellow-400 hover:text-yellow-600 dark:hover:text-yellow-300 transition-colors"
           tooltip="编辑收藏夹"
         >
@@ -183,6 +190,7 @@ export default function InputBatchBars({
         <div className="w-px h-5 bg-gray-200 dark:bg-white/20 mx-1"></div>
         <BatchActionButton
           onClick={onDownloadSelected}
+          disabled={!hasCompletedImages}
           className="p-2 text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300 transition-colors"
           tooltip="下载选中"
         >

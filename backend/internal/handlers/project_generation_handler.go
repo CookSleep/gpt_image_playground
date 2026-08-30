@@ -329,7 +329,6 @@ type projectGenerationRequest struct {
 	Model        string                  `json:"model"`
 	APIMode      string                  `json:"api_mode"`
 	AllowRewrite bool                    `json:"allow_prompt_rewrite"`
-	CodexCLI     bool                    `json:"codex_cli"`
 	RequestIDs   []string                `json:"request_ids"`
 	Prompt       string                  `json:"prompt"`
 	Params       projectGenerationParams `json:"params"`
@@ -391,9 +390,6 @@ func validateProjectGenerationRequest(req projectGenerationRequest) error {
 		if !projectImageIDPattern.MatchString(requestID) {
 			return errors.New("invalid request id")
 		}
-	}
-	if (req.APIMode == "responses" || (req.CodexCLI && req.Params.N > 1)) && len(req.RequestIDs) < req.Params.N {
-		return errors.New("multi-request mode requires one request id per image")
 	}
 	if req.Params.N < 1 || req.Params.N > 10 {
 		return errors.New("n must be between 1 and 10")
@@ -492,6 +488,10 @@ func (h *ProjectGenerationHandler) saveGenerationTaskRecordAsync(requestCtx cont
 	}()
 }
 
+func (h *ProjectGenerationHandler) codexCLIEnabled(req projectGenerationRequest) bool {
+	return req.Provider == "openai" && h.upstreams.ImageAPI.CodexCLI
+}
+
 func validateImageStatusRequest(req imageStatusRequest) error {
 	if strings.TrimSpace(req.APIKey) == "" {
 		return errors.New("api_key is required")
@@ -507,7 +507,7 @@ func validateImageStatusRequest(req imageStatusRequest) error {
 	return nil
 }
 
-func appendGenerationFields(writer *multipart.Writer, req projectGenerationRequest) error {
+func appendGenerationFields(writer *multipart.Writer, req projectGenerationRequest, codexCLI bool) error {
 	fields := map[string]string{
 		"model":         req.Model,
 		"prompt":        req.Prompt,
@@ -516,7 +516,7 @@ func appendGenerationFields(writer *multipart.Writer, req projectGenerationReque
 		"moderation":    req.Params.Moderation,
 		"n":             strconv.Itoa(req.Params.N),
 	}
-	if req.CodexCLI {
+	if codexCLI {
 		delete(fields, "n")
 	} else {
 		fields["quality"] = req.Params.Quality
@@ -568,6 +568,7 @@ func createUpstreamGenerationRequest(ctx context.Context, baseURL, userAgent str
 	if len(upstreams) > 0 {
 		upstreamConfig = config.NormalizeUpstreamConfig(upstreams[0])
 	}
+	codexCLI := req.Provider == "openai" && upstreamConfig.ImageAPI.CodexCLI
 	path := config.ImageGenerationsPath
 	var body io.Reader
 	contentType := "application/json"
@@ -576,7 +577,7 @@ func createUpstreamGenerationRequest(ctx context.Context, baseURL, userAgent str
 			"model": req.Model, "prompt": req.Prompt, "size": req.Params.Size,
 			"output_format": req.Params.OutputFormat, "moderation": req.Params.Moderation,
 		}
-		if !req.CodexCLI {
+		if !codexCLI {
 			payload["quality"] = req.Params.Quality
 			payload["n"] = req.Params.N
 		}
@@ -592,7 +593,7 @@ func createUpstreamGenerationRequest(ctx context.Context, baseURL, userAgent str
 		path = config.ImageEditsPath
 		var data bytes.Buffer
 		writer := multipart.NewWriter(&data)
-		if err := appendGenerationFields(writer, req); err != nil {
+		if err := appendGenerationFields(writer, req, codexCLI); err != nil {
 			return nil, err
 		}
 		for index, image := range req.InputImages {
@@ -812,9 +813,7 @@ func createUpstreamResponsesRequest(ctx context.Context, baseURL, userAgent stri
 		"output_format": req.Params.OutputFormat,
 		"moderation":    req.Params.Moderation,
 	}
-	if !req.CodexCLI {
-		tool["quality"] = req.Params.Quality
-	}
+	tool["quality"] = req.Params.Quality
 	if req.Params.OutputFormat != "png" && req.Params.OutputCompression != nil {
 		tool["output_compression"] = *req.Params.OutputCompression
 	}
@@ -895,67 +894,65 @@ func (h *ProjectGenerationHandler) generateResponses(c *gin.Context, userID, pro
 	items := make([]struct {
 		image  upstreamImageItem
 		params projectGenerationParams
-	}, 0, req.Params.N)
-	for index := 0; index < req.Params.N; index++ {
-		requestID := req.RequestIDs[index]
-		upstreamRequest, err := createUpstreamResponsesRequest(c.Request.Context(), baseURL, c.Request.UserAgent(), req, requestID, h.upstreams)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
-			return nil
+	}, 0, 1)
+	requestID := req.RequestIDs[0]
+	upstreamRequest, err := createUpstreamResponsesRequest(c.Request.Context(), baseURL, c.Request.UserAgent(), req, requestID, h.upstreams)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
+		return nil
+	}
+	logGenerationUpstreamRequest(c.Request.Context(), upstreamRequest.Method, upstreamRequest.URL.String(), 1, nil)
+	upstreamResponse, err := h.client.Do(upstreamRequest)
+	if err != nil {
+		logGenerationUpstream(c.Request.Context(), upstreamRequest.Method, upstreamRequest.URL.String(), 1, 0, nil, err)
+		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "上游连接中断: " + err.Error()})
+		return nil
+	}
+	responseData, readErr := io.ReadAll(upstreamResponse.Body)
+	upstreamResponse.Body.Close()
+	logGenerationUpstream(c.Request.Context(), upstreamRequest.Method, upstreamRequest.URL.String(), 1, upstreamResponse.StatusCode, responseData, readErr)
+	if readErr != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "read image provider response failed"})
+		return nil
+	}
+	if upstreamResponse.StatusCode < http.StatusOK || upstreamResponse.StatusCode >= http.StatusMultipleChoices {
+		c.Data(upstreamResponse.StatusCode, "application/json", responseData)
+		return nil
+	}
+	var upstream upstreamResponsesResponse
+	if json.Unmarshal(responseData, &upstream) != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "invalid responses API payload"})
+		return nil
+	}
+	for _, output := range upstream.Output {
+		if output.Type != "image_generation_call" {
+			continue
 		}
-		logGenerationUpstreamRequest(c.Request.Context(), upstreamRequest.Method, upstreamRequest.URL.String(), 1, nil)
-		upstreamResponse, err := h.client.Do(upstreamRequest)
-		if err != nil {
-			logGenerationUpstream(c.Request.Context(), upstreamRequest.Method, upstreamRequest.URL.String(), 1, 0, nil, err)
-			c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "上游连接中断: " + err.Error()})
-			return nil
+		b64 := decodeResponsesImageResult(output.Result)
+		if b64 == "" {
+			continue
 		}
-		responseData, readErr := io.ReadAll(upstreamResponse.Body)
-		upstreamResponse.Body.Close()
-		logGenerationUpstream(c.Request.Context(), upstreamRequest.Method, upstreamRequest.URL.String(), 1, upstreamResponse.StatusCode, responseData, readErr)
-		if readErr != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "read image provider response failed"})
-			return nil
+		params := req.Params
+		params.N = 1
+		if output.Size != "" {
+			params.Size = output.Size
 		}
-		if upstreamResponse.StatusCode < http.StatusOK || upstreamResponse.StatusCode >= http.StatusMultipleChoices {
-			c.Data(upstreamResponse.StatusCode, "application/json", responseData)
-			return nil
+		if output.Quality != "" {
+			params.Quality = output.Quality
 		}
-		var upstream upstreamResponsesResponse
-		if json.Unmarshal(responseData, &upstream) != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "invalid responses API payload"})
-			return nil
+		if output.OutputFormat != "" {
+			params.OutputFormat = output.OutputFormat
 		}
-		for _, output := range upstream.Output {
-			if output.Type != "image_generation_call" {
-				continue
-			}
-			b64 := decodeResponsesImageResult(output.Result)
-			if b64 == "" {
-				continue
-			}
-			params := req.Params
-			params.N = 1
-			if output.Size != "" {
-				params.Size = output.Size
-			}
-			if output.Quality != "" {
-				params.Quality = output.Quality
-			}
-			if output.OutputFormat != "" {
-				params.OutputFormat = output.OutputFormat
-			}
-			if output.OutputCompression != nil {
-				params.OutputCompression = output.OutputCompression
-			}
-			if output.Moderation != "" {
-				params.Moderation = output.Moderation
-			}
-			items = append(items, struct {
-				image  upstreamImageItem
-				params projectGenerationParams
-			}{image: upstreamImageItem{B64JSON: b64, RevisedPrompt: output.RevisedPrompt}, params: params})
+		if output.OutputCompression != nil {
+			params.OutputCompression = output.OutputCompression
 		}
+		if output.Moderation != "" {
+			params.Moderation = output.Moderation
+		}
+		items = append(items, struct {
+			image  upstreamImageItem
+			params projectGenerationParams
+		}{image: upstreamImageItem{B64JSON: b64, RevisedPrompt: output.RevisedPrompt}, params: params})
 	}
 	if len(items) == 0 {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": "responses API returned no images"})
@@ -1101,6 +1098,14 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
 		return
 	}
+	multiRequestMode := h.codexCLIEnabled(req)
+	if multiRequestMode && len(req.RequestIDs) < req.Params.N {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "multi-request mode requires one request id per image"})
+		return
+	}
+	if !multiRequestMode && len(req.RequestIDs) > 1 {
+		req.RequestIDs = req.RequestIDs[:1]
+	}
 	if len(req.Project) > 0 && rawRecordID(req.Project) != projectID {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "project record id mismatch"})
 		return
@@ -1137,7 +1142,7 @@ func (h *ProjectGenerationHandler) Generate(c *gin.Context) {
 		recordResult = h.generateResponses(c, userID, projectID, baseURL, req)
 		return
 	}
-	if req.CodexCLI && req.Params.N > 1 {
+	if h.codexCLIEnabled(req) && req.Params.N > 1 {
 		recordResult = h.generateCodexImages(c, userID, projectID, baseURL, req)
 		return
 	}

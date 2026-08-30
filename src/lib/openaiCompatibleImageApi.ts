@@ -1084,56 +1084,7 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
 }
 
 async function callResponsesImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
-  const n = opts.params.n > 0 ? opts.params.n : 1
-  if (n === 1) {
-    return callResponsesImageApiSingle(opts, profile)
-  }
-
-  const promises = Array.from({ length: n }).map((_, requestIndex) => callResponsesImageApiSingle({
-    ...opts,
-    onImageStatusRequestCreated: opts.onImageStatusRequestCreated
-      ? (request) => opts.onImageStatusRequestCreated?.({ ...request, requestIndex })
-      : undefined,
-    onPartialImage: opts.onPartialImage
-      ? (partial) => opts.onPartialImage?.({ ...partial, requestIndex })
-      : undefined,
-  }, profile))
-  const results = await Promise.allSettled(promises)
-  
-  const successfulResults = results
-    .filter((r): r is PromiseFulfilledResult<CallApiResult> => r.status === 'fulfilled')
-    .map((r) => r.value)
-  const failedRequests = results.flatMap((r, requestIndex) =>
-    r.status === 'rejected' ? [{ requestIndex, error: getErrorMessage(r.reason) }] : [],
-  )
-
-  if (successfulResults.length === 0) {
-    const firstError = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
-    if (firstError) throw firstError.reason
-    throw new Error('所有并发请求均失败')
-  }
-
-  const images = successfulResults.flatMap((r) => r.images)
-  const actualParamsList = successfulResults.flatMap((r) =>
-    r.actualParamsList?.length ? r.actualParamsList : r.images.map(() => r.actualParams),
-  )
-  const revisedPrompts = successfulResults.flatMap((r) =>
-    r.revisedPrompts?.length ? r.revisedPrompts : r.images.map(() => undefined),
-  )
-  const rawImageUrls = successfulResults.flatMap((r) => r.rawImageUrls ?? [])
-  const actualParams = mergeActualParams(
-    successfulResults[0]?.actualParams ?? {},
-    images.length === opts.params.n ? { n: opts.params.n } : { n: images.length },
-  )
-
-  return {
-    images,
-    actualParams,
-    actualParamsList,
-    revisedPrompts,
-    ...(rawImageUrls.length ? { rawImageUrls } : {}),
-    ...(failedRequests.length ? { failedRequests } : {}),
-  }
+  return callResponsesImageApiSingle(opts, profile)
 }
 
 async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {

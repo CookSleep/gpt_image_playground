@@ -71,6 +71,29 @@ type CanvasNode = {
   placeholderName?: string
 }
 
+function cloneCanvasState(state: ProjectCanvasState): ProjectCanvasState {
+  return {
+    ...state,
+    viewport: { ...state.viewport },
+    items: Object.fromEntries(Object.entries(state.items).map(([key, item]) => [key, {
+      ...item,
+      ...(item.operator ? {
+        operator: {
+          ...item.operator,
+          ...(item.operator.crop ? { crop: { ...item.operator.crop } } : {}),
+        },
+      } : {}),
+    }])),
+  }
+}
+
+function canvasItemsEqual(left: ProjectCanvasState, right: ProjectCanvasState) {
+  const leftKeys = Object.keys(left.items)
+  const rightKeys = Object.keys(right.items)
+  if (leftKeys.length !== rightKeys.length) return false
+  return leftKeys.every((key) => key in right.items && JSON.stringify(left.items[key]) === JSON.stringify(right.items[key]))
+}
+
 function HighlightedSearchText({ text, query }: { text: string; query: string }) {
   const normalizedQuery = query.trim()
   if (!normalizedQuery) return text
@@ -793,6 +816,8 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
   const flushProjectCanvasOnExit = useStore((s) => s.flushProjectCanvasOnExit)
   const setDetailImage = useStore((s) => s.setDetailImage)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
+  const selectedTaskIds = useStore((s) => s.selectedTaskIds)
+  const setSelectedTaskIds = useStore((s) => s.setSelectedTaskIds)
   const openImageFavoritePicker = useStore((s) => s.openImageFavoritePicker)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const showToast = useStore((s) => s.showToast)
@@ -805,6 +830,12 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
   const viewportPersistTimerRef = useRef<number | null>(null)
   const viewportDirtyRef = useRef(false)
   const canvasProjectRef = useRef<string | null>(canvasProjectId)
+  const historyProjectRef = useRef<string | null>(canvasProjectId)
+  const historyBaselineRef = useRef<ProjectCanvasState | null>(null)
+  const historyInternalCanvasRef = useRef<ProjectCanvasState | null>(null)
+  const undoStackRef = useRef<ProjectCanvasState[]>([])
+  const redoStackRef = useRef<ProjectCanvasState[]>([])
+  const historyApplyingRef = useRef(false)
   const pointersRef = useRef(new Map<number, { x: number; y: number }>())
   const panRef = useRef<{ pointerId: number; start: { x: number; y: number }; viewport: ProjectCanvasViewport; moved: boolean } | null>(null)
   const pinchRef = useRef<{ distance: number; screenCentroid: { x: number; y: number }; canvasCentroid: { x: number; y: number }; viewport: ProjectCanvasViewport; moved: boolean } | null>(null)
@@ -829,6 +860,7 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
   const [editingTransformField, setEditingTransformField] = useState<'rotation' | 'scale' | null>(null)
   const [interactionKeys, setInteractionKeys] = useState<string[]>([])
   const [multiSelectedKeys, setMultiSelectedKeys] = useState<string[]>([])
+  const canvasSelectedTaskIdsRef = useRef<string[]>([])
   const [marquee, setMarquee] = useState<{ start: { x: number; y: number }; current: { x: number; y: number } } | null>(null)
   const [ratios, setRatios] = useState<Record<string, number>>({})
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
@@ -887,6 +919,14 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
     const next = ensureProjectCanvas(sourceCanvas, projectImageIds, legacyFavoriteIdsByImage, imageZById, errorNodeKeys)
     const preserveLocalViewport = canvasProjectRef.current === canvasProjectId && viewportDirtyRef.current
     if (preserveLocalViewport) next.viewport = canvasRef.current.viewport
+    const historySourceChanged = historyInternalCanvasRef.current === null || !canvasItemsEqual(historyInternalCanvasRef.current, next)
+    if (historyProjectRef.current !== canvasProjectId || historyBaselineRef.current === null || historySourceChanged) {
+      historyProjectRef.current = canvasProjectId
+      historyBaselineRef.current = Object.keys(sourceCanvas?.items ?? {}).length > 0 ? cloneCanvasState(next) : null
+      undoStackRef.current = []
+      redoStackRef.current = []
+    }
+    historyInternalCanvasRef.current = cloneCanvasState(next)
     canvasProjectRef.current = canvasProjectId
     canvasRef.current = next
     setCanvas(next)
@@ -986,7 +1026,68 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
     return () => document.removeEventListener('pointerdown', handlePointerDown)
   }, [layersOpen])
 
-  const persistCanvas = (next: ProjectCanvasState, delay = 0) => {
+  useEffect(() => {
+    if (!zoomPresetOpen) return
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Node && zoomControlsRef.current?.contains(target)) return
+      setZoomPresetOpen(false)
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [zoomPresetOpen])
+
+  const recordCanvasHistory = (next: ProjectCanvasState) => {
+    if (historyApplyingRef.current) return
+    const previous = historyBaselineRef.current
+    if (!previous) {
+      historyBaselineRef.current = cloneCanvasState(next)
+      return
+    }
+    if (canvasItemsEqual(previous, next)) {
+      historyBaselineRef.current = cloneCanvasState(next)
+      return
+    }
+    undoStackRef.current = [...undoStackRef.current, cloneCanvasState(previous)].slice(-30)
+    redoStackRef.current = []
+    historyBaselineRef.current = cloneCanvasState(next)
+  }
+
+  const applyCanvasHistory = (direction: 'undo' | 'redo') => {
+    const source = direction === 'undo' ? undoStackRef.current : redoStackRef.current
+    const target = source.pop()
+    if (!target) return
+    const current = cloneCanvasState(canvasRef.current)
+    const destination = direction === 'undo' ? redoStackRef.current : undoStackRef.current
+    destination.push(current)
+    if (destination.length > 30) destination.splice(0, destination.length - 30)
+    const next = {
+      ...target,
+      viewport: { ...canvasRef.current.viewport },
+    }
+    historyApplyingRef.current = true
+    historyBaselineRef.current = cloneCanvasState(next)
+    canvasRef.current = next
+    setCanvas(next)
+    historyApplyingRef.current = false
+    if (persistTimerRef.current != null) {
+      window.clearTimeout(persistTimerRef.current)
+      persistTimerRef.current = null
+    }
+    if (viewportPersistTimerRef.current != null) {
+      window.clearTimeout(viewportPersistTimerRef.current)
+      viewportPersistTimerRef.current = null
+    }
+    viewportDirtyRef.current = false
+    if (canvasProjectId) {
+      historyInternalCanvasRef.current = next
+      updateProjectCanvas(canvasProjectId, next)
+    }
+  }
+
+  const persistCanvas = (next: ProjectCanvasState, delay = 0, recordHistory = true) => {
+    if (recordHistory) recordCanvasHistory(next)
+    else historyBaselineRef.current = cloneCanvasState(next)
     canvasRef.current = next
     setCanvas(next)
     if (viewportPersistTimerRef.current != null) {
@@ -998,10 +1099,12 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
     if (persistTimerRef.current != null) window.clearTimeout(persistTimerRef.current)
     if (delay <= 0) {
       persistTimerRef.current = null
+      historyInternalCanvasRef.current = next
       updateProjectCanvas(canvasProjectId, next)
       return
     }
     persistTimerRef.current = window.setTimeout(() => {
+      historyInternalCanvasRef.current = canvasRef.current
       updateProjectCanvas(canvasProjectId, canvasRef.current)
       persistTimerRef.current = null
     }, delay)
@@ -1043,7 +1146,7 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
             [centeredFirstImage.imageId]: { ...item, y: -item.width / ratio / 2 },
           }
           centeredFirstImageRef.current = null
-          persistCanvas({ ...canvasRef.current, items: nextItems }, 0)
+          persistCanvas({ ...canvasRef.current, items: nextItems }, 0, false)
           return
         }
       }
@@ -1115,13 +1218,15 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
       ...canvasRef.current,
       items: nextItems,
       viewport: firstLayout ? focusedViewport : canvasRef.current.viewport,
-    }, 0)
+    }, 0, false)
   }, [activeProject?.canvas, canvas.items, canvasProjectId, containerSize, projectCanvasCache, projectImageIds, projectTasks, projectsLoaded, ratios])
 
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
     const handleWheel = (event: WheelEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest('[data-canvas-toolbar]')) return
       event.preventDefault()
       const rect = container.getBoundingClientRect()
       const point = { x: event.clientX - rect.left, y: event.clientY - rect.top }
@@ -1333,7 +1438,7 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
       return result
     }, {})
     if (Object.keys(additions).length === 0) return
-    persistCanvas({ ...canvasRef.current, items: { ...canvasRef.current.items, ...additions } }, 0)
+    persistCanvas({ ...canvasRef.current, items: { ...canvasRef.current.items, ...additions } }, 0, false)
   }, [canvasProjectId, containerSize, nodeItems, nodes, projectsLoaded])
 
   const visibleNodes = useMemo(() => nodes.filter((node) => {
@@ -1351,6 +1456,37 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
   const selectedTransformActive = selectedItem
     ? selectedRotation !== 0 || Math.abs(selectedScale - 1) > 0.001
     : false
+
+  useEffect(() => {
+    const taskIds = Array.from(new Set(
+      multiSelectedKeys
+        .map((key) => nodes.find((node) => node.key === key)?.task.id)
+        .filter((id): id is string => Boolean(id)),
+    ))
+    if (multiSelectedKeys.length > 1 && taskIds.length > 0) {
+      canvasSelectedTaskIdsRef.current = taskIds
+      setSelectedTaskIds(taskIds)
+      return
+    }
+    if (canvasSelectedTaskIdsRef.current.length > 0) {
+      const previous = new Set(canvasSelectedTaskIdsRef.current)
+      canvasSelectedTaskIdsRef.current = []
+      setSelectedTaskIds((current) => current.filter((id) => !previous.has(id)))
+    }
+  }, [multiSelectedKeys, nodes, setSelectedTaskIds])
+
+  useEffect(() => {
+    const syncedTaskIds = canvasSelectedTaskIdsRef.current
+    if (syncedTaskIds.length > 0 && syncedTaskIds.length === selectedTaskIds.length && syncedTaskIds.every((id) => selectedTaskIds.includes(id))) return
+
+    const selectedSet = new Set(selectedTaskIds)
+    const keys = nodes.filter((node) => selectedSet.has(node.task.id)).map((node) => node.key)
+    setMultiSelectedKeys((current) => {
+      if (current.length === keys.length && current.every((key, index) => key === keys[index])) return current
+      return keys.length > 1 ? keys : []
+    })
+    if (keys.length > 1) setSelectedKey(null)
+  }, [nodes, selectedTaskIds])
 
   useEffect(() => {
     if (!selectedItem) return
@@ -1715,7 +1851,7 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
       operator: { ...item.operator, originalWidth, scale: nextWidth / originalWidth },
     }
     if (JSON.stringify(nextItem) === JSON.stringify(item)) return
-    persistCanvas({ ...canvasRef.current, items: { ...canvasRef.current.items, [key]: nextItem } }, 0)
+    persistCanvas({ ...canvasRef.current, items: { ...canvasRef.current.items, [key]: nextItem } }, 0, false)
   }
 
   const handleRenameImage = (key: string, name: string) => {
@@ -2025,15 +2161,22 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!selectedKey || event.repeat || (event.key !== 'Backspace' && event.key !== 'Delete')) return
       const target = event.target
       if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, [contenteditable="true"]'))) return
+      const key = event.key.toLowerCase()
+      const modifier = event.ctrlKey || event.metaKey
+      if (modifier && !event.altKey && !event.repeat && (key === 'z' || key === 'y')) {
+        event.preventDefault()
+        applyCanvasHistory(key === 'y' || event.shiftKey ? 'redo' : 'undo')
+        return
+      }
+      if (!selectedKey || event.repeat || (event.key !== 'Backspace' && event.key !== 'Delete')) return
       event.preventDefault()
       handleDelete()
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleDelete, selectedKey])
+  }, [applyCanvasHistory, handleDelete, selectedKey])
 
   const toolbarButtonClass = 'flex h-8 w-8 items-center justify-center rounded text-gray-600 transition hover:bg-gray-100 hover:text-gray-950 dark:text-gray-300 dark:hover:bg-white/[0.08] dark:hover:text-white'
 
@@ -2343,7 +2486,7 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
         onWheel={(event) => event.stopPropagation()}
       >
         {layersOpen && (
-          <div className="absolute bottom-full left-0 mb-2 w-56 overflow-hidden rounded-md border border-gray-200 bg-white/95 p-2 text-xs shadow-lg backdrop-blur dark:border-white/[0.1] dark:bg-gray-900/95" onPointerDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+          <div data-canvas-layers-panel className="absolute bottom-full left-0 mb-2 w-56 overflow-hidden rounded-md border border-gray-200 bg-white/95 p-2 text-xs shadow-lg backdrop-blur dark:border-white/[0.1] dark:bg-gray-900/95" onPointerDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
             <div className="mb-1.5 font-medium text-gray-800 dark:text-gray-100">图层</div>
             <div className="max-h-64 overflow-y-auto">
               {[...nodes].sort((a, b) => (nodeItems[b.key]?.z ?? 0) - (nodeItems[a.key]?.z ?? 0)).map((node) => {
@@ -2457,7 +2600,7 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
             >{Math.round(canvas.viewport.scale * 100)}%</button>
           )}
           {zoomPresetOpen && !zoomEditing && (
-            <div className="absolute bottom-full left-1/2 mb-2 flex -translate-x-1/2 gap-1 rounded-md border border-gray-200 bg-white p-1 text-[11px] shadow-lg dark:border-white/[0.1] dark:bg-gray-900" onPointerDown={(event) => event.stopPropagation()}>
+            <div data-canvas-zoom-preset className="absolute bottom-full left-1/2 mb-2 flex -translate-x-1/2 gap-1 rounded-md border border-gray-200 bg-white p-1 text-[11px] shadow-lg dark:border-white/[0.1] dark:bg-gray-900" onPointerDown={(event) => event.stopPropagation()}>
               {[50, 100, 200].map((percent) => <button key={percent} type="button" className="rounded px-2 py-1 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/[0.08]" onClick={() => setCanvasZoomPercent(percent)}>{percent}%</button>)}
             </div>
           )}
@@ -2470,7 +2613,10 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
             <div>空白拖动：平移画布</div>
             <div>Ctrl + 拖动：框选图片</div>
             <div>Delete / Backspace：删除选中图片</div>
-            <div>双击比例：输入缩放百分比</div>
+            <div>Ctrl/Cmd + Z：撤销上一步画布操作</div>
+            <div>Ctrl/Cmd + Y：重做上一步画布操作</div>
+            <div>最多保留 30 层历史记录</div>
+            <div>双击右下角比例：输入缩放百分比</div>
             <div className="mt-2 border-t border-gray-100 pt-2 dark:border-white/[0.08]">
               <div className="mb-1 font-medium text-gray-800 dark:text-gray-100">图片菜单说明</div>
               <div>选中图片后，图片上方会显示图片操作菜单。</div>
