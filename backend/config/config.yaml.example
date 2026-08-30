@@ -47,6 +47,19 @@ model_whitelist:
   agent: []
     # - gpt-5.2
 
+# 生图相关上游地址。base_url 为空时使用对应 OIDC provider 的资源地址。
+# 支持 https://api.example.com、http://10.0.0.5:8080，也支持直接填写 10.0.0.5:8080（按 HTTP 处理）。
+# 各组 API 的接口路径固定，详见 backend/README.md，不在配置文件中覆盖。
+upstreams:
+  image_api:
+    base_url: ""
+  resource_api:
+    base_url: ""
+  composite_api:
+    base_url: ""
+  file_api:
+    base_url: ""
+
 # 账户余额与素材库管理使用该内部 RPC；app 需要开放对应的 GetBalance/素材权限。
 # 未配置时余额显示为不可用；不使用余额和素材库时可整体留空。
 inner_api_rpc:
@@ -66,6 +79,8 @@ oidc:
     - name: corp-sso
       display_name: 企业单点登录
       issuer_url: https://your-oidc-provider.example.com
+      # 资源上游与 OIDC issuer 不同或需要内网访问时填写；支持域名和 IP:端口。
+      resource_base_url: ""
       client_id: your-client-id
       client_secret: your-client-secret
       redirect_uri: http://localhost:8080/auth/callback/corp-sso

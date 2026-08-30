@@ -27,10 +27,15 @@ const maxFileProxyResponseBytes = 1 << 20
 type FileAPIHandler struct {
 	providers imageProviderRegistry
 	cfg       config.FileAPIConfig
+	upstream  config.FileAPIUpstreamConfig
 	client    *http.Client
 }
 
-func NewFileAPIHandler(providers imageProviderRegistry, cfg config.FileAPIConfig) *FileAPIHandler {
+func NewFileAPIHandler(providers imageProviderRegistry, cfg config.FileAPIConfig, upstreams ...config.FileAPIUpstreamConfig) *FileAPIHandler {
+	upstream := config.DefaultUpstreamConfig().FileAPI
+	if len(upstreams) > 0 {
+		upstream = config.NormalizeUpstreamConfig(config.UpstreamConfig{FileAPI: upstreams[0]}).FileAPI
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = 32
 	transport.MaxIdleConnsPerHost = 8
@@ -39,6 +44,7 @@ func NewFileAPIHandler(providers imageProviderRegistry, cfg config.FileAPIConfig
 	return &FileAPIHandler{
 		providers: providers,
 		cfg:       cfg,
+		upstream:  upstream,
 		client: &http.Client{
 			Transport: transport,
 			Timeout:   time.Duration(cfg.TimeoutSeconds) * time.Second,
@@ -81,7 +87,7 @@ func (h *FileAPIHandler) Upload(ctx context.Context, provider, fileName, content
 		return nil, fmt.Errorf("close File API upload: %w", err)
 	}
 
-	endpoint := strings.TrimRight(baseURL, "/") + "/api/v1/file/"
+	endpoint := config.JoinUpstreamURL(config.ResolveUpstreamBaseURL(h.upstream.BaseURL, baseURL), config.FileAPIPath)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &body)
 	if err != nil {
 		return nil, fmt.Errorf("create File API request: %w", err)
@@ -173,7 +179,7 @@ func (h *FileAPIHandler) Proxy(c *gin.Context) {
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
-	endpoint := strings.TrimRight(baseURL, "/") + "/api/v1/file/"
+	endpoint := config.JoinUpstreamURL(config.ResolveUpstreamBaseURL(h.upstream.BaseURL, baseURL), config.FileAPIPath)
 	request, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, endpoint, c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": err.Error()})

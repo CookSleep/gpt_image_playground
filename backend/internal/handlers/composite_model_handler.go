@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"gpt-image-backend/internal/middleware"
+	"gpt-image-backend/pkg/config"
 )
 
 const compositeAPIKeyHeader = "X-Upstream-API-Key"
@@ -19,12 +20,18 @@ const maxCompositeResponseBytes = 64 << 20
 
 type CompositeModelHandler struct {
 	providers imageProviderRegistry
+	upstream  config.CompositeAPIUpstreamConfig
 	client    *http.Client
 }
 
-func NewCompositeModelHandler(providers imageProviderRegistry) *CompositeModelHandler {
+func NewCompositeModelHandler(providers imageProviderRegistry, upstreams ...config.CompositeAPIUpstreamConfig) *CompositeModelHandler {
+	upstream := config.DefaultUpstreamConfig().CompositeAPI
+	if len(upstreams) > 0 {
+		upstream = config.NormalizeUpstreamConfig(config.UpstreamConfig{CompositeAPI: upstreams[0]}).CompositeAPI
+	}
 	return &CompositeModelHandler{
 		providers: providers,
+		upstream:  upstream,
 		client:    &http.Client{Timeout: 2 * time.Minute},
 	}
 }
@@ -82,7 +89,7 @@ func (h *CompositeModelHandler) Proxy(c *gin.Context) {
 			return
 		}
 	}
-	endpoint := strings.TrimRight(baseURL, "/") + "/api/v1/model/" + path
+	endpoint := config.JoinUpstreamURL(config.ResolveUpstreamBaseURL(h.upstream.BaseURL, baseURL), config.CompositeModelPath) + "/" + path
 	if c.Request.URL.RawQuery != "" {
 		endpoint += "?" + c.Request.URL.RawQuery
 	}

@@ -65,7 +65,9 @@ export async function callBackendImageApi(options: {
   maskDataUrl?: string
   onImageStatusRequestCreated?: (request: { requestId: string; requestIndex?: number }) => void
 }): Promise<CallApiResult> {
-  const requestCount = options.apiMode === 'responses' ? Math.max(1, options.params.n) : 1
+  const requestCount = options.apiMode === 'responses' || (options.codexCli && options.params.n > 1)
+    ? Math.max(1, options.params.n)
+    : 1
   const requestIds = Array.from({ length: requestCount }, (_, requestIndex) => {
     const requestId = createImageStatusRequestId()
     options.onImageStatusRequestCreated?.({
@@ -120,7 +122,13 @@ export async function callBackendImageApi(options: {
     status: resp.status,
     data: formatImageApiLogValue(data),
   })
-  if (!resp.ok) throw new Error(data?.message || `后端生图失败：HTTP ${resp.status}`)
+  if (!resp.ok) {
+    const error = Object.assign(new Error(data?.message || `后端生图失败：HTTP ${resp.status}`), {
+      status: resp.status,
+      rawResponsePayload: data ? JSON.stringify(data) : undefined,
+    })
+    throw error
+  }
 
   const images = Array.isArray(data?.images) ? data.images.filter((item): item is string => typeof item === 'string' && item.startsWith('data:image/')) : []
   if (images.length === 0) throw new Error('后端生图接口没有返回图片')

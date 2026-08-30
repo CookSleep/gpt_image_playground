@@ -111,6 +111,7 @@ const compositeRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const imageStatusRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const agentImageStatusRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const activeTaskExecutions = new Set<string>()
 const agentRoundControllers = new Map<string, AbortController>()
 const projectPersistenceQueues = new Map<string, Promise<IDBValidKey>>()
 const onlineProjectSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -958,6 +959,7 @@ interface AppState {
   activeProjectId: string | null
   createProject: (prompt: string, options?: { autoRecord?: boolean }) => string
   renameProject: (id: string, title: string) => void
+  touchProjectUpdatedAt: (id: string) => void
   updateProjectCanvas: (id: string, canvas: ProjectCanvasState) => void
   updateProjectCanvasViewport: (id: string, viewport: ProjectCanvasViewport) => void
   flushProjectCanvasOnExit: (id: string, canvas: ProjectCanvasState, force?: boolean) => void
@@ -1406,6 +1408,15 @@ export const useStore = create<AppState>()(
           }
           get().showToast(err instanceof Error ? err.message : String(err), 'error')
         })
+      },
+      touchProjectUpdatedAt: (id) => {
+        const project = get().projects.find((item) => item.id === id)
+        if (!project) return
+        const updated = { ...project, updatedAt: Date.now() }
+        set((state) => ({
+          projects: state.projects.map((item) => item.id === id ? updated : item),
+        }))
+        queueProjectSave(updated)
       },
       updateProjectCanvas: (id, canvas) => {
         const project = get().projects.find((item) => item.id === id)
@@ -2467,10 +2478,12 @@ function queueOnlineProjectViewportSync(project: Project) {
     const current = useStore.getState().projects.find((item) => item.id === latest.id)
     if (!current) return
     const hasArchiveSync = onlineProjectSyncTimers.has(current.id) || onlineProjectSyncQueues.has(current.id)
+    const changedWhileSyncing = current.updatedAt !== version
     const updated = {
       ...current,
       remoteArchiveSha256: response.archive_sha256,
       syncPending: hasArchiveSync || current.updatedAt !== version,
+      updatedAt: changedWhileSyncing ? current.updatedAt : Date.parse(response.updated_at) || current.updatedAt,
     }
     useStore.setState((state) => ({
       projects: state.projects.map((item) => item.id === current.id ? updated : item),
@@ -2629,6 +2642,11 @@ function isRunningOpenAITask(task: TaskRecord) {
   return task.status === 'running' && isOpenAITask(task)
 }
 
+function hasActiveAgentRoundController(task: TaskRecord) {
+  if (!isAgentTask(task) || !task.agentConversationId || !task.agentRoundId) return false
+  return agentRoundControllers.has(getAgentRoundControllerKey(task.agentConversationId, task.agentRoundId))
+}
+
 function hasImageStatusRequestIds(task: TaskRecord) {
   return Boolean(task.imageStatusRequestIds?.length)
 }
@@ -2645,7 +2663,7 @@ function isAsyncCustomProviderTask(settings: AppSettings, provider: string, hasI
 export function markInterruptedOpenAIRunningTasks(tasks: TaskRecord[], now = Date.now()) {
   const interruptedTasks: TaskRecord[] = []
   const updatedTasks = tasks.map((task) => {
-    if (!isRunningOpenAITask(task) || task.customTaskId || task.compositeRequestId || hasImageStatusRequestIds(task)) return task
+    if (!isRunningOpenAITask(task) || activeTaskExecutions.has(task.id) || hasActiveAgentRoundController(task) || task.customTaskId || task.compositeRequestId || hasImageStatusRequestIds(task)) return task
 
     const updated: TaskRecord = {
       ...task,
@@ -2890,6 +2908,12 @@ function isApiRequestNetworkError(err: unknown): boolean {
     return /failed to fetch|fetch failed|load failed|networkerror|network request failed/i.test(message)
   }
   return false
+}
+
+function getApiErrorStatus(err: unknown) {
+  if (!err || typeof err !== 'object' || !('status' in err)) return 0
+  const status = (err as { status?: unknown }).status
+  return typeof status === 'number' && Number.isFinite(status) ? status : 0
 }
 
 function getApiModeApiName(apiMode: ApiMode) {
@@ -6471,6 +6495,7 @@ async function executeTask(taskId: string) {
     })
     return
   }
+  activeTaskExecutions.add(taskId)
   const baseProfile = taskProfile ?? getActiveApiProfile(settings)
   const resolvedProfile = task.apiOverride && (task.apiOverride.apiKey || task.apiOverride.model)
     ? {
@@ -6765,7 +6790,16 @@ async function executeTask(taskId: string) {
     const latestCompositeRequestInfo = compositeRequestInfo ?? (latestTask.compositeRequestId
       ? { requestId: latestTask.compositeRequestId, statusUrl: latestTask.compositeStatusUrl }
       : null)
-    if (latestTask.apiProvider === 'fal' && latestFalRequestInfo && isFalConnectionRecoverableError(err)) {
+    if (getApiErrorStatus(err) === 524 && latestTask.imageStatusRequestIds?.length && (latestTask.apiProvider ?? 'openai') !== 'fal') {
+      updateExecutingTask({
+        status: 'running',
+        error: null,
+        imageStatusRecoverable: true,
+        finishedAt: null,
+        elapsed: null,
+      })
+      scheduleImageStatusRecovery(taskId, 0)
+    } else if (latestTask.apiProvider === 'fal' && latestFalRequestInfo && isFalConnectionRecoverableError(err)) {
       updateExecutingTask({
         status: 'error',
         error: '与 fal.ai 的连接已断开，之后会继续查询任务结果。',
@@ -6836,6 +6870,7 @@ async function executeTask(taskId: string) {
       useStore.getState().showToast(errorMessage, 'error')
     }
   } finally {
+    activeTaskExecutions.delete(taskId)
     touchProject(task.projectId, false)
     // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）
     for (const imgId of task.inputImageIds) {

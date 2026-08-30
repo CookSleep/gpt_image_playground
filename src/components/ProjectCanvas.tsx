@@ -28,6 +28,7 @@ import {
   zoomCanvasViewport,
 } from '../lib/projectCanvas'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { getTaskIds } from '../lib/taskIds'
 import { downloadImageIds, exportImage, type ImageExportFormat } from '../lib/downloadImages'
 import { uploadMaterialImage } from '../lib/materialApi'
 import { TooltipButton } from './TooltipButton'
@@ -70,6 +71,39 @@ type CanvasNode = {
   placeholderName?: string
 }
 
+function HighlightedSearchText({ text, query }: { text: string; query: string }) {
+  const normalizedQuery = query.trim()
+  if (!normalizedQuery) return text
+  const lowerText = text.toLowerCase()
+  const lowerQuery = normalizedQuery.toLowerCase()
+  const parts: ReactNode[] = []
+  let cursor = 0
+  let matchIndex = lowerText.indexOf(lowerQuery)
+  while (matchIndex >= 0) {
+    if (matchIndex > cursor) parts.push(text.slice(cursor, matchIndex))
+    parts.push(<mark key={matchIndex} className="rounded bg-yellow-300/90 px-0.5 text-gray-950 dark:bg-yellow-300 dark:text-gray-950">{text.slice(matchIndex, matchIndex + normalizedQuery.length)}</mark>)
+    cursor = matchIndex + normalizedQuery.length
+    matchIndex = lowerText.indexOf(lowerQuery, cursor)
+  }
+  if (cursor < text.length) parts.push(text.slice(cursor))
+  return <>{parts}</>
+}
+
+function getSearchSnippet(text: string, query: string, maxLength: number) {
+  const normalizedQuery = query.trim()
+  if (!normalizedQuery || text.length <= maxLength) return text
+  const matchIndex = text.toLowerCase().indexOf(normalizedQuery.toLowerCase())
+  if (matchIndex < 0) return text.slice(0, maxLength)
+  const matchEnd = matchIndex + normalizedQuery.length
+  if (maxLength <= normalizedQuery.length + 2) return text.slice(matchIndex, matchEnd)
+  const sideLength = Math.max(1, Math.floor((maxLength - normalizedQuery.length - 2) / 2))
+  const start = Math.max(0, matchIndex - sideLength)
+  const end = Math.min(text.length, matchEnd + sideLength)
+  const prefix = start > 0 ? '...' : ''
+  const suffix = end < text.length ? '...' : ''
+  return prefix + text.slice(start, end) + suffix
+}
+
 const EMPTY_PROJECT_CANVAS_CACHE: Record<string, ProjectCanvasState> = {}
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
@@ -83,6 +117,28 @@ function centroid(a: { x: number; y: number }, b: { x: number; y: number }) {
 function normalizeCanvasRotation(value: number) {
   const normalized = ((value % 360) + 360) % 360
   return normalized < 0.5 || normalized > 359.5 ? 0 : normalized
+}
+
+function getCanvasConnectionPoint(center: { x: number; y: number }, other: { x: number; y: number }, width: number, height: number) {
+  const dx = other.x - center.x
+  const dy = other.y - center.y
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    const side = dx >= 0 ? 1 : -1
+    return { x: center.x + side * width / 2, y: center.y }
+  }
+  const side = dy >= 0 ? 1 : -1
+  return { x: center.x, y: center.y + side * height / 2 }
+}
+
+function getCanvasConnectionPath(start: { x: number; y: number }, end: { x: number; y: number }) {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const horizontal = Math.abs(dx) >= Math.abs(dy)
+  const offset = Math.max(28, Math.min(120, (horizontal ? Math.abs(dx) : Math.abs(dy)) * 0.45))
+  const control = horizontal
+    ? { x: Math.sign(dx || 1) * offset, y: (Math.sign(dy) || 1) * Math.max(18, offset * Math.tan(Math.PI / 6)) }
+    : { x: (Math.sign(dx) || 1) * Math.max(18, offset * Math.tan(Math.PI / 6)), y: Math.sign(dy || 1) * offset }
+  return `M ${start.x} ${start.y} C ${start.x + control.x} ${start.y + control.y}, ${end.x - control.x} ${end.y - control.y}, ${end.x} ${end.y}`
 }
 
 function getPlaceholderDimensions(task: TaskRecord) {
@@ -190,11 +246,14 @@ function CanvasImageNode({
   onDimensions,
   onRename,
   onCopyImageId,
+  onCopyFailureId,
+  onCopyFailureError,
   cropEditing,
   onCropCommit,
   onCropCancel,
   viewportScale,
   interactionActive,
+  searchQuery,
 }: {
   node: CanvasNode
   item: ProjectCanvasItem
@@ -214,11 +273,14 @@ function CanvasImageNode({
   onDimensions: (width: number, height: number) => void
   onRename: (name: string) => boolean
   onCopyImageId: (imageId: string) => void
+  onCopyFailureId: (label: 'request_id' | 'task_id', value: string) => void
+  onCopyFailureError: (value: string) => void
   cropEditing: boolean
   onCropCommit: (crop: ProjectCanvasCrop) => void
   onCropCancel: () => void
   viewportScale: number
   interactionActive: boolean
+  searchQuery: string
 }) {
   const [src, setSrc] = useState(node.previewSrc ?? '')
   const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(node.placeholderDimensions ?? null)
@@ -295,6 +357,14 @@ function CanvasImageNode({
   }, [node.imageId, node.previewSrc])
 
   const statusText = node.status === 'running' ? '生成中' : node.status === 'error' ? '生成失败' : ''
+  const taskIds = getTaskIds(node.task)
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase()
+  const imageLabel = item.name ?? node.placeholderName ?? node.imageId ?? '图片'
+  const nameSearchMatch = Boolean(normalizedSearchQuery && imageLabel.toLowerCase().includes(normalizedSearchQuery))
+  const promptSearchMatch = Boolean(normalizedSearchQuery && (node.task.prompt || '').toLowerCase().includes(normalizedSearchQuery))
+  const promptOverlayWidth = Math.max(1, Math.min(240, item.width * viewportScale - 16))
+  const promptTextWidth = Math.max(1, promptOverlayWidth - 16)
+  const promptSnippet = getSearchSnippet(node.task.prompt, searchQuery, Math.max(normalizedSearchQuery.length + 2, Math.floor(promptTextWidth / 7)))
   const commitName = () => {
     const name = nameDraft.trim()
     if (!name || name === item.name) {
@@ -454,7 +524,7 @@ function CanvasImageNode({
       title={node.error}
     >
       <div
-        className={`relative ${cropEditing ? 'overflow-visible' : 'overflow-hidden'} bg-white shadow-sm dark:bg-gray-900 ${selected || multiSelected ? 'ring-0' : 'ring-1 ring-black/10 dark:ring-white/10'}`}
+        className={`relative ${cropEditing || promptSearchMatch ? 'overflow-visible' : 'overflow-hidden'} bg-white shadow-sm dark:bg-gray-900 ${selected || multiSelected ? 'ring-0' : 'ring-1 ring-black/10 dark:ring-white/10'}`}
         style={{
           ...(!cropEditing && (selected || multiSelected) ? { boxShadow: `0 0 0 ${selectionStrokeWidth}px #3f78c5` } : {}),
           ...(frameHeight ? { height: frameHeight } : {}),
@@ -486,6 +556,30 @@ function CanvasImageNode({
               {node.status === 'running'
                 ? <span>{statusText}</span>
                 : <span className={node.status === 'error' ? 'text-4xl font-medium' : undefined}>{statusText}</span>}
+              {node.status === 'error' && node.error && (
+                <>
+                  <span className="flex max-w-[92%] items-center gap-1">
+                    <span
+                      className="max-h-24 min-w-0 flex-1 overflow-hidden break-words text-center text-base leading-6 text-red-700 dark:text-red-300"
+                      title={node.error}
+                      style={{
+                        display: '-webkit-box',
+                        WebkitBoxOrient: 'vertical',
+                        WebkitLineClamp: 4,
+                      }}
+                    >
+                      {node.error}
+                    </span>
+                    <button type="button" data-canvas-handle className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-red-600 hover:bg-red-200/70 dark:text-red-300 dark:hover:bg-red-900/50" aria-label="复制错误原因" title="复制错误原因" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onCopyFailureError(node.error!) }}><CopyIcon className="h-4 w-4" /></button>
+                  </span>
+                  {(node.task.requestId || taskIds.length > 0) && (
+                    <span className="flex max-w-[92%] flex-col items-center gap-1 text-center font-mono text-base leading-6 text-red-600/90 dark:text-red-300/90">
+                      {node.task.requestId && <span className="flex max-w-full items-center gap-1 break-all"><span>request_id: {node.task.requestId}</span><button type="button" data-canvas-handle className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-red-600 hover:bg-red-200/70 dark:text-red-300 dark:hover:bg-red-900/50" aria-label="复制 request_id" title="复制 request_id" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onCopyFailureId('request_id', node.task.requestId!) }}><CopyIcon className="h-3.5 w-3.5" /></button></span>}
+                      {taskIds.map((id) => <span key={id} className="flex max-w-full items-center gap-1 break-all"><span>task_id: {id}</span><button type="button" data-canvas-handle className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-red-600 hover:bg-red-200/70 dark:text-red-300 dark:hover:bg-red-900/50" aria-label="复制 task_id" title="复制 task_id" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onCopyFailureId('task_id', id) }}><CopyIcon className="h-3.5 w-3.5" /></button></span>)}
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           </div>
         )}
@@ -547,6 +641,20 @@ function CanvasImageNode({
             {statusText}
           </span>
         )}
+        {promptSearchMatch && (
+          <div
+            className="pointer-events-none absolute z-20 box-border max-h-20 overflow-hidden rounded bg-black/65 px-2 py-1.5 text-[11px] leading-4 text-white shadow-sm backdrop-blur-sm"
+            style={{
+              left: `${8 / Math.max(viewportScale, 0.01)}px`,
+              bottom: `${8 / Math.max(viewportScale, 0.01)}px`,
+              width: `${promptOverlayWidth}px`,
+              transform: `scale(${metadataScale})`,
+              transformOrigin: 'left bottom',
+            }}
+          >
+            <HighlightedSearchText text={promptSnippet} query={searchQuery} />
+          </div>
+        )}
       </div>
       {cropEditing && dimensions && cropPanelPosition && typeof document !== 'undefined' && createPortal(
         <div className="fixed z-[200] w-48 rounded-md border border-gray-200 bg-white p-2 text-xs text-gray-700 shadow-lg antialiased dark:border-white/[0.1] dark:bg-gray-900 dark:text-gray-200" style={{ left: cropPanelPosition.left, top: cropPanelPosition.top }} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
@@ -567,14 +675,15 @@ function CanvasImageNode({
         </div>,
         document.body,
       )}
-      {selected && (node.imageId || node.status === 'running' || node.status === 'error') && (
+      {(selected || nameSearchMatch) && (node.imageId || node.status === 'running' || node.status === 'error') && (
         <div
-          className="absolute bottom-full left-0 mb-4 flex max-w-44 items-end gap-1 text-[#3f78c5]"
+          className={`absolute bottom-full left-0 mb-4 flex max-w-44 items-end gap-1 text-[#3f78c5] ${nameSearchMatch && !selected ? 'pointer-events-none' : ''}`}
           title={node.imageId ?? node.placeholderName}
           data-canvas-image-name-container
           onPointerDown={(event) => event.stopPropagation()}
           onDoubleClick={(event) => {
             event.stopPropagation()
+            if (!selected) return
             if ((event.target as Element).closest('button')) return
             setNameDraft(item.name ?? node.placeholderName ?? node.imageId ?? '')
             setEditingName(true)
@@ -607,7 +716,7 @@ function CanvasImageNode({
             <span
               data-canvas-image-name
               className="min-w-0 cursor-text truncate font-sans text-xs font-medium leading-4"
-            >{item.name ?? node.placeholderName ?? node.imageId}</span>
+            ><HighlightedSearchText text={imageLabel} query={nameSearchMatch ? searchQuery : ''} /></span>
           )}
           {node.imageId && <button
             type="button"
@@ -680,6 +789,7 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
   const streamPreviewSlots = useStore((s) => s.streamPreviewSlots)
   const updateProjectCanvas = useStore((s) => s.updateProjectCanvas)
   const updateProjectCanvasViewport = useStore((s) => s.updateProjectCanvasViewport)
+  const touchProjectUpdatedAt = useStore((s) => s.touchProjectUpdatedAt)
   const flushProjectCanvasOnExit = useStore((s) => s.flushProjectCanvasOnExit)
   const setDetailImage = useStore((s) => s.setDetailImage)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
@@ -1026,8 +1136,12 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
     const q = searchQuery.trim().toLowerCase()
     const result: CanvasNode[] = []
     for (const task of projectTasks) {
-      if (!taskMatchesFilterStatus(task, filterStatus) || !taskMatchesSearchQuery(task, q)) continue
+      if (!taskMatchesFilterStatus(task, filterStatus)) continue
+      const taskSearchMatch = taskMatchesSearchQuery(task, q)
       for (const imageId of task.outputImages) {
+        const imageIndex = projectImageIds.indexOf(imageId)
+        const imageName = canvas.items[imageId]?.name || (imageIndex >= 0 ? `图片 ${imageIndex + 1}` : imageId)
+        if (q && !taskSearchMatch && !imageName.toLowerCase().includes(q)) continue
         const favoriteIds = getImageFavoriteCollectionIds(imageId, task)
         if (filterFavorite && favoriteIds.length === 0) continue
         if (filterFavorite && activeFavoriteCollectionId && activeFavoriteCollectionId !== ALL_FAVORITES_COLLECTION_ID && !favoriteIds.includes(activeFavoriteCollectionId)) continue
@@ -1041,17 +1155,20 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
         const placeholderDimensions = getPlaceholderDimensions(task)
         for (let index = 0; index < count; index++) {
           const slot = String(task.outputImages.length + index)
+          const placeholderName = `占位图${Number(slot) + 1}`
+          if (q && !taskSearchMatch && !placeholderName.toLowerCase().includes(q)) continue
           result.push({
             key: `${task.id}:running:${slot}`,
             task,
             status: 'running',
             previewSrc: previews[slot],
             placeholderDimensions,
-            placeholderName: `占位图${Number(slot) + 1}`,
+            placeholderName,
           })
         }
       }
       if (task.status === 'error' && task.outputImages.length === 0 && !task.outputErrors?.length) {
+        if (q && !taskSearchMatch && !'占位图1'.includes(q)) continue
         result.push({
           key: `${task.id}:error`,
           task,
@@ -1062,18 +1179,20 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
         })
       }
       for (const error of task.outputErrors ?? []) {
+        const placeholderName = `占位图${error.requestIndex + 1}`
+        if (q && !taskSearchMatch && !placeholderName.toLowerCase().includes(q)) continue
         result.push({
           key: `${task.id}:error:${error.requestIndex}`,
           task,
           status: 'error',
           error: error.error,
           placeholderDimensions: getPlaceholderDimensions(task),
-          placeholderName: `占位图${error.requestIndex + 1}`,
+          placeholderName,
         })
       }
     }
     return result
-  }, [activeFavoriteCollectionId, filterFavorite, filterStatus, projectTasks, searchQuery, streamPreviewSlots])
+  }, [activeFavoriteCollectionId, canvas.items, filterFavorite, filterStatus, projectImageIds, projectTasks, searchQuery, streamPreviewSlots])
 
   const nodeItems = useMemo(() => {
     const items: Record<string, ProjectCanvasItem> = {}
@@ -1118,6 +1237,31 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
     }
     return items
   }, [canvas.items, canvas.viewport, containerSize, nodes, projectImageIds, ratios, transientNodeItems])
+
+  const canvasConnections = useMemo(() => {
+    const nodesByImageId = new Map(nodes.flatMap((node) => node.imageId ? [[node.imageId, node] as const] : []))
+    return nodes.flatMap((targetNode) => {
+      const targetItem = nodeItems[targetNode.key]
+      if (!targetItem) return []
+      const targetRatio = Math.max(0.01, ratios[targetNode.key] ?? (targetNode.placeholderDimensions ? targetNode.placeholderDimensions.width / targetNode.placeholderDimensions.height : 1))
+      const targetCenter = { x: targetItem.x + targetItem.width / 2, y: targetItem.y + targetItem.width / targetRatio / 2 }
+      return targetNode.task.inputImageIds.flatMap((sourceImageId) => {
+        const sourceNode = nodesByImageId.get(sourceImageId)
+        if (!sourceNode || sourceNode.key === targetNode.key) return []
+        const sourceItem = nodeItems[sourceNode.key]
+        if (!sourceItem) return []
+        const sourceRatio = Math.max(0.01, ratios[sourceNode.key] ?? (sourceNode.placeholderDimensions ? sourceNode.placeholderDimensions.width / sourceNode.placeholderDimensions.height : 1))
+        const sourceCenter = { x: sourceItem.x + sourceItem.width / 2, y: sourceItem.y + sourceItem.width / sourceRatio / 2 }
+        const start = getCanvasConnectionPoint(sourceCenter, targetCenter, sourceItem.width, sourceItem.width / sourceRatio)
+        const end = getCanvasConnectionPoint(targetCenter, sourceCenter, targetItem.width, targetItem.width / targetRatio)
+        return [{
+          id: `${sourceNode.key}:${targetNode.key}`,
+          start: { x: canvas.viewport.x + start.x * canvas.viewport.scale, y: canvas.viewport.y + start.y * canvas.viewport.scale },
+          end: { x: canvas.viewport.x + end.x * canvas.viewport.scale, y: canvas.viewport.y + end.y * canvas.viewport.scale },
+        }]
+      })
+    })
+  }, [canvas.viewport, nodeItems, nodes, ratios])
 
   const minimapData = useMemo(() => {
     const entries = nodes.flatMap((node) => {
@@ -1277,6 +1421,7 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
     canvasRef.current = next
     setCanvas(next)
     if (!canvasProjectId) return
+    if (!viewportDirtyRef.current && typeof touchProjectUpdatedAt === 'function') touchProjectUpdatedAt(canvasProjectId)
     viewportDirtyRef.current = true
     if (viewportPersistTimerRef.current != null) window.clearTimeout(viewportPersistTimerRef.current)
     viewportPersistTimerRef.current = window.setTimeout(() => {
@@ -1821,6 +1966,24 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
     }
   }
 
+  const handleCopyFailureId = async (label: 'request_id' | 'task_id', value: string) => {
+    try {
+      await copyTextToClipboard(value)
+      showToast(`${label} 已复制`, 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage(`复制 ${label} 失败`, err), 'error')
+    }
+  }
+
+  const handleCopyFailureError = async (value: string) => {
+    try {
+      await copyTextToClipboard(value)
+      showToast('错误原因已复制', 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制错误原因失败', err), 'error')
+    }
+  }
+
   const handleSaveMaterial = async () => {
     if (!selectedNode?.imageId) return
     try {
@@ -1886,8 +2049,51 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
       onPointerUp={handleCanvasPointerEnd}
       onPointerCancel={handleCanvasPointerEnd}
     >
+      {canvasConnections.length > 0 && (
+        <svg
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-0 h-full w-full overflow-visible"
+          data-canvas-reference-connections
+        >
+          <defs>
+            <marker
+              id="canvas-reference-arrow"
+              markerHeight="8"
+              markerUnits="userSpaceOnUse"
+              markerWidth="8"
+              orient="auto"
+              refX="7"
+              refY="4"
+              viewBox="0 0 8 8"
+            >
+              <path d="M0 0 L8 4 L0 8 Z" fill="#3f78c5" />
+            </marker>
+          </defs>
+          {canvasConnections.map((connection) => (
+            <g key={connection.id} data-canvas-reference-connection>
+              <path
+                d={getCanvasConnectionPath(connection.start, connection.end)}
+                fill="none"
+                stroke="#3f78c5"
+                strokeLinecap="round"
+                strokeOpacity="0.14"
+                strokeWidth="6"
+              />
+              <path
+                d={getCanvasConnectionPath(connection.start, connection.end)}
+                fill="none"
+                stroke="#3f78c5"
+                strokeLinecap="round"
+                strokeOpacity="0.72"
+                strokeWidth="1.75"
+                markerEnd="url(#canvas-reference-arrow)"
+              />
+            </g>
+          ))}
+        </svg>
+      )}
       <div
-        className="absolute left-0 top-0 origin-top-left"
+        className="absolute left-0 top-0 z-10 origin-top-left"
         style={{
           transform: `translate(${canvas.viewport.x}px, ${canvas.viewport.y}px) scale(${canvas.viewport.scale})`,
           transition: viewportAnimating ? 'transform 560ms cubic-bezier(0.22, 1, 0.36, 1)' : undefined,
@@ -1934,11 +2140,14 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
             onDimensions={(width, height) => handleImageDimensions(node.key, width, height)}
             onRename={(name) => handleRenameImage(node.key, name)}
             onCopyImageId={handleCopyImageId}
+            onCopyFailureId={handleCopyFailureId}
+            onCopyFailureError={handleCopyFailureError}
             cropEditing={cropImageId === node.key}
             onCropCommit={(crop) => handleCropCommit(node.key, crop)}
             onCropCancel={() => setCropImageId(null)}
             viewportScale={canvas.viewport.scale}
             interactionActive={interactionKeys.includes(node.key)}
+            searchQuery={searchQuery}
           />
         ))}
       </div>
@@ -2182,7 +2391,7 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
           <div className="absolute bottom-full left-0 mb-2 w-60 text-xs shadow-lg" onPointerDown={(event) => event.stopPropagation()}>
             <div className="relative h-36 overflow-hidden rounded border border-gray-200 bg-gray-100 dark:border-white/[0.1] dark:bg-gray-800">
               <div
-                className="absolute cursor-move border border-[#3f78c5] bg-[#3f78c5]/10"
+                className="absolute z-20 cursor-move border border-[#3f78c5] bg-[#3f78c5]/10"
                 style={{ left: `${Math.max(0, Math.min(100, minimapData.viewport.left))}%`, top: `${Math.max(0, Math.min(100, minimapData.viewport.top))}%`, width: `${Math.max(2, Math.min(100, minimapData.viewport.width))}%`, height: `${Math.max(2, Math.min(100, minimapData.viewport.height))}%` }}
                 onPointerDown={handleMinimapDragStart}
                 onPointerMove={handleMinimapDragMove}
@@ -2197,9 +2406,9 @@ export default function ProjectCanvas({ agentPanelCollapsed = false, canvasHeade
                     type="button"
                     aria-label={`跳转到${label}`}
                     title={label}
-                    className={`absolute min-h-1 min-w-1 rounded-sm ${node.key === selectedKey ? 'z-10 bg-[#3f78c5] ring-2 ring-[#3f78c5]/40' : node.status === 'error' ? 'bg-red-500/80' : 'bg-[#3f78c5]/65 hover:bg-[#3f78c5]'}`}
+                    className={`absolute z-30 min-h-1 min-w-1 rounded-sm ${node.key === selectedKey ? 'bg-[#3f78c5] ring-2 ring-[#3f78c5]/40' : node.status === 'error' ? 'bg-red-500/80' : 'bg-[#3f78c5]/65 hover:bg-[#3f78c5]'}`}
                     style={{ left: `${(item.x - minimapData.bounds.minX) / minimapData.bounds.width * 100}%`, top: `${(item.y - minimapData.bounds.minY) / minimapData.bounds.height * 100}%`, width: `${Math.max(1.5, item.width / minimapData.bounds.width * 100)}%`, height: `${Math.max(1.5, height / minimapData.bounds.height * 100)}%` }}
-                    onClick={() => { setMinimapOpen(false); focusCanvasImage(node.key) }}
+                    onClick={() => focusCanvasImage(node.key)}
                   />
                 )
               })}

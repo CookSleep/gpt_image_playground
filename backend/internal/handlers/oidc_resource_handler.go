@@ -27,6 +27,7 @@ const maxConcurrentAPIKeyModelChecks = 6
 type OIDCResourceHandler struct {
 	providers imageProviderRegistry
 	whitelist config.ModelWhitelistConfig
+	upstream  config.ResourceAPIUpstreamConfig
 	client    *http.Client
 }
 
@@ -40,10 +41,15 @@ type apiKeyCandidate struct {
 	item any
 }
 
-func NewOIDCResourceHandler(providers imageProviderRegistry, whitelist config.ModelWhitelistConfig) *OIDCResourceHandler {
+func NewOIDCResourceHandler(providers imageProviderRegistry, whitelist config.ModelWhitelistConfig, upstreams ...config.ResourceAPIUpstreamConfig) *OIDCResourceHandler {
+	upstream := config.DefaultUpstreamConfig().ResourceAPI
+	if len(upstreams) > 0 {
+		upstream = config.NormalizeUpstreamConfig(config.UpstreamConfig{ResourceAPI: upstreams[0]}).ResourceAPI
+	}
 	return &OIDCResourceHandler{
 		providers: providers,
 		whitelist: whitelist,
+		upstream:  upstream,
 		client:    &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -82,7 +88,7 @@ func (h *OIDCResourceHandler) APIKeys(c *gin.Context) {
 		Str("scope", scope).
 		Str("resource_base_url", baseURL).
 		Msg("API Key filtering started")
-	request, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, strings.TrimRight(baseURL, "/")+"/oidc/resource/api-keys?status=active", nil)
+	request, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, config.JoinUpstreamURL(config.ResolveUpstreamBaseURL(h.upstream.BaseURL, baseURL), config.ResourceAPIKeysPath)+"?status=active", nil)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"code": http.StatusBadGateway, "message": err.Error()})
 		return
@@ -393,7 +399,7 @@ func (h *OIDCResourceHandler) filterAPIKeys(ctx context.Context, baseURL string,
 }
 
 func (h *OIDCResourceHandler) fetchModelList(ctx context.Context, baseURL, apiKey string) (modelListResponse, []byte, int, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/v1/models", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, config.JoinUpstreamURL(config.ResolveUpstreamBaseURL(h.upstream.BaseURL, baseURL), config.ResourceModelsPath), nil)
 	if err != nil {
 		return modelListResponse{}, nil, 0, err
 	}

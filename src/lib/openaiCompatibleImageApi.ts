@@ -682,7 +682,9 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
 
     if (!response.ok) {
       const errorMessage = await getApiErrorMessage(response)
-      throw new Error(maybeAppendStreamingHint(errorMessage, response.status, profile.streamImages))
+      throw Object.assign(new Error(maybeAppendStreamingHint(errorMessage, response.status, profile.streamImages)), {
+        status: response.status,
+      })
     }
 
     if (profile.streamImages && isEventStreamResponse(response)) {
@@ -1179,7 +1181,9 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
 
     if (!response.ok) {
       const errorMessage = await getApiErrorMessage(response)
-      throw new Error(maybeAppendStreamingHint(errorMessage, response.status, profile.streamImages))
+      throw Object.assign(new Error(maybeAppendStreamingHint(errorMessage, response.status, profile.streamImages)), {
+        status: response.status,
+      })
     }
 
     if (profile.streamImages && isEventStreamResponse(response)) {

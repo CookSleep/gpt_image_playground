@@ -1,8 +1,8 @@
-import { useEffect, useRef, type ReactNode } from 'react'
-import { ALL_FAVORITES_COLLECTION_ID, clearFailedTasks, getImageFavoriteCollectionIds, useStore, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ALL_FAVORITES_COLLECTION_ID, ALL_PROJECTS_ID, LOCAL_PROJECT_ID, clearFailedTasks, getImageFavoriteCollectionIds, useStore, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { useTooltip } from '../hooks/useTooltip'
 import Select from './Select'
-import { ChevronLeftIcon, CollectionManageIcon, FavoriteIcon, TrashIcon } from './icons'
+import { CollectionManageIcon, FavoriteIcon, TrashIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 
 function SearchActionButton({
@@ -54,7 +54,15 @@ export default function SearchBar({ className = 'mt-6 mb-4' }: { className?: str
   const setFilterFavorite = useStore((s) => s.setFilterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const setActiveFavoriteCollectionId = useStore((s) => s.setActiveFavoriteCollectionId)
+  const allFavoriteCollections = useStore((s) => s.favoriteCollections) ?? []
+  const activeProjectId = useStore((s) => s.activeProjectId)
   const openManageCollectionsModal = useStore((s) => s.openManageCollectionsModal)
+  const [favoriteMenuOpen, setFavoriteMenuOpen] = useState(false)
+  const favoriteProjectId = activeProjectId && activeProjectId !== ALL_PROJECTS_ID && activeProjectId !== LOCAL_PROJECT_ID ? activeProjectId : undefined
+  const favoriteCollections = useMemo(
+    () => allFavoriteCollections.filter((collection) => collection.projectId === favoriteProjectId),
+    [allFavoriteCollections, favoriteProjectId],
+  )
   const failedCount = useStore((s) => {
     void s.projects
     const q = s.searchQuery.trim().toLowerCase()
@@ -75,7 +83,7 @@ export default function SearchBar({ className = 'mt-6 mb-4' }: { className?: str
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const inCollectionOverview = filterFavorite && !activeFavoriteCollectionId
   const isFailedFilter = filterStatus === 'error'
-  const favoriteTooltip = activeFavoriteCollectionId ? '返回收藏夹' : filterFavorite ? '退出收藏夹' : '收藏夹'
+  const favoriteTooltip = filterFavorite ? '退出收藏夹' : '收藏夹'
 
   useEffect(() => {
     const handleDocumentMouseDown = (event: MouseEvent) => {
@@ -95,12 +103,36 @@ export default function SearchBar({ className = 'mt-6 mb-4' }: { className?: str
   }, [])
 
   const handleFavoriteClick = () => {
-    if (activeFavoriteCollectionId) {
-      setActiveFavoriteCollectionId(null)
+    if (filterFavorite) {
+      setFilterFavorite(false)
       return
     }
-    setFilterFavorite(!filterFavorite)
+    if (favoriteCollections.length === 1) {
+      setActiveFavoriteCollectionId(favoriteCollections[0].id)
+      setFilterFavorite(true)
+      return
+    }
+    setFavoriteMenuOpen((open) => !open)
   }
+
+  const handleFavoriteCollectionSelect = (collectionId: string) => {
+    setFavoriteMenuOpen(false)
+    setActiveFavoriteCollectionId(collectionId)
+    setFilterFavorite(true)
+  }
+
+  useEffect(() => {
+    if (!favoriteMenuOpen) return
+    const handleDocumentMouseDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setFavoriteMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleDocumentMouseDown)
+    return () => document.removeEventListener('mousedown', handleDocumentMouseDown)
+  }, [favoriteMenuOpen])
+
+  useEffect(() => {
+    if (favoriteCollections.length <= 1) setFavoriteMenuOpen(false)
+  }, [favoriteCollections.length])
 
   const handleClearFailed = () => {
     const state = useStore.getState()
@@ -142,17 +174,36 @@ export default function SearchBar({ className = 'mt-6 mb-4' }: { className?: str
   return (
     <div ref={rootRef} data-no-drag-select className={`${className} flex gap-3`}>
       <div className="flex gap-2 flex-shrink-0 z-20">
-        <SearchActionButton
-          tooltip={favoriteTooltip}
-          onClick={handleFavoriteClick}
-          className={`p-2.5 rounded-xl border transition-all ${
-            filterFavorite
-              ? 'border-yellow-400 bg-yellow-50 dark:bg-yellow-500/10 text-yellow-500'
-              : 'border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.06]'
-          }`}
-        >
-          {activeFavoriteCollectionId ? <ChevronLeftIcon className="w-5 h-5" /> : <FavoriteIcon filled={filterFavorite} className="w-5 h-5" />}
-        </SearchActionButton>
+        <div className="relative">
+          <SearchActionButton
+            tooltip={favoriteTooltip}
+            onClick={handleFavoriteClick}
+            className={`p-2.5 rounded-xl border transition-all ${
+              filterFavorite
+                ? 'border-yellow-400 bg-yellow-50 dark:bg-yellow-500/10 text-yellow-500'
+                : 'border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.06]'
+            }`}
+          >
+            <FavoriteIcon filled={filterFavorite} className="w-5 h-5" />
+          </SearchActionButton>
+          {favoriteMenuOpen && favoriteCollections.length > 1 && (
+            <div className="absolute left-0 top-full z-50 mt-2 w-52 overflow-hidden rounded-xl border border-gray-200/60 bg-white/95 py-1 text-sm shadow-[0_8px_30px_rgb(0,0,0,0.12)] ring-1 ring-black/5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-900/95 dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] dark:ring-white/10">
+              <div className="px-3 py-2 text-xs font-medium text-gray-400 dark:text-gray-500">选择收藏夹</div>
+              {favoriteCollections.map((collection) => (
+                <button
+                  key={collection.id}
+                  type="button"
+                  aria-label={`选择收藏夹：${collection.name}`}
+                  className="flex w-full items-center px-3 py-2 text-left text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-white/[0.06]"
+                  onClick={() => handleFavoriteCollectionSelect(collection.id)}
+                >
+                  <FavoriteIcon className="mr-2 h-4 w-4 shrink-0 text-yellow-500" />
+                  <span className="min-w-0 truncate">{collection.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         {inCollectionOverview && (
           <SearchActionButton
             tooltip="管理收藏夹"
@@ -211,7 +262,7 @@ export default function SearchBar({ className = 'mt-6 mb-4' }: { className?: str
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           type="text"
-          placeholder={inCollectionOverview ? '搜索收藏夹名称...' : '搜索提示词、参数...'}
+          placeholder={inCollectionOverview ? '搜索收藏夹名称...' : '搜索图片名、提示词、参数...'}
           className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition"
         />
       </div>

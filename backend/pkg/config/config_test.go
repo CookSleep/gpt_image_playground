@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -69,5 +70,35 @@ jwt:
 	}
 	if cfg.Log.Level != "warn" || cfg.Log.File != "/tmp/legacy.log" || cfg.Log.MaxSizeMB != 20 || cfg.Log.MaxBackups != 3 || cfg.Log.MaxAgeDays != 7 {
 		t.Fatalf("unexpected migrated log config: %#v", cfg.Log)
+	}
+}
+
+func TestNormalizeUpstreamConfigSupportsHostPort(t *testing.T) {
+	cfg := NormalizeUpstreamConfig(UpstreamConfig{
+		ImageAPI: ImageAPIUpstreamConfig{BaseURL: "10.0.0.5:8080"},
+		FileAPI:  FileAPIUpstreamConfig{BaseURL: "https://files.example.com/"},
+	})
+
+	if cfg.ImageAPI.BaseURL != "http://10.0.0.5:8080" {
+		t.Fatalf("unexpected image upstream base URL: %q", cfg.ImageAPI.BaseURL)
+	}
+	if cfg.FileAPI.BaseURL != "https://files.example.com" {
+		t.Fatalf("unexpected file upstream base URL: %q", cfg.FileAPI.BaseURL)
+	}
+	if cfg.ResourceAPI.BaseURL != "" || cfg.CompositeAPI.BaseURL != "" {
+		t.Fatalf("unexpected normalized upstream config: %#v", cfg)
+	}
+}
+
+func TestValidateRejectsInvalidUpstreamBaseURL(t *testing.T) {
+	cfg := Config{
+		Database:  DatabaseConfig{Host: "localhost", User: "postgres", Name: "app"},
+		JWT:       JWTConfig{SecretKey: "secret"},
+		Upstreams: UpstreamConfig{ImageAPI: ImageAPIUpstreamConfig{BaseURL: "not a URL"}},
+	}
+	cfg.applyDefaults()
+
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "upstreams.image_api.base_url") {
+		t.Fatalf("unexpected validation result: %v", err)
 	}
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ type Config struct {
 	OIDC           OIDCConfig           `yaml:"oidc"`
 	Admin          AdminConfig          `yaml:"admin"`
 	ModelWhitelist ModelWhitelistConfig `yaml:"model_whitelist"`
+	Upstreams      UpstreamConfig       `yaml:"upstreams"`
 	InnerAPI       InnerAPIConfig       `yaml:"inner_api_rpc"`
 	FileAPI        FileAPIConfig        `yaml:"file_api"`
 }
@@ -36,6 +38,88 @@ type LogConfig struct {
 type ModelWhitelistConfig struct {
 	Image []string `yaml:"image"`
 	Agent []string `yaml:"agent"`
+}
+
+// 固定的上游接口路径。配置文件只允许覆盖各组上游的 base_url。
+const (
+	ImageGenerationsPath = "/v1/images/generations"
+	ImageEditsPath       = "/v1/images/edits"
+	ImageResponsesPath   = "/v1/responses"
+	ImageStatusPath      = "/v1/images/status/"
+	ResourceAPIKeysPath  = "/oidc/resource/api-keys"
+	ResourceModelsPath   = "/v1/models"
+	CompositeModelPath   = "/api/v1/model"
+	FileAPIPath          = "/api/v1/file/"
+)
+
+// UpstreamConfig 配置生图相关上游的基址。base_url 为空时沿用当前 OIDC provider 地址。
+type UpstreamConfig struct {
+	ImageAPI     ImageAPIUpstreamConfig     `yaml:"image_api"`
+	ResourceAPI  ResourceAPIUpstreamConfig  `yaml:"resource_api"`
+	CompositeAPI CompositeAPIUpstreamConfig `yaml:"composite_api"`
+	FileAPI      FileAPIUpstreamConfig      `yaml:"file_api"`
+}
+
+type ImageAPIUpstreamConfig struct {
+	BaseURL string `yaml:"base_url"`
+}
+
+type ResourceAPIUpstreamConfig struct {
+	BaseURL string `yaml:"base_url"`
+}
+
+type CompositeAPIUpstreamConfig struct {
+	BaseURL string `yaml:"base_url"`
+}
+
+type FileAPIUpstreamConfig struct {
+	BaseURL string `yaml:"base_url"`
+}
+
+func DefaultUpstreamConfig() UpstreamConfig {
+	return UpstreamConfig{
+		ImageAPI:     ImageAPIUpstreamConfig{},
+		ResourceAPI:  ResourceAPIUpstreamConfig{},
+		CompositeAPI: CompositeAPIUpstreamConfig{},
+		FileAPI:      FileAPIUpstreamConfig{},
+	}
+}
+
+func (c UpstreamConfig) withDefaults() UpstreamConfig {
+	c.ImageAPI.BaseURL = normalizeUpstreamBaseURL(c.ImageAPI.BaseURL)
+	c.ResourceAPI.BaseURL = normalizeUpstreamBaseURL(c.ResourceAPI.BaseURL)
+	c.CompositeAPI.BaseURL = normalizeUpstreamBaseURL(c.CompositeAPI.BaseURL)
+	c.FileAPI.BaseURL = normalizeUpstreamBaseURL(c.FileAPI.BaseURL)
+	return c
+}
+
+// NormalizeUpstreamConfig 规范化各上游的可选基址。
+func NormalizeUpstreamConfig(c UpstreamConfig) UpstreamConfig {
+	return c.withDefaults()
+}
+
+func normalizeUpstreamBaseURL(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if !strings.Contains(value, "://") {
+		value = "http://" + value
+	}
+	return strings.TrimRight(value, "/")
+}
+
+// ResolveUpstreamBaseURL 使用配置地址，否则回退到 OIDC provider 的资源地址。
+func ResolveUpstreamBaseURL(configured, fallback string) string {
+	if value := normalizeUpstreamBaseURL(configured); value != "" {
+		return value
+	}
+	return strings.TrimRight(strings.TrimSpace(fallback), "/")
+}
+
+// JoinUpstreamURL 将配置的基址和路径拼接为请求地址。
+func JoinUpstreamURL(baseURL, path string) string {
+	return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(path, "/")
 }
 
 type InnerAPIConfig struct {
@@ -116,13 +200,14 @@ type OIDCConfig struct {
 
 // OIDCProviderConfig 单个OIDC提供商配置
 type OIDCProviderConfig struct {
-	Name         string   `yaml:"name"`         // 内部唯一标识，例如 "corp-sso"
-	DisplayName  string   `yaml:"display_name"` // 前端展示名称
-	IssuerURL    string   `yaml:"issuer_url"`   // OIDC Issuer，用于 discovery
-	ClientID     string   `yaml:"client_id"`
-	ClientSecret string   `yaml:"client_secret"`
-	RedirectURI  string   `yaml:"redirect_uri"`
-	Scopes       []string `yaml:"scopes"`
+	Name            string   `yaml:"name"`              // 内部唯一标识，例如 "corp-sso"
+	DisplayName     string   `yaml:"display_name"`      // 前端展示名称
+	IssuerURL       string   `yaml:"issuer_url"`        // OIDC Issuer，用于 discovery
+	ResourceBaseURL string   `yaml:"resource_base_url"` // 资源 API 基址，留空时使用 issuer_url
+	ClientID        string   `yaml:"client_id"`
+	ClientSecret    string   `yaml:"client_secret"`
+	RedirectURI     string   `yaml:"redirect_uri"`
+	Scopes          []string `yaml:"scopes"`
 }
 
 // LoadConfig 从 YAML 文件加载配置。
@@ -255,10 +340,12 @@ func (c *Config) applyDefaults() {
 	if c.FileAPI.TimeoutSeconds == 0 {
 		c.FileAPI.TimeoutSeconds = 10 * 60
 	}
+	c.Upstreams = c.Upstreams.withDefaults()
 	c.ModelWhitelist.Image = normalizeModelWhitelist(c.ModelWhitelist.Image)
 	c.ModelWhitelist.Agent = normalizeModelWhitelist(c.ModelWhitelist.Agent)
 	for i := range c.OIDC.Providers {
 		p := &c.OIDC.Providers[i]
+		p.ResourceBaseURL = normalizeUpstreamBaseURL(p.ResourceBaseURL)
 		if len(p.Scopes) == 0 {
 			p.Scopes = []string{"openid", "profile", "email"}
 		}
@@ -309,6 +396,23 @@ func (c *Config) Validate() error {
 		if p.RedirectURI == "" {
 			return fmt.Errorf("oidc.providers[%s].redirect_uri is required", p.Name)
 		}
+		if p.ResourceBaseURL != "" {
+			if err := validateHTTPBaseURL(p.ResourceBaseURL); err != nil {
+				return fmt.Errorf("oidc.providers[%s].resource_base_url: %w", p.Name, err)
+			}
+		}
+	}
+	for name, baseURL := range map[string]string{
+		"image_api.base_url":     c.Upstreams.ImageAPI.BaseURL,
+		"resource_api.base_url":  c.Upstreams.ResourceAPI.BaseURL,
+		"composite_api.base_url": c.Upstreams.CompositeAPI.BaseURL,
+		"file_api.base_url":      c.Upstreams.FileAPI.BaseURL,
+	} {
+		if baseURL != "" {
+			if err := validateHTTPBaseURL(baseURL); err != nil {
+				return fmt.Errorf("upstreams.%s: %w", name, err)
+			}
+		}
 	}
 	if (strings.TrimSpace(c.InnerAPI.Target) == "") != (strings.TrimSpace(c.InnerAPI.AppToken) == "") {
 		return errors.New("inner_api_rpc.target and inner_api_rpc.app_token must be configured together")
@@ -318,6 +422,14 @@ func (c *Config) Validate() error {
 	}
 	if c.FileAPI.TimeoutSeconds < 1 {
 		return errors.New("file_api.timeout_seconds must be positive")
+	}
+	return nil
+}
+
+func validateHTTPBaseURL(value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return errors.New("must be an http(s) URL with a host, such as https://api.example.com or http://10.0.0.5:8080")
 	}
 	return nil
 }

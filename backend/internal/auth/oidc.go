@@ -81,7 +81,11 @@ func (r *ProviderRegistry) ResourceBaseURL(name string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return strings.TrimRight(p.cfg.IssuerURL, "/"), true
+	baseURL := p.cfg.ResourceBaseURL
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = p.cfg.IssuerURL
+	}
+	return strings.TrimRight(baseURL, "/"), true
 }
 
 // List 列出所有 provider 的展示信息（供前端登录页使用）

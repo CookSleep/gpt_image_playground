@@ -10,6 +10,8 @@
 - name: corp-sso
   display_name: 企业单点登录
   issuer_url: https://your-oidc-provider.example.com
+  # 资源 API 需要走内网或不同域名时填写，例如 http://10.0.0.5:8080；留空沿用 issuer_url
+  resource_base_url: ""
   client_id: your-client-id
   client_secret: your-client-secret
   redirect_uri: https://app.example.com/auth/callback/corp-sso

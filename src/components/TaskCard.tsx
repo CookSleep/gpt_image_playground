@@ -7,7 +7,9 @@ import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { uploadMaterialImage } from '../lib/materialApi'
-import { CloudUploadIcon, CodeIcon, TransparentBgIcon } from './icons'
+import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { getTaskIds } from '../lib/taskIds'
+import { CloudUploadIcon, CodeIcon, CopyIcon, TransparentBgIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 
 interface Props {
@@ -374,6 +376,25 @@ export default function TaskCard({
   const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : DEFAULT_IMAGES_MODEL
   const showModel = task.apiModel && task.apiModel !== defaultModelForProvider
   const isInterrupted = task.status === 'error' && task.error === '已停止生成。'
+  const taskIds = getTaskIds(task)
+
+  const handleCopyFailureId = async (label: 'request_id' | 'task_id', value: string) => {
+    try {
+      await copyTextToClipboard(value)
+      showToast(`${label} 已复制`, 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage(`复制 ${label} 失败`, err), 'error')
+    }
+  }
+
+  const handleCopyFailureError = async (errorText: string) => {
+    try {
+      await copyTextToClipboard(errorText)
+      showToast('错误原因已复制', 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制错误原因失败', err), 'error')
+    }
+  }
 
   return (
     <div className="relative rounded-xl">
@@ -528,6 +549,30 @@ export default function TaskCard({
               <span className={`text-xs text-center leading-tight ${isInterrupted ? 'text-yellow-500' : 'text-red-400'}`}>
                 {isInterrupted ? '已停止' : '失败'}
               </span>
+              {(task.error || task.requestId || taskIds.length > 0) && (
+                <>
+                  {task.error && <span className="flex max-w-full items-center gap-1">
+                    <span
+                      className="max-h-20 min-w-0 flex-1 overflow-hidden break-words text-center text-base leading-6 text-red-500 dark:text-red-300"
+                      title={task.error}
+                      style={{
+                        display: '-webkit-box',
+                        WebkitBoxOrient: 'vertical',
+                        WebkitLineClamp: 3,
+                      }}
+                    >
+                      {task.error}
+                    </span>
+                    <button type="button" className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-red-500 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-900/50" aria-label="复制错误原因" title="复制错误原因" onTouchStart={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); void handleCopyFailureError(task.error!) }}><CopyIcon className="h-4 w-4" /></button>
+                  </span>}
+                  {(task.requestId || taskIds.length > 0) && (
+                    <span className="flex max-w-full flex-col items-center gap-1 text-center font-mono text-base leading-6 text-red-500/90 dark:text-red-300/90">
+                      {task.requestId && <span className="flex max-w-full items-center gap-1 break-all"><span>request_id: {task.requestId}</span><button type="button" className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-red-500 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-900/50" aria-label="复制 request_id" title="复制 request_id" onTouchStart={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); void handleCopyFailureId('request_id', task.requestId!) }}><CopyIcon className="h-3.5 w-3.5" /></button></span>}
+                      {taskIds.map((id) => <span key={id} className="flex max-w-full items-center gap-1 break-all"><span>task_id: {id}</span><button type="button" className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-red-500 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-900/50" aria-label="复制 task_id" title="复制 task_id" onTouchStart={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); void handleCopyFailureId('task_id', id) }}><CopyIcon className="h-3.5 w-3.5" /></button></span>)}
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           )}
           {task.status === 'done' && thumbSrc && (

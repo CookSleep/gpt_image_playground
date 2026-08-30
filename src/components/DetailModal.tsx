@@ -7,6 +7,7 @@ import { formatImageRatio } from '../lib/size'
 import { formatActualCost } from '../lib/cost'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyImageSourceToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { getTaskIds } from '../lib/taskIds'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { downloadImageEntriesAsZip, downloadImageIds, getImageZipEntries } from '../lib/downloadImages'
@@ -284,12 +285,7 @@ export default function DetailModal() {
   const transparentOutputText = task.transparentOutput || task.params.transparent_output ? 'true' : 'false'
   const currentTransparentOutputFailed = Boolean(currentOutputImageId && task.transparentOutput && task.transparentOriginalImages?.[currentOutputImageIndex] === '')
   const outputCompressionText = task.params.output_compression == null ? '未设置' : String(task.params.output_compression)
-  const taskIds = [...new Set([
-    task.compositeRequestId,
-    task.falRequestId,
-    task.customTaskId,
-    ...(task.imageStatusRequestIds ?? []),
-  ].map((id) => id?.trim()).filter((id): id is string => Boolean(id)))]
+  const taskIds = getTaskIds(task)
 
   const formatTime = (ts: number | null) => {
     if (!ts) return ''
@@ -333,15 +329,16 @@ export default function DetailModal() {
     openFavoritePicker([task.id])
   }
 
-  const handleCopyError = async () => {
-    const errorText = task.error || '生成失败'
+  const handleCopyErrorText = async (errorText: string) => {
     try {
       await copyTextToClipboard(errorText)
-      showToast('完整报错已复制', 'success')
+      showToast('错误原因已复制', 'success')
     } catch (err) {
-      showToast(getClipboardFailureMessage('复制报错失败', err), 'error')
+      showToast(getClipboardFailureMessage('复制错误原因失败', err), 'error')
     }
   }
+
+  const handleCopyError = async () => handleCopyErrorText(task.error || '生成失败')
 
   const handleCopyRawImageUrls = async () => {
     if (!rawImageUrls.length) return
@@ -378,6 +375,15 @@ export default function DetailModal() {
     try {
       await copyTextToClipboard(taskIds.join('\n'))
       showToast(taskIds.length === 1 ? 'task_id 已复制' : 'task_id 已全部复制', 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制 task_id 失败', err), 'error')
+    }
+  }
+
+  const handleCopyTaskId = async (taskId: string) => {
+    try {
+      await copyTextToClipboard(taskId)
+      showToast('task_id 已复制', 'success')
     } catch (err) {
       showToast(getClipboardFailureMessage('复制 task_id 失败', err), 'error')
     }
@@ -685,7 +691,7 @@ export default function DetailModal() {
               </svg>
               <p className="text-sm font-medium text-red-500">第 {currentOutputSlot.requestIndex + 1} 张生成失败</p>
               <p
-                className="mt-2 overflow-hidden whitespace-pre-line text-sm leading-6 text-red-500 break-words"
+                className="mt-2 overflow-hidden whitespace-pre-line text-base leading-7 text-red-500 break-words"
                 style={{
                   display: '-webkit-box',
                   WebkitBoxOrient: 'vertical',
@@ -694,6 +700,13 @@ export default function DetailModal() {
               >
                 {currentOutputError}
               </p>
+              <button type="button" className="mt-2 inline-flex items-center justify-center rounded-full border border-red-200/80 bg-white/80 px-3 py-1.5 text-red-500 transition hover:bg-red-50 dark:border-red-400/20 dark:bg-white/[0.04] dark:hover:bg-red-500/10" aria-label="复制错误原因" title="复制错误原因" onClick={(event) => { event.stopPropagation(); void handleCopyErrorText(currentOutputError) }}><CopyIcon className="h-4 w-4" /></button>
+              {(task.requestId || taskIds.length > 0) && (
+                <div className="mt-3 flex flex-col items-center gap-1 font-mono text-base leading-6 text-red-400">
+                  {task.requestId && <span className="flex max-w-full items-center gap-1 break-all"><span>request_id: {task.requestId}</span><button type="button" className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-red-500 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-900/50" aria-label="复制 request_id" title="复制 request_id" onClick={(event) => { event.stopPropagation(); void handleCopyRequestId() }}><CopyIcon className="h-4 w-4" /></button></span>}
+                  {taskIds.map((id) => <span key={id} className="flex max-w-full items-center gap-1 break-all"><span>task_id: {id}</span><button type="button" className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-red-500 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-900/50" aria-label="复制 task_id" title="复制 task_id" onClick={(event) => { event.stopPropagation(); void handleCopyTaskId(id) }}><CopyIcon className="h-4 w-4" /></button></span>)}
+                </div>
+              )}
               {outputLen > 1 && (
                 <>
                   <button
@@ -796,7 +809,7 @@ export default function DetailModal() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <p
-                className="overflow-hidden whitespace-pre-line text-sm leading-6 text-red-500 break-words"
+                className="overflow-hidden whitespace-pre-line text-base leading-7 text-red-500 break-words"
                 style={{
                   display: '-webkit-box',
                   WebkitBoxOrient: 'vertical',
@@ -805,6 +818,12 @@ export default function DetailModal() {
               >
                 {task.error || '生成失败'}
               </p>
+              {(task.requestId || taskIds.length > 0) && (
+                <div className="mt-3 flex flex-col items-center gap-1 font-mono text-base leading-6 text-red-400">
+                  {task.requestId && <span className="flex max-w-full items-center gap-1 break-all"><span>request_id: {task.requestId}</span><button type="button" className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-red-500 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-900/50" aria-label="复制 request_id" title="复制 request_id" onClick={(event) => { event.stopPropagation(); void handleCopyRequestId() }}><CopyIcon className="h-4 w-4" /></button></span>}
+                  {taskIds.map((id) => <span key={id} className="flex max-w-full items-center gap-1 break-all"><span>task_id: {id}</span><button type="button" className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-red-500 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-900/50" aria-label="复制 task_id" title="复制 task_id" onClick={(event) => { event.stopPropagation(); void handleCopyTaskId(id) }}><CopyIcon className="h-4 w-4" /></button></span>)}
+                </div>
+              )}
               <div className="mt-3 flex items-center justify-center gap-2">
                 <div className="relative group">
                   <button
@@ -1193,7 +1212,7 @@ export default function DetailModal() {
                   <div className="grid min-h-12 grid-cols-[5.5rem_minmax(0,1fr)_2rem] items-center gap-3 px-4 py-2">
                     <dt className="font-mono text-[10px] font-semibold uppercase text-gray-400 dark:text-gray-500">request_id</dt>
                     <dd className="min-w-0">
-                      <code className="block select-text break-all text-xs font-medium text-gray-700 dark:text-gray-300">{task.requestId}</code>
+                      <code className="block select-text break-all text-base font-medium text-gray-700 dark:text-gray-300">{task.requestId}</code>
                     </dd>
                     <button
                       type="button"
@@ -1211,7 +1230,7 @@ export default function DetailModal() {
                     <dt className="font-mono text-[10px] font-semibold uppercase text-gray-400 dark:text-gray-500">task_id</dt>
                     <dd className="min-w-0 space-y-1">
                       {taskIds.map((id) => (
-                        <code key={id} className="block select-text break-all text-xs font-medium text-gray-700 dark:text-gray-300">{id}</code>
+                        <code key={id} className="block select-text break-all text-base font-medium text-gray-700 dark:text-gray-300">{id}</code>
                       ))}
                     </dd>
                     <button

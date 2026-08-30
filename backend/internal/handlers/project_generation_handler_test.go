@@ -172,6 +172,25 @@ func TestBuildGenerationTaskRecordStoresRecoverableRunningTask(t *testing.T) {
 	}
 }
 
+func TestBuildGenerationTaskRecordStoresCloudflareTimeoutAsRecoverable(t *testing.T) {
+	req := projectGenerationRequest{
+		TaskID:     "task-a",
+		Task:       json.RawMessage(`{"id":"task-a","status":"running","error":null,"createdAt":1000,"finishedAt":null,"elapsed":null}`),
+		RequestIDs: []string{"request-a"},
+	}
+	record, err := buildGenerationTaskRecord(req, nil, cloudflareOriginTimeoutStatus, "origin response timeout", time.UnixMilli(125000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var task map[string]any
+	if err := json.Unmarshal(record, &task); err != nil {
+		t.Fatal(err)
+	}
+	if task["status"] != "running" || task["error"] != nil || task["imageStatusRecoverable"] != true || task["finishedAt"] != nil {
+		t.Fatalf("unexpected Cloudflare timeout task: %s", record)
+	}
+}
+
 func TestProjectGenerationHandlerGeneratesAndSavesBeforeReturning(t *testing.T) {
 	store := &projectGenerationStoreStub{taskRecords: make(chan savedGenerationTaskRecord, 2)}
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {

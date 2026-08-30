@@ -157,4 +157,26 @@ describe('callBackendImageApi', () => {
       inputImageDataUrls: [],
     })).rejects.toThrow('provider failed')
   })
+
+  it('preserves the upstream status code for recoverable timeout handling', async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'origin response timeout' }), {
+      status: 524,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await expect(callBackendImageApi({
+      project: { ...project(), id: 'project-a', remoteId: 'project-a' },
+      task: { ...task(), projectId: 'project-a' },
+      manageTaskRecord: true,
+      apiKey: 'oidc-key',
+      provider: 'openai',
+      model: 'gpt-image-2',
+      apiMode: 'images',
+      allowPromptRewrite: true,
+      codexCli: false,
+      prompt: '画一张图',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    })).rejects.toMatchObject({ status: 524 })
+  })
 })

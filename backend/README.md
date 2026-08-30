@@ -2,6 +2,18 @@
 
 后端提供 **OIDC 登录、在线项目持久化和图片生成**。OpenAI Images 请求由项目 generation 接口生成并落库；Agent 使用独立的 Responses 代理；Composite 使用独立的 `/api/v1/model/*` 代理，前端分别提交任务、查询状态和获取结果。
 
+后端生图相关请求访问的上游如下：
+
+| 上游配置组 | 包含的接口 | 固定路径 |
+|---|---|---|
+| `upstreams.image_api` | 文生图、图片编辑、Agent/Responses 生图、图片状态恢复 | `POST /v1/images/generations`<br>`POST /v1/images/edits`<br>`POST /v1/responses`<br>`GET /v1/images/status/` |
+| `upstreams.resource_api` | API Key 列表、模型列表 | `GET /oidc/resource/api-keys`<br>`GET /v1/models` |
+| `upstreams.composite_api` | Composite 生图/编辑 | `GET/POST /api/v1/model/{slug}` |
+| `upstreams.file_api` | Composite 参考图上传、删除 | `POST/DELETE /api/v1/file/` |
+| `inner_api_rpc` | 素材库与余额 | `inner_api_rpc.target`（trpc over TCP） |
+
+除 OIDC 登录 discovery 外，上述 HTTP 上游默认使用当前 OIDC provider 的 `issuer_url`。可在 `config.yaml` 的 `upstreams` 段为每组接口配置 `base_url`；接口路径固定，不支持配置覆盖。也可在 provider 上设置 `resource_base_url` 覆盖资源上游基址。地址支持 `https://domain.example`、`http://10.0.0.5:8080`，以及直接填写 `10.0.0.5:8080`（按 HTTP 处理）。
+
 - 框架：Gin + zerolog
 - 数据库：PostgreSQL
 - 认证：OIDC Authorization Code + PKCE → JWT (access + refresh)
@@ -85,17 +97,27 @@ backend/
 | POST | `/api/v1/projects/:id/edits` | 由后端调用 Images Edits 或 Responses API 编辑图片，图片落库后返回 |
 | POST | `/api/v1/agent/responses` | 后台代理 Agent 的完整 Responses API 请求，支持 JSON 与 SSE 流式响应 |
 
-生图请求中的 API Key 仅用于本次上游请求，不会写入数据库。上游基址由当前 JWT 的 OIDC provider 配置决定，客户端不能指定任意地址。Composite 代理从 `X-Upstream-API-Key` 读取 Composite Key，并将其转换为上游 `Authorization: Bearer <key>`；代理只转发当前这一次请求，不在 generation 接口中提交或轮询。前端以 2 秒起始、最大 15 秒的指数退避轮询 `/requests/:requestId`，总超时 10 分钟；网络错误和 HTTP 5xx 最多重试 3 次，HTTP 4xx 直接报错。提交成功后前端会把 `request_id` 和 `status_url` 写入任务记录；页面刷新后会通过本地代理继续查询，完成响应中的图片会被保存。
+生图请求中的 API Key 仅用于本次上游请求，不会写入数据库。上游基址由服务端 `upstreams.*.base_url` 或当前 JWT 绑定的 OIDC provider 资源地址决定，客户端不能指定任意地址。Composite 代理从 `X-Upstream-API-Key` 读取 Composite Key，并将其转换为上游 `Authorization: Bearer <key>`；代理只转发当前这一次请求，不在 generation 接口中提交或轮询。前端以 2 秒起始、最大 15 秒的指数退避轮询 `/requests/:requestId`，总超时 10 分钟；网络错误和 HTTP 5xx 最多重试 3 次，HTTP 4xx 直接报错。提交成功后前端会把 `request_id` 和 `status_url` 写入任务记录；页面刷新后会通过本地代理继续查询，完成响应中的图片会被保存。
 
-Agent Responses 请求使用 `POST /api/v1/agent/responses`，请求 JSON 在顶层携带一次性 `api_key`，其余字段按 Responses API 原样传递（也兼容放在 `body` 或 `request` 字段中）。后台根据当前 JWT 绑定的 OIDC provider 固定上游地址，不接受客户端指定 provider 或 URL，并原样透传上游 JSON/SSE 响应。
+Agent Responses 请求使用 `POST /api/v1/agent/responses`，请求 JSON 在顶层携带一次性 `api_key`，其余字段按 Responses API 原样传递（也兼容放在 `body` 或 `request` 字段中）。后台根据 `upstreams.image_api` 和当前 JWT 绑定的 OIDC provider 资源地址选择上游，不接受客户端指定 provider 或 URL，并原样透传上游 JSON/SSE 响应。
 
-Composite 图片编辑会先把本地参考图和遮罩以 multipart 文件提交到 `/api/v1/files`。后台使用 `file_api.developer_key` 代理到当前 OIDC provider 的 `/api/v1/file/`，密钥不会返回前端。前端会按 Composite API Key 的哈希把返回的 URL 缓存在本地图片记录中；同一 API Key 后续复用该图片时会直接提交 URL，不再重复上传。不同 API Key 之间不会共享缓存。为了保证缓存 URL 持续有效，前端不会在任务结束时自动删除 File API 文件；`DELETE /api/v1/files` 仍保留供显式清理使用。素材库中已有的远程 URL 也会直接复用。
+Composite 图片编辑会先把本地参考图和遮罩以 multipart 文件提交到 `/api/v1/files`。后台使用 `file_api.developer_key` 和 `upstreams.file_api` 代理到配置的 File API，密钥不会返回前端。前端会按 Composite API Key 的哈希把返回的 URL 缓存在本地图片记录中；同一 API Key 后续复用该图片时会直接提交 URL，不再重复上传。不同 API Key 之间不会共享缓存。为了保证缓存 URL 持续有效，前端不会在任务结束时自动删除 File API 文件；`DELETE /api/v1/files` 仍保留供显式清理使用。素材库中已有的远程 URL 也会直接复用。
 
 素材库批量删除调用 `POST /api/v1/materials/batch-delete`，请求格式为 `{"ids":["opaque-id-1","opaque-id-2"]}`。单次最多 100 个 ID；前端选择超过 100 个素材时会自动分批请求。
 
 后台配置文件需要加入：
 
 ```yaml
+upstreams:
+  image_api:
+    base_url: "http://10.0.0.5:8080"
+  resource_api:
+    base_url: ""
+  composite_api:
+    base_url: ""
+  file_api:
+    base_url: ""
+
 inner_api_rpc:
   target: ip://10.0.0.5:9100
   app_token: "创建内部 API App 时获得的 token"
@@ -138,6 +160,11 @@ file_api:
 - `model_whitelist.image` 生图模型白名单；后台只返回当前 API Key 可用模型与该列表的交集，留空全部放行
 - `model_whitelist.agent` Agent 模型白名单；规则同上，留空全部放行
 - `oidc.providers` OIDC 提供商列表，支持任意标准 OIDC discovery 协议
+- `oidc.providers[].resource_base_url` 资源上游基址；为空时使用 `issuer_url`，支持域名、域名端口和 IP 端口
+- `upstreams.image_api.base_url` Images/Responses 生成、编辑和状态接口的上游基址；接口路径固定，见上方接口表
+- `upstreams.resource_api.base_url` API Key 列表和模型列表的上游基址；接口路径固定，见上方接口表
+- `upstreams.composite_api.base_url` Composite 模型代理的上游基址；接口路径固定，见上方接口表
+- `upstreams.file_api.base_url` Composite File API 的上游基址；接口路径固定，见上方接口表
 
 ### 添加 OIDC 提供商
 
