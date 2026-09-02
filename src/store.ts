@@ -50,6 +50,7 @@ import { buildAgentApiInput, buildAgentContinuationInput } from './lib/agentInpu
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId } from './lib/agentImageReferences'
 import { showBrowserNotification } from './lib/browserNotification'
 import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
+import { removeMarkdownImages } from './lib/markdownImages'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { validateMaskMatchesImage } from './lib/canvasImage'
@@ -2693,6 +2694,7 @@ async function executeAgentRound(
         actualParams,
         actualParamsByImage: { [stored.id]: actualParams },
         revisedPromptByImage: image.revisedPrompt ? { [stored.id]: image.revisedPrompt } : undefined,
+        rawImageUrls: image.rawImageUrl ? [image.rawImageUrl] : undefined,
         rawResponsePayload,
         ...createTaskDonePatch(latestBeforeUpdate, Date.now()),
         agentToolAction: image.action,
@@ -2701,7 +2703,7 @@ async function executeAgentRound(
       return { taskId, committed: true }
     }
 
-    const failAgentImageTask = (toolCallId: string, error: string, rawResponsePayload?: string) => {
+    const failAgentImageTask = (toolCallId: string, error: string, rawResponsePayload?: string, rawImageUrls?: string[]) => {
       const taskId = taskIdByToolCallId.get(toolCallId)
       if (!taskId) return
       const latestTask = useStore.getState().tasks.find((task) => task.id === taskId)
@@ -2711,6 +2713,7 @@ async function executeAgentRound(
       updateTaskInStore(taskId, {
         ...createTaskErrorPatch(latestTask, error, Date.now()),
         rawResponsePayload,
+        rawImageUrls: rawImageUrls?.length ? rawImageUrls : undefined,
         falRecoverable: false,
         customRecoverable: false,
       })
@@ -2991,6 +2994,7 @@ async function executeAgentRound(
         const batchResult = requestSettings.agentApiConfigMode === 'hybrid'
           ? {
               batchItemId: item.id,
+              unresolvedImageUrls: undefined as string[] | undefined,
               ...(await callHybridImageApiSingle({
                 taskId: taskIdByToolCallId.get(batchToolCallId)!,
                 prompt: item.prompt,
@@ -3066,7 +3070,7 @@ async function executeAgentRound(
           const r = settled.value
           if (r.image && !r.committed) continue
           if (!r.image) {
-            failAgentImageTask(batchExecutionItems[i].batchToolCallId, r.error!, r.rawResponsePayload)
+            failAgentImageTask(batchExecutionItems[i].batchToolCallId, r.error!, r.rawResponsePayload, r.unresolvedImageUrls)
           }
           outputImages.push({
             id: r.batchItemId,
@@ -3185,13 +3189,21 @@ async function executeAgentRound(
         rounds: current.rounds.map((item) => item.id === roundId ? { ...item, responseId: lastResponseId, responseOutput: accumulatedOutputItems } : item),
       }))
 
+      const cleanedTextBeforeResponse = removeMarkdownImages(textBeforeResponse)
+      if (shouldStreamAssistantMessage && accumulatedText !== textBeforeResponse) {
+        accumulatedText = removeMarkdownImages(accumulatedText)
+        updateAgentConversation(conversationId, (current) => ({
+          ...current,
+          messages: current.messages.map((message) => message.id === assistantMessageId ? { ...message, content: accumulatedText } : message),
+        }))
+      }
       const responseText = result.text.trim()
-      if (responseText && accumulatedText === textBeforeResponse) {
+      if (responseText && accumulatedText === cleanedTextBeforeResponse) {
         const textToAppend = accumulatedText ? `\n\n${responseText}` : responseText
         accumulatedText += textToAppend
         if (shouldStreamAssistantMessage) appendAgentAssistantMessageContent(conversationId, assistantMessageId, textToAppend)
       }
-      const newTextInThisResponse = accumulatedText.slice(textBeforeResponse.length).trim()
+      const newTextInThisResponse = accumulatedText.slice(cleanedTextBeforeResponse.length).trim()
       if (newTextInThisResponse) textSegments.push(newTextInThisResponse)
 
       // Process built-in image_generation_call results (single images)
@@ -3236,6 +3248,7 @@ async function executeAgentRound(
           actualParams,
           actualParamsByImage: { [stored.id]: actualParams },
           revisedPromptByImage: image.revisedPrompt ? { [stored.id]: image.revisedPrompt } : undefined,
+          rawImageUrls: image.rawImageUrl ? [image.rawImageUrl] : undefined,
           rawResponsePayload: result.rawResponsePayload,
           status: 'done',
           error: null,
@@ -3252,6 +3265,17 @@ async function executeAgentRound(
         useStore.getState().setTasks([task, ...useStore.getState().tasks])
         attachTaskToAgentRound(task.id)
         await putTask(task)
+      }
+
+      for (const rawImageUrl of result.unresolvedImageUrls ?? []) {
+        const taskId = await ensureStreamingAgentTask(genId(), round?.prompt ?? userMessage.content)
+        const task = useStore.getState().tasks.find((item) => item.id === taskId)
+        if (!task) continue
+        updateTaskInStore(taskId, {
+          ...createTaskErrorPatch(task, `图片已生成，但因跨域限制无法下载。${IMAGE_FETCH_CORS_HINT}`, Date.now()),
+          rawImageUrls: [rawImageUrl],
+          rawResponsePayload: result.rawResponsePayload,
+        })
       }
 
       if (result.rawResponsePayload && streamingTaskIds.length > 0) {

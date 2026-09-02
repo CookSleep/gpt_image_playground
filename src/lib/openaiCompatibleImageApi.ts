@@ -23,6 +23,7 @@ import {
   PROMPT_REWRITE_GUARD_PREFIX,
 } from './imageApiShared'
 import { isEventStreamResponse, readJsonServerSentEvents } from './serverSentEvents'
+import { resolveMarkdownImages } from './markdownImages'
 import { prependCodexCliSizePrompt } from './size'
 
 function getStreamPartialImages(profile: ApiProfile): number {
@@ -185,11 +186,19 @@ function createResponsesInput(prompt: string, inputImageDataUrls: string[], allo
   ]
 }
 
-function parseResponsesImageResults(payload: ResponsesApiResponse, fallbackMime: string): Array<{
+type ResponsesImageResult = {
   image: string
   actualParams?: Partial<TaskParams>
   revisedPrompt?: string
-}> {
+  rawImageUrl?: string
+}
+
+type ParsedResponsesImageResults = {
+  results: ResponsesImageResult[]
+  rawImageUrls: string[]
+}
+
+async function parseResponsesImageResults(payload: ResponsesApiResponse, fallbackMime: string, signal?: AbortSignal): Promise<ParsedResponsesImageResults> {
   const output = payload.output
   if (!Array.isArray(output) || !output.length) {
     const err = new Error('接口未返回图片数据')
@@ -197,28 +206,45 @@ function parseResponsesImageResults(payload: ResponsesApiResponse, fallbackMime:
     throw err
   }
 
-  const results: Array<{ image: string; actualParams?: Partial<TaskParams>; revisedPrompt?: string }> = []
+  const results: ResponsesImageResult[] = []
+  const rawImageUrls: string[] = []
 
   for (const item of output) {
-    if (item?.type !== 'image_generation_call') continue
+    if (item?.type === 'image_generation_call') {
+      const b64 = getResponsesImageResultBase64(item.result)
+      if (b64) {
+        results.push({
+          image: normalizeBase64Image(b64, fallbackMime),
+          actualParams: mergeActualParams(pickActualParams(item)),
+          revisedPrompt: typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined,
+        })
+      }
+      continue
+    }
 
-    const b64 = getResponsesImageResultBase64(item.result)
-    if (b64) {
-      results.push({
-        image: normalizeBase64Image(b64, fallbackMime),
-        actualParams: mergeActualParams(pickActualParams(item)),
-        revisedPrompt: typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined,
-      })
+    if (item?.type !== 'message') continue
+    for (const part of item.content ?? []) {
+      if ((part.type !== 'output_text' && part.type !== 'text') || typeof part.text !== 'string') continue
+      const markdownImages = await resolveMarkdownImages(part.text, fallbackMime, signal)
+      for (const image of markdownImages.images) {
+        results.push({
+          image: image.dataUrl,
+          actualParams: mergeActualParams(pickActualParams(item)),
+          rawImageUrl: image.rawImageUrl,
+        })
+      }
+      rawImageUrls.push(...markdownImages.unresolvedImageUrls)
     }
   }
 
   if (!results.length) {
     const err = new Error('接口没有返回可识别的图片数据，请查看原始响应内容确认服务商实际返回的数据结构。如果使用的是中转或兼容接口，建议创建并使用「自定义服务商」配置。')
     ;(err as any).rawResponsePayload = JSON.stringify(payload, null, 2)
+    if (rawImageUrls.length) (err as any).rawImageUrls = [...new Set(rawImageUrls)]
     throw err
   }
 
-  return results
+  return { results, rawImageUrls: [...new Set(rawImageUrls)] }
 }
 
 async function parseImagesApiResponse(payload: ImageApiResponse, mime: string, signal?: AbortSignal): Promise<CallApiResult> {
@@ -413,20 +439,25 @@ async function parseResponsesApiStreamResponse(
   const payload = completedPayload ?? (outputItems.length ? { output: outputItems } : null)
   if (!payload) throw new Error('流式接口未返回最终图片数据')
 
-  let imageResults: ReturnType<typeof parseResponsesImageResults>
+  let parsedImages: ParsedResponsesImageResults
   try {
-    imageResults = parseResponsesImageResults(payload, mime)
+    parsedImages = await parseResponsesImageResults(payload, mime)
   } catch (err) {
     const collectedImageItems = outputItems.filter((item) => getResponsesImageResultBase64(item.result))
     if (collectedImageItems.length === 0) throw err
-    imageResults = parseResponsesImageResults({ output: collectedImageItems }, mime)
+    parsedImages = await parseResponsesImageResults({ output: collectedImageItems }, mime)
   }
-  const actualParams = mergeActualParams(imageResults[0]?.actualParams ?? {})
+  const actualParams = mergeActualParams(parsedImages.results[0]?.actualParams ?? {})
+  const rawImageUrls = [
+    ...parsedImages.results.map((result) => result.rawImageUrl).filter((url): url is string => Boolean(url)),
+    ...parsedImages.rawImageUrls,
+  ]
   return {
-    images: imageResults.map((result) => result.image),
+    images: parsedImages.results.map((result) => result.image),
     actualParams,
-    actualParamsList: imageResults.map((result) => mergeActualParams(result.actualParams ?? {})),
-    revisedPrompts: imageResults.map((result) => result.revisedPrompt),
+    actualParamsList: parsedImages.results.map((result) => mergeActualParams(result.actualParams ?? {})),
+    revisedPrompts: parsedImages.results.map((result) => result.revisedPrompt),
+    ...(rawImageUrls.length ? { rawImageUrls: [...new Set(rawImageUrls)] } : {}),
   }
 }
 
@@ -1056,17 +1087,22 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
     }
 
     const payload = await response.json() as ResponsesApiResponse
-    const imageResults = parseResponsesImageResults(payload, mime)
+    const parsedImages = await parseResponsesImageResults(payload, mime, controller.signal)
     const actualParams = mergeActualParams(
-      imageResults[0]?.actualParams ?? {},
+      parsedImages.results[0]?.actualParams ?? {},
     )
+    const rawImageUrls = [
+      ...parsedImages.results.map((result) => result.rawImageUrl).filter((url): url is string => Boolean(url)),
+      ...parsedImages.rawImageUrls,
+    ]
     return {
-      images: imageResults.map((result) => result.image),
+      images: parsedImages.results.map((result) => result.image),
       actualParams,
-      actualParamsList: imageResults.map((result) =>
+      actualParamsList: parsedImages.results.map((result) =>
         mergeActualParams(result.actualParams ?? {}),
       ),
-      revisedPrompts: imageResults.map((result) => result.revisedPrompt),
+      revisedPrompts: parsedImages.results.map((result) => result.revisedPrompt),
+      ...(rawImageUrls.length ? { rawImageUrls: [...new Set(rawImageUrls)] } : {}),
     }
   } finally {
     clearTimeout(timeoutId)

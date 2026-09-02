@@ -212,6 +212,64 @@ describe('callAgentResponsesApi', () => {
     }])
   })
 
+  it('extracts Markdown base64 images with arbitrary alt text and removes them from Agent text', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      output: [{
+        type: 'message',
+        content: [{
+          type: 'output_text',
+          text: [
+            '## 生成完成',
+            '',
+            '这是 **说明文字** 和 [帮助链接](https://docs.example.com)。',
+            '',
+            '![不是固定名称](data:image/jpeg;base64,aW1hZ2U=)',
+            '',
+            '- 列表内容与 `inline code` 应保留。',
+            '',
+            '```text',
+            '![代码示例](data:image/png;base64,example)',
+            '```',
+            '',
+            '结尾文字。',
+          ].join('\n'),
+        }],
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const profile = createDefaultOpenAIProfile({
+      apiKey: 'test-key',
+      apiMode: 'responses',
+    })
+
+    const result = await callAgentResponsesApi({
+      settings: DEFAULT_SETTINGS,
+      profile,
+      params: DEFAULT_PARAMS,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'prompt' }] }],
+    })
+
+    expect(result.text).toBe([
+      '## 生成完成',
+      '',
+      '这是 **说明文字** 和 [帮助链接](https://docs.example.com)。',
+      '',
+      '- 列表内容与 `inline code` 应保留。',
+      '',
+      '```text',
+      '![代码示例](data:image/png;base64,example)',
+      '```',
+      '',
+      '结尾文字。',
+    ].join('\n'))
+    expect(result.images).toEqual([{
+      dataUrl: 'data:image/jpeg;base64,aW1hZ2U=',
+      actualParams: {},
+    }])
+  })
+
   it('stops reading a stream when the caller aborts after output starts', async () => {
     const streamBody = [
       'data: {"type":"response.output_text.delta","delta":"Hel"}',
