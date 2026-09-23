@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import type { ApiProfile, TaskParams } from '../../types'
+import { readImageBatchSize, writeImageBatchSize } from '../../lib/imageBatch'
 import { dismissAllTooltips } from '../../lib/tooltipDismiss'
 import Select from '../Select'
 import ButtonTooltip from './buttonTooltip'
@@ -306,6 +308,24 @@ export default function InputParamsPanel({
         <ButtonTooltip visible={nLimitHint.visible} text={nLimitHintText} />
         <ButtonTooltip visible={streamConcurrentByN && streamConcurrentHint.visible && !nLimitHint.visible} text="数量大于 1 时会将多图生成拆分为并发单图" />
       </label>
+      <BatchSizeField />
     </div>
+  )
+}
+
+function BatchSizeField() {
+  const [value, setValue] = useState(() => String(readImageBatchSize()))
+  return (
+    <label className="relative flex flex-col gap-0.5" title="上一批全部完成后才开始下一批">
+      <span className="text-gray-400 dark:text-gray-500 ml-1">每批</span>
+      <input
+        value={value}
+        type="number"
+        min={1}
+        onChange={(event) => setValue(event.target.value)}
+        onBlur={() => setValue(String(writeImageBatchSize(Number(value))))}
+        className="px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] focus:outline-none text-xs shadow-sm"
+      />
+    </label>
   )
 }

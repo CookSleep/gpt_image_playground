@@ -435,6 +435,28 @@ async function parseResponsesApiStreamResponse(
 }
 
 export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile: ApiProfile, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
+  const n = opts.params.n > 0 ? opts.params.n : 1
+  const batchSize = opts.imageBatchSize && opts.imageBatchSize > 0 ? Math.floor(opts.imageBatchSize) : 0
+  if (batchSize && n > batchSize) {
+    const settled: PromiseSettledResult<CallApiResult>[] = []
+    for (let done = 0; done < n; done += batchSize) {
+      const count = Math.min(batchSize, n - done)
+      try {
+        settled.push({
+          status: 'fulfilled',
+          value: await callOpenAICompatibleImageApi({
+            ...opts,
+            params: { ...opts.params, n: count },
+            imageBatchSize: undefined,
+          }, profile, customProvider),
+        })
+      } catch (reason) {
+        settled.push({ status: 'rejected', reason })
+      }
+    }
+    return mergeConcurrentApiResults(settled)
+  }
+
   if (customProvider) {
     const n = opts.params.n > 0 ? opts.params.n : 1
     const submitMapping = opts.inputImageDataUrls.length > 0 && customProvider.editSubmit

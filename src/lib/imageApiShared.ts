@@ -20,6 +20,8 @@ export interface CallApiOptions {
   inputImageDataUrls: string[]
   maskDataUrl?: string
   skipCodexCliSizePrompt?: boolean
+  /** 每批同时生成的张数；大于 0 且小于 n 时，上一批完成后再请求下一批 */
+  imageBatchSize?: number
   onFalRequestEnqueued?: (request: { requestId: string; endpoint: string }) => void
   onCustomTaskEnqueued?: (task: { taskId: string }) => void
   onPartialImage?: (partial: { image: string; partialImageIndex?: number; requestIndex?: number }) => void
