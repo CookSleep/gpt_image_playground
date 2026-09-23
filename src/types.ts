@@ -247,6 +247,16 @@ export interface TaskRecord {
   favoriteCollectionIds?: string[]
   /** 来源模式：画廊 / Agent */
   sourceMode?: AppMode
+  /** 镜头模板所属项目名称，导出时作为项目文件夹名 */
+  shotProjectName?: string
+  /** 同一次镜头模板提交的批次 ID */
+  shotBatchId?: string
+  /** 从 1 开始的镜头序号，导出文件夹为「镜头N」 */
+  shotIndex?: number
+  /** 模板里的动作，用于图生视频 */
+  shotAction?: string
+  /** 模板里的音频，用于图生视频 */
+  shotAudio?: string
   /** Agent 对话 ID */
   agentConversationId?: string
   /** Agent 轮次 ID */

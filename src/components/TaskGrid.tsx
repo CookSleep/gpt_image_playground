@@ -1,7 +1,9 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { useStore, reuseConfig, editOutputs, removeTask, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
+import { exportShotProject, groupTasksByProject } from '../lib/shotProjectExport'
 import { ALL_FAVORITES_COLLECTION_ID, getTaskFavoriteCollectionIds } from '../lib/favoriteState'
 import TaskCard from './TaskCard'
+
 
 export default function TaskGrid() {
   const tasks = useStore((s) => s.tasks)
@@ -30,6 +32,8 @@ export default function TaskGrid() {
   const startedWithCtrl = useRef(false)
   const initialSelection = useRef<string[]>([])
   const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform)
+  const showToast = useStore((s) => s.showToast)
+  const [exportingName, setExportingName] = useState<string | null>(null)
 
   const filteredTasks = useMemo(() => {
     const sorted = [...tasks].sort((a, b) => b.createdAt - a.createdAt)
@@ -44,6 +48,8 @@ export default function TaskGrid() {
       return taskMatchesSearchQuery(t, q)
     })
   }, [tasks, searchQuery, filterStatus, filterFavorite, activeFavoriteCollectionId, defaultFavoriteCollectionId])
+
+  const taskGroups = useMemo(() => groupTasksByProject(filteredTasks), [filteredTasks])
 
   const handleDelete = (task: typeof tasks[0]) => {
     setConfirmDialog({
@@ -288,31 +294,65 @@ export default function TaskGrid() {
       className="relative min-h-[50vh]"
     >
       <div ref={gridRef} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pb-10">
-        {filteredTasks.map((task) => (
-          <div key={task.id} className="task-card-wrapper" data-task-id={task.id}>
-            <TaskCard
-              task={task}
-              onClick={(e) => {
-                if (Date.now() < suppressClickUntil.current) {
-                  e.preventDefault()
-                  return
-                }
-                suppressClickUntil.current = 0
-                const isCtrl = isMac ? e.metaKey : e.ctrlKey
-                if (isCtrl) {
-                  useStore.getState().toggleTaskSelection(task.id)
-                  return
-                }
+        {taskGroups.map((group) => {
+          const cards = group.tasks.map((task) => (
+            <div key={task.id} className="task-card-wrapper" data-task-id={task.id}>
+              <TaskCard
+                task={task}
+                onClick={(e) => {
+                  if (Date.now() < suppressClickUntil.current) {
+                    e.preventDefault()
+                    return
+                  }
+                  suppressClickUntil.current = 0
+                  const isCtrl = isMac ? e.metaKey : e.ctrlKey
+                  if (isCtrl) {
+                    useStore.getState().toggleTaskSelection(task.id)
+                    return
+                  }
 
-                setDetailTaskId(task.id)
-              }}
-              onReuse={() => reuseConfig(task)}
-              onEditOutputs={() => editOutputs(task)}
-              onDelete={() => handleDelete(task)}
-              isSelected={selectedTaskIds.includes(task.id)}
-            />
-          </div>
-        ))}
+                  setDetailTaskId(task.id)
+                }}
+                onReuse={() => reuseConfig(task)}
+                onEditOutputs={() => editOutputs(task)}
+                onDelete={() => handleDelete(task)}
+                isSelected={selectedTaskIds.includes(task.id)}
+              />
+            </div>
+          ))
+          if (!group.name) return cards
+          return (
+            <section key={group.name} className="col-span-full rounded-3xl border border-gray-200 bg-gray-50/80 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <h3 className="inline-flex rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white dark:bg-white dark:text-gray-900">{group.name}</h3>
+                  <span className="text-xs text-gray-500">{new Set(group.tasks.map((task) => task.shotIndex).filter(Boolean)).size || group.tasks.length} 个镜头</span>
+                </div>
+                <button
+                  type="button"
+                  disabled={exportingName !== null}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    if (exportingName) return
+                    const name = group.name || ''
+                    setExportingName(name)
+                    void exportShotProject(name, group.tasks).then((result) => {
+                      if (!result.written) showToast(result.missingCount ? '图片还在生成，完成后再导出' : '没有可导出的图片', 'error')
+                      else showToast(`已下载「${result.folderName}.zip」${result.missingCount ? `，还有 ${result.missingCount} 个镜头没有图片` : ''}`, 'success')
+                    }).catch((err) => {
+                      showToast(err instanceof Error ? err.message : '导出失败', 'error')
+                    }).finally(() => setExportingName(null))
+                  }}
+                  className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-200"
+                >
+                  {exportingName === group.name ? '导出中…' : '导出'}
+                </button>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">{cards}</div>
+            </section>
+          )
+        })}
       </div>
       {selectionBox && (
         <div

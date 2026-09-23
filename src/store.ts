@@ -69,6 +69,7 @@ import { ALL_FAVORITES_COLLECTION_ID, DEFAULT_FAVORITE_COLLECTION_ID, createDefa
 import { createPersistedState, mergePersistedAgentConversations, migratePersistedState, normalizePersistedState } from './lib/persistedState'
 import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
 import { stripInjectedCodexCliSizePrompt } from './lib/size'
+import { buildShotImagePrompt } from './lib/shotTemplate'
 import { readImageBatchSize, runInBatches } from './lib/imageBatch'
 
 const FAL_RECOVERY_POLL_MS = 10_000
@@ -1764,6 +1765,95 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
 
   // 异步调用 API
   executeTask(taskId)
+}
+
+export async function submitShotBatch(shots: Array<{ shot: string; action?: string; sound?: string }>, styleImages: InputImage[], projectName = '', sharedPrompt = '') {
+  const state = useStore.getState()
+  const normalizedSettings = normalizeSettings(state.settings)
+  const activeProfile = getActiveApiProfile(state.settings)
+  const requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
+  const invalid = validateApiProfile(activeProfile)
+  if (invalid) {
+    state.showToast(`请先完善请求 API 配置：${invalid}`, 'error')
+    state.setShowSettings(true)
+    return { count: 0, batchId: '' }
+  }
+
+  const prompts = shots
+    .map((shot) => ({
+      prompt: buildShotImagePrompt(shot.shot, styleImages.length > 0, sharedPrompt).trim(),
+      action: shot.action?.trim() || '',
+      sound: shot.sound?.trim() || '',
+    }))
+    .filter((shot) => shot.prompt)
+  if (!prompts.length) {
+    state.showToast('没有可生成的镜头', 'error')
+    return { count: 0, batchId: '' }
+  }
+  if (!styleImages.length) {
+    state.showToast('请先添加样式图', 'error')
+    return { count: 0, batchId: '' }
+  }
+
+  for (const img of styleImages) {
+    await storeImage(img.dataUrl)
+    cacheImage(img.id, img.dataUrl)
+  }
+
+  const normalizedParams = normalizeParamsForSettings(state.params, requestSettings, { hasInputImages: true })
+  const shouldUseTransparentOutput = (normalizedParams.output_format === 'png' || normalizedParams.output_format === 'webp') && normalizedParams.transparent_output
+  const taskParams = shouldUseTransparentOutput
+    ? getTransparentRequestParams(normalizedParams)
+    : { ...normalizedParams, transparent_output: false }
+  const normalizedParamPatch = getChangedParams(state.params, taskParams)
+  if (Object.keys(normalizedParamPatch).length) state.setParams(normalizedParamPatch)
+
+  const createdAt = Date.now()
+  const batchId = genId()
+  const shotProjectName = projectName.trim()
+  const inputImageIds = styleImages.map((img) => img.id)
+  const tasks: TaskRecord[] = prompts.map((shot, index) => {
+    const transparentMeta = taskParams.transparent_output && activeProfile.transparentBackgroundMethod === 'local'
+      ? createTransparentOutputMeta(shot.prompt)
+      : null
+    return {
+      id: genId(),
+      prompt: shot.prompt,
+      params: taskParams,
+      apiProvider: activeProfile.provider,
+      apiProfileId: activeProfile.id,
+      apiProfileName: activeProfile.name,
+      apiMode: activeProfile.apiMode,
+      apiModel: activeProfile.model,
+      inputImageIds,
+      maskTargetImageId: null,
+      maskImageId: null,
+      transparentOutput: transparentMeta?.transparentOutput,
+      transparentPrompt: transparentMeta?.effectivePrompt,
+      outputImages: [],
+      status: 'running',
+      error: null,
+      createdAt: createdAt - index,
+      finishedAt: null,
+      elapsed: null,
+      sourceMode: 'gallery',
+      shotProjectName,
+      shotBatchId: batchId,
+      shotIndex: index + 1,
+      shotAction: shot.action,
+      shotAudio: shot.sound,
+    }
+  })
+
+  await Promise.all(tasks.map((task) => putTask(task)))
+  const latest = useStore.getState()
+  latest.setAppMode('gallery')
+  latest.setTasks([...tasks, ...latest.tasks])
+  const batchSize = readImageBatchSize()
+  void runInBatches(tasks, batchSize, (task) => executeTask(task.id))
+  const waves = Math.ceil(tasks.length / batchSize)
+  latest.showToast(waves > 1 ? `已提交 ${tasks.length} 个镜头，每批 ${batchSize} 张，共 ${waves} 批` : `已提交 ${tasks.length} 个镜头`, 'success')
+  return { count: tasks.length, batchId }
 }
 
 function getActiveAgentConversation(): AgentConversation {

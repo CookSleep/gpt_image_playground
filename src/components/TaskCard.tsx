@@ -539,6 +539,7 @@ export default function TaskCard({
         {/* 右侧信息区域 */}
         <div className="flex-1 p-3 flex flex-col min-w-0">
           <div className="flex-1 min-h-0 mb-2 overflow-hidden">
+            {task.shotIndex ? <p className="mb-1 text-xs font-medium text-gray-500 dark:text-gray-400">镜头{task.shotIndex}</p> : null}
             {showPendingPrompt ? (
               <div className="leading-relaxed">
                 <p className="text-sm text-gray-700 dark:text-gray-300">正在生成……</p>

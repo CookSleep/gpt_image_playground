@@ -50,6 +50,35 @@ export async function downloadImageIds(imageIds: string[], fileNameBase = 'image
   return { successCount, failCount }
 }
 
+export async function downloadImagePathsAsZip(files: ImagePathFile[], zipFileNameBase = 'images'): Promise<DownloadImagesResult> {
+  if (!files.length) return { successCount: 0, failCount: 0 }
+
+  let successCount = 0
+  let failCount = 0
+  const zipFiles: Record<string, Uint8Array | [Uint8Array, { mtime: Date }]> = {}
+  const usedNames = new Set<string>()
+
+  for (const file of files) {
+    try {
+      const blob = await getImageBlob(file.imageId)
+      const path = uniquePath(usedNames, `${sanitizePathBase(file.pathBase)}.${getBlobExtension(blob)}`)
+      zipFiles[path] = [new Uint8Array(await blob.arrayBuffer()), { mtime: new Date() }]
+      successCount++
+    } catch (err) {
+      console.error(err)
+      failCount++
+    }
+  }
+
+  if (successCount > 0) {
+    const zipped = zipSync(zipFiles, { level: 6 })
+    const buffer = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength) as ArrayBuffer
+    triggerDownload(new Blob([buffer], { type: 'application/zip' }), `${sanitizePathSegment(zipFileNameBase) || 'images'}.zip`)
+  }
+
+  return { successCount, failCount }
+}
+
 export async function downloadImageEntriesAsZip(entries: DownloadImageZipEntry[], zipFileNameBase = 'images'): Promise<DownloadImagesResult> {
   if (entries.length === 0) return { successCount: 0, failCount: 0 }
 
@@ -130,5 +159,39 @@ function getBlobExtension(blob: Blob): string {
 
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+export interface ImagePathFile {
+  imageId: string
+  pathBase: string
+}
+
+function sanitizePathSegment(value: string) {
+  return sanitizeFileNamePart(value).replace(/[. ]+$/g, '') || '未命名'
+}
+
+function sanitizePathBase(pathBase: string) {
+  return pathBase.split('/').map((segment) => sanitizePathSegment(segment)).join('/')
+}
+
+function uniquePath(usedNames: Set<string>, filePath: string) {
+  if (!usedNames.has(filePath)) {
+    usedNames.add(filePath)
+    return filePath
+  }
+  const slash = filePath.lastIndexOf('/')
+  const dir = slash >= 0 ? filePath.slice(0, slash + 1) : ''
+  const name = slash >= 0 ? filePath.slice(slash + 1) : filePath
+  const dot = name.lastIndexOf('.')
+  const base = dot > 0 ? name.slice(0, dot) : name
+  const ext = dot > 0 ? name.slice(dot) : ''
+  let index = 2
+  let next = `${dir}${base}-${index}${ext}`
+  while (usedNames.has(next)) {
+    index++
+    next = `${dir}${base}-${index}${ext}`
+  }
+  usedNames.add(next)
+  return next
 }
 
