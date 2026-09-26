@@ -238,6 +238,8 @@ export interface TaskRecord {
   status: TaskStatus
   error: string | null
   createdAt: number
+  /** 本次生成开始时间，重试时不改变原始创建时间 */
+  startedAt?: number
   finishedAt: number | null
   /** 总耗时毫秒 */
   elapsed: number | null

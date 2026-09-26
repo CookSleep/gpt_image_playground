@@ -47,6 +47,13 @@ describe('task lifecycle patches', () => {
     })
   })
 
+  it('measures a retried attempt from its latest start without changing creation time', () => {
+    const source = task({ createdAt: 1_000, startedAt: 7_000 })
+    expect(createTaskDonePatch(source, 10_000).elapsed).toBe(3_000)
+    expect(createTaskErrorPatch(source, '失败', 10_000).elapsed).toBe(3_000)
+    expect(markInterruptedOpenAIRunningTasks([{ ...source, status: 'running' }], 10_000).tasks[0].elapsed).toBe(3_000)
+  })
+
   it('marks legacy and OpenAI running tasks as interrupted', () => {
     const now = 10_000
     const legacyRunning = task({ id: 'legacy-running', status: 'running', createdAt: 1_000, finishedAt: null, elapsed: null })

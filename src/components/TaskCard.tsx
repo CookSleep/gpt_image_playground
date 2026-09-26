@@ -284,7 +284,7 @@ export default function TaskCard({
   const duration = (() => {
     let seconds: number
     if (task.status === 'running' || task.falRecoverable || task.customRecoverable) {
-      seconds = Math.floor((now - task.createdAt) / 1000)
+      seconds = Math.floor((now - (task.startedAt ?? task.createdAt)) / 1000)
     } else if (task.elapsed != null) {
       seconds = Math.floor(task.elapsed / 1000)
     } else {
@@ -638,7 +638,7 @@ export default function TaskCard({
               onTouchEnd={(e) => e.stopPropagation()}
               onTouchCancel={(e) => e.stopPropagation()}
             >
-              {((task.status === 'error' && !isFalReconnecting) || settings.alwaysShowRetryButton) && (
+              {((task.status === 'error' && !isFalReconnecting && !isCustomReconnecting) || (task.status === 'done' && settings.alwaysShowRetryButton)) && (
                 <TaskActionButton
                   tooltip="重试任务"
                   onClick={() => retryTask(task)}
