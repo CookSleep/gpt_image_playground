@@ -52,7 +52,7 @@ import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSin
 import { buildAgentApiInput, buildAgentContinuationInput } from './lib/agentInputBuilder'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId } from './lib/agentImageReferences'
 import { showBrowserNotification } from './lib/browserNotification'
-import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
+import { isHttpUrl, IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { validateMaskMatchesImage } from './lib/canvasImage'
@@ -2969,9 +2969,10 @@ async function executeAgentRound(
     let pendingToolTextSeparator = false
 
     // Helper: resolve reference image ids to data URLs for batch image calls
-    const resolveReferenceImages = async (referenceIds: string[]): Promise<{ dataUrls: string[]; imageIds: string[] }> => {
+    const resolveReferenceImages = async (referenceIds: string[]): Promise<{ dataUrls: string[]; imageIds: string[]; sourceUrls: (string | null)[] }> => {
       const dataUrls: string[] = []
       const imageIds: string[] = []
+      const sourceUrls: (string | null)[] = []
       for (const refId of referenceIds) {
         // Resolve both generated image refs and current/user input refs from XML tags.
         const latestConv = useStore.getState().agentConversations.find((item) => item.id === conversationId)
@@ -2982,7 +2983,10 @@ async function executeAgentRound(
             if (currentRefId === refId) {
               const imageId = r.inputImageIds[imgIdx]
               const dataUrl = await ensureImageCached(imageId)
-              if (dataUrl) dataUrls.push(dataUrl)
+              if (dataUrl) {
+                dataUrls.push(dataUrl)
+                sourceUrls.push((await getImage(imageId))?.sourceUrl ?? null)
+              }
               imageIds.push(imageId)
             }
           }
@@ -2993,13 +2997,16 @@ async function executeAgentRound(
               const imageId = outputImages[imgIdx]
               if (!imageId) continue
               const dataUrl = await ensureImageCached(imageId)
-              if (dataUrl) dataUrls.push(dataUrl)
+              if (dataUrl) {
+                dataUrls.push(dataUrl)
+                sourceUrls.push((await getImage(imageId))?.sourceUrl ?? null)
+              }
               imageIds.push(imageId)
             }
           }
         }
       }
-      return { dataUrls, imageIds }
+      return { dataUrls, imageIds, sourceUrls }
     }
 
     const parseSingleImageCallArguments = (args: string): { id: string; prompt: string } | null => {
@@ -3018,6 +3025,7 @@ async function executeAgentRound(
       taskId: string
       prompt: string
       referenceImageDataUrls: string[]
+      referenceImageSourceUrls?: (string | null)[]
       taskParams: TaskParams
       signal: AbortSignal
       onPartialImage?: (event: { image: string; partialImageIndex?: number }) => void | Promise<void>
@@ -3027,6 +3035,7 @@ async function executeAgentRound(
         prompt: replaceImageMentionsForApi(opts.prompt, opts.referenceImageDataUrls.length),
         params: opts.taskParams,
         inputImageDataUrls: opts.referenceImageDataUrls,
+        inputImageUrls: opts.referenceImageSourceUrls,
         skipCodexCliSizePrompt: true,
         onPartialImage: opts.onPartialImage
           ? (partial) => {
@@ -3092,6 +3101,7 @@ async function executeAgentRound(
           taskId,
           prompt: item.prompt,
           referenceImageDataUrls: references.dataUrls,
+          referenceImageSourceUrls: references.sourceUrls,
           taskParams,
           signal: controller.signal,
           onPartialImage: async ({ image, partialImageIndex }) => {
@@ -3168,6 +3178,7 @@ async function executeAgentRound(
                 taskId: taskIdByToolCallId.get(batchToolCallId)!,
                 prompt: item.prompt,
                 referenceImageDataUrls: references.dataUrls,
+                referenceImageSourceUrls: references.sourceUrls,
                 taskParams,
                 signal: controller.signal,
                 onPartialImage: async ({ image, partialImageIndex }) => {
@@ -3719,12 +3730,14 @@ async function executeTask(taskId: string) {
   }
 
   try {
-    // 获取输入图片 data URLs
+    // 获取输入图片 data URLs 与外链（外链供只接受外链参考图的服务商使用）
     const inputDataUrls: string[] = []
+    const inputImageUrls: (string | null)[] = []
     for (const imgId of task.inputImageIds) {
       const dataUrl = await ensureImageCached(imgId)
       if (!dataUrl) throw new Error('输入图片已不存在')
       inputDataUrls.push(dataUrl)
+      inputImageUrls.push((await getImage(imgId))?.sourceUrl ?? null)
     }
     let maskDataUrl: string | undefined
     if (task.maskImageId) {
@@ -3742,6 +3755,7 @@ async function executeTask(taskId: string) {
       params: task.params,
       nativeTransparentBackground: task.params.transparent_output && !task.transparentOutput,
       inputImageDataUrls: inputDataUrls,
+      inputImageUrls,
       maskDataUrl,
       skipCodexCliSizePrompt: task.sourceMode === 'agent',
       onFalRequestEnqueued: (request) => {
@@ -4845,13 +4859,14 @@ export async function createInputImageFromFile(file: File): Promise<InputImage |
   return { id, dataUrl }
 }
 
-/** 添加图片到输入（右键菜单）—— 支持 data/blob/http URL */
+/** 添加图片到输入（右键菜单 / 粘贴图片链接）—— 支持 data/blob/http URL */
 export async function addImageFromUrl(src: string): Promise<void> {
   const res = await apiFetch(src)
   const blob = await res.blob()
   if (!blob.type.startsWith('image/')) throw new Error('不是有效的图片')
   const dataUrl = await blobToDataUrl(blob)
-  const id = await storeImage(dataUrl, 'upload')
+  // http(s) 链接记录外链，供只接受外链参考图的服务商使用
+  const id = await storeImage(dataUrl, 'upload', isHttpUrl(src) ? { sourceUrl: src } : {})
   cacheImage(id, dataUrl)
   useStore.getState().addInputImage({ id, dataUrl })
 }
