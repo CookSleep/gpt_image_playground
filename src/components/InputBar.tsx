@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { deleteFavoriteCollection, useStore, submitTask, submitAgentMessage, stopAgentResponse, stopBatchPrompts, addImageFromFile, removeMultipleTasks, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
+import { deleteFavoriteCollection, useStore, submitTask, submitAgentMessage, stopAgentResponse, stopBatchPrompts, addImageFromFile, addImageFromUrl, removeMultipleTasks, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { DEFAULT_PARAMS, MAX_INPUT_IMAGES, type TaskRecord } from '../types'
 import { getActiveAgentRounds } from '../lib/agentConversationState'
 import { getActiveApiProfile, getAgentImageApiProfile, normalizeSettings, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
@@ -8,6 +8,7 @@ import { getImageGenerationModel, isGptImage25Model } from '../lib/imageModels'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { splitBatchPrompts } from '../lib/batchPrompts'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
+import { extractPastedImageUrl } from '../lib/imageUrl'
 import { getAtImageQuery, getImageComments, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, getSelectedImageMentionLabel, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { normalizeCodexCliImageSize, normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
@@ -868,6 +869,24 @@ export default function InputBar() {
   const handleFilesRef = useRef(handleFiles)
   handleFilesRef.current = handleFiles
 
+  // 粘贴图片链接：以链接添加参考图（只接受外链参考图的服务商可据此提交）
+  const handleImageUrl = async (url: string) => {
+    const currentCount = useStore.getState().inputImages.length
+    if (currentCount >= MAX_INPUT_IMAGES) {
+      useStore.getState().showToast(`参考图数量已达上限（${MAX_INPUT_IMAGES} 张），无法继续添加`, 'error')
+      return
+    }
+    try {
+      await addImageFromUrl(url)
+      useStore.getState().showToast('已通过链接添加参考图', 'success')
+    } catch (err) {
+      useStore.getState().showToast(
+        `链接添加参考图失败：${err instanceof Error ? err.message : String(err)}`,
+        'error',
+      )
+    }
+  }
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     await handleFilesRef.current(e.target.files || [])
     e.target.value = ''
@@ -931,6 +950,13 @@ export default function InputBar() {
     const text = e.clipboardData.getData('text/plain')
     if (!text) return
     if (Array.from(e.clipboardData.items).some((item) => item.type.startsWith('image/'))) return
+
+    const imageUrl = extractPastedImageUrl(text)
+    if (imageUrl) {
+      e.preventDefault()
+      void handleImageUrl(imageUrl)
+      return
+    }
 
     e.preventDefault()
     insertPromptTextAtSelection(text.replace(/\r\n?/g, '\n'))

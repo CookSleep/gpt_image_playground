@@ -371,6 +371,8 @@ export interface StoredImage {
   createdAt?: number
   /** 图片来源：用户上传 / API 生成 / 遮罩 */
   source?: 'upload' | 'generated' | 'mask'
+  /** 该图片内容对应的外链 URL（通过链接添加或生成结果记录），供只接受外链参考图的服务商使用 */
+  sourceUrl?: string
   /** 原图宽度 */
   width?: number
   /** 原图高度 */

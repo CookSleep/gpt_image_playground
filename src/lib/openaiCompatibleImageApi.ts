@@ -695,18 +695,39 @@ function createCustomProviderContext(opts: CallApiOptions, profile: ApiProfile) 
     ...(opts.nativeTransparentBackground ? { background: 'transparent' } : {}),
   }
 
+  // 部分中转站只接受外链参考图，提供 $inputImages.urls 供自定义供应商使用。
+  const inputImageUrls = (opts.inputImageUrls ?? []).filter((url): url is string => !!url)
+  // 部分中转站要求 base64 不带 data URL 前缀，提供 $inputImages.base64 供自定义供应商使用。
+  const toRawBase64 = (dataUrl: string) => dataUrl.replace(/^data:[^;]+;base64,/i, '')
+
   return {
     profile,
     prompt,
     params,
     inputImages: {
       dataUrls: opts.inputImageDataUrls.length ? opts.inputImageDataUrls : undefined,
+      base64: opts.inputImageDataUrls.length ? opts.inputImageDataUrls.map(toRawBase64) : undefined,
+      urls: inputImageUrls,
       count: opts.inputImageDataUrls.length,
     },
     mask: {
       dataUrl: opts.maskDataUrl,
     },
   }
+}
+
+/** 服务商配置显式引用了 $inputImages.urls 时，避免把没有外链的本地参考图静默丢弃 */
+function assertImageUrlsComplete(mapping: CustomProviderSubmitMapping, context: Record<string, unknown>) {
+  if (!JSON.stringify(mapping.body ?? {}).includes('$inputImages.urls')) return
+  const inputImages = context.inputImages as { count?: number; urls?: string[] } | undefined
+  const count = inputImages?.count ?? 0
+  const urls = inputImages?.urls ?? []
+  if (urls.length >= count) return
+  const missing = count - urls.length
+  throw new Error(
+    `该服务商只接受外链参考图，但当前有 ${missing} 张参考图没有外链（本地图片）。` +
+    '请把参考图改为「粘贴图片链接」添加，或移除这些本地参考图后重试。',
+  )
 }
 
 function renderQuery(query: Record<string, string> | undefined, context: Record<string, unknown>): Record<string, string> | undefined {
@@ -797,6 +818,7 @@ async function extractCustomImages(payload: unknown, result: CustomProviderResul
 async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: CallApiOptions, profile: ApiProfile, controller: AbortController, proxyConfig: ReturnType<typeof readClientDevProxyConfig>, useApiProxy: boolean): Promise<unknown> {
   const requestHeaders = createRequestHeaders(profile)
   const context = createCustomProviderContext(opts, profile)
+  assertImageUrlsComplete(mapping, context)
   const method = mapping.method ?? 'POST'
   const contentType = mapping.contentType ?? 'json'
   const path = appendQuery(mapping.path, renderQuery(mapping.query, context))

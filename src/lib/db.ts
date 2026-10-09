@@ -258,11 +258,11 @@ export interface StoreImageResult {
  * 存储图片，若已存在（按 hash 去重）则跳过。
  * 返回 image id 及图片真实宽高。
  */
-export async function storeImage(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload'): Promise<string> {
-  return (await storeImageWithSize(dataUrl, source)).id
+export async function storeImage(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload', options: { sourceUrl?: string } = {}): Promise<string> {
+  return (await storeImageWithSize(dataUrl, source, options)).id
 }
 
-export async function storeImageWithSize(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload'): Promise<StoreImageResult> {
+export async function storeImageWithSize(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload', options: { sourceUrl?: string } = {}): Promise<StoreImageResult> {
   const id = await hashDataUrl(dataUrl)
   const existing = await getImage(id)
   if (!existing) {
@@ -272,6 +272,7 @@ export async function storeImageWithSize(dataUrl: string, source: NonNullable<St
       dataUrl,
       createdAt: Date.now(),
       source,
+      ...(options.sourceUrl ? { sourceUrl: options.sourceUrl } : {}),
       width: thumbnail.width,
       height: thumbnail.height,
     })
@@ -285,6 +286,11 @@ export async function storeImageWithSize(dataUrl: string, source: NonNullable<St
       })
     }
     return { id, width: thumbnail.width, height: thumbnail.height }
+  }
+
+  // 已存在的记录补写外链（内容相同视为同一图片，不回写空值避免覆盖已有链接）
+  if (options.sourceUrl && !existing.sourceUrl) {
+    await putImage({ ...existing, sourceUrl: options.sourceUrl })
   }
 
   if ((await getStoredImageThumbnail(id))?.thumbnailVersion !== THUMBNAIL_VERSION) {

@@ -18,6 +18,8 @@ export interface CallApiOptions {
   nativeTransparentBackground?: boolean
   /** 输入图片的 data URL 列表 */
   inputImageDataUrls: string[]
+  /** 与 inputImageDataUrls 按索引对齐的外链 URL，本地图片为 null / undefined */
+  inputImageUrls?: (string | null | undefined)[]
   maskDataUrl?: string
   skipCodexCliSizePrompt?: boolean
   onFalRequestEnqueued?: (request: { requestId: string; endpoint: string }) => void
