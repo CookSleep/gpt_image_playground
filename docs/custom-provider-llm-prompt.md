@@ -57,6 +57,8 @@ body 模板变量：
 - $params.size、$params.quality、$params.output_format、$params.output_compression、$params.moderation、$params.n：应用内参数。
 - $params.background：API 原生透明背景参数；启用时为 `"transparent"`，未启用时自动省略。
 - $inputImages.dataUrls：参考图 data URL 数组；没有参考图时会自动省略该字段。
+- $inputImages.base64：参考图裸 base64 数组（不含 `data:image/png;base64,` 前缀）；部分服务商要求这种格式，没有参考图时会自动省略该字段。
+- $inputImages.urls：参考图外链 URL 数组（仅包含通过粘贴图片链接添加的参考图，按输入顺序排列）；没有外链参考图时会自动省略该字段。服务商只接受外链参考图时用它替代 base64 类字段；若参考图中有本地图片（无外链），提交会直接报错而不是丢弃参考图。
 - $mask.dataUrl：遮罩图 data URL；没有遮罩时会自动省略该字段。
 
 multipart files 示例：
