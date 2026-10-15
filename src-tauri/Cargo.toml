@@ -37,6 +37,10 @@ tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 tauri-plugin-updater = "2"
 semver = "1"
+# 本地 MCP 服务（mcp.rs）：同步 HTTP 服务、图片 base64、令牌随机数
+tiny_http = "0.12"
+base64 = "0.22"
+getrandom = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 windows-registry = "0.6"

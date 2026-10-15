@@ -1,0 +1,8 @@
+[[permission]]
+identifier = "mcp-server"
+description = "允许主窗口读取和更改本地 MCP 服务的设置，并回传 Agent 调用的执行结果"
+commands.allow = [
+  "mcp_get",
+  "mcp_set",
+  "mcp_respond",
+]

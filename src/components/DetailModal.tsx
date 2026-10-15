@@ -13,6 +13,7 @@ import { downloadImageEntriesAsZip, downloadImageIds, getDownloadErrorMessage, g
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { getImageComments, getTaskPromptText, replaceImageMentionsForApi } from '../lib/promptImageMentions'
 import { getApiProviderLabel } from '../lib/apiProfiles'
+import { isTauri } from '../lib/platform'
 import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
 
 import ViewportTooltip from './ViewportTooltip'
@@ -1060,6 +1061,30 @@ export default function DetailModal() {
               )}
               {formatDuration() && <span> · 耗时 {formatDuration()}</span>}
             </div>
+
+            {/* 仅客户端：任务 ID 和图片 ID，可复制给通过 MCP 连接的 Agent，让它直接读取图片而不必重新上传 */}
+            {isTauri && (
+              <div className="mb-4 space-y-1 text-xs text-gray-400 dark:text-gray-500">
+                {[['任务 ID', task.id], ['图片 ID', currentOutputImageId]].filter(([, id]) => id).map(([label, id]) => (
+                  <div key={label} className="flex min-w-0 items-center gap-2">
+                    <span className="shrink-0">{label}</span>
+                    <span data-selectable-text className="min-w-0 truncate font-mono">{id}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        copyTextToClipboard(id).then(
+                          () => showToast(`${label}已复制`, 'success'),
+                          (err) => showToast(getClipboardFailureMessage(`复制${label}失败`, err), 'error'),
+                        )
+                      }}
+                      className="shrink-0 text-blue-500 hover:underline"
+                    >
+                      复制
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* 操作按钮 */}

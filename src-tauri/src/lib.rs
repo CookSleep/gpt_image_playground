@@ -3,6 +3,7 @@ mod data_dir;
 mod diagnostics;
 mod files;
 mod http;
+mod mcp;
 mod migrate;
 mod proxy;
 mod storage;
@@ -86,6 +87,9 @@ pub fn run() {
             update::update_download,
             update::update_install,
             close_watch::close_ack,
+            mcp::mcp_get,
+            mcp::mcp_set,
+            mcp::mcp_respond,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
@@ -97,6 +101,7 @@ pub fn run() {
         .manage(files::MigrateSource::default())
         .manage(data_dir::PickedDir::default())
         .manage(http::Requests::default())
+        .manage(mcp::Mcp::default())
         // 页面重载（含开发时的热重载）后旧页面的请求已无人读取，立即断开；未提交的保存也无人继续，删除临时文件
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
@@ -134,6 +139,8 @@ pub fn run() {
             // 代理设置需在主窗口创建前生效，前端加载后立即可能发出请求
             app.manage(proxy::Proxy::load(&state));
             app.manage(state);
+            // 默认关闭；用户在设置里开启过则按保存的端口和 token 恢复
+            mcp::start_saved(app.handle());
             let info = app.package_info().clone();
             tauri::async_runtime::spawn_blocking(move || update::cleanup(&info.name, &info.version));
             // WebView2 在页面加载出来之前是白色背景，深色模式下启动会白闪。页面只跟随系统主题，

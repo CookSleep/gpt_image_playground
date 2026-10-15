@@ -61,6 +61,7 @@ import { ChevronDownIcon, CloseIcon, CopyIcon, PlusIcon, TrashIcon, ExportIcon, 
 import { TooltipButton } from './TooltipButton'
 import GeneralSettingsTab from './settings/GeneralSettingsTab'
 import AgentSettingsTab from './settings/AgentSettingsTab'
+import McpSettingsSection from './settings/McpSettingsSection'
 import FontLicensesModal from './settings/FontLicensesModal'
 import CustomProviderModal from './settings/CustomProviderModal'
 import ProfileImportUrlModal, { type CopyImportUrlOptions } from './settings/ProfileImportUrlModal'
@@ -1209,6 +1210,17 @@ export default function SettingsModal() {
                 </svg>
                 Agent 配置
               </button>
+              {isTauri && (
+                <button
+                  onClick={() => setActiveTab('mcp')}
+                  className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-xl transition-colors ${activeTab === 'mcp' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  MCP
+                </button>
+              )}
               <button
                 onClick={() => setActiveTab('data')}
                 className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-xl transition-colors ${activeTab === 'data' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
@@ -1948,6 +1960,8 @@ export default function SettingsModal() {
                 </div>
               </div>
             )}
+
+            {activeTab === 'mcp' && isTauri && <McpSettingsSection />}
 
             {activeTab === 'about' && <AboutSettingsTab onOpenFontLicenses={() => setShowFontLicenses(true)} />}
           </div>
