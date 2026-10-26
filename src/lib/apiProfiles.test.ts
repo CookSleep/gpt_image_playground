@@ -1672,7 +1672,7 @@ describe('custom providers', () => {
       ],
     })
 
-    expect(settings.providerOrder).toEqual(['fal', 'openai', 'sb2api-async', 'grok', 'custom-alpha', 'custom-beta'])
+    expect(settings.providerOrder).toEqual(['fal', 'openai', 'sb2api-async', 'grok', 'agnes', 'custom-alpha', 'custom-beta'])
   })
 
   it('keeps active custom providers in Images API mode when legacy apiMode is responses', () => {

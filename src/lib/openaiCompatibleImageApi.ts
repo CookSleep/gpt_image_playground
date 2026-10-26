@@ -26,6 +26,7 @@ import {
 } from './imageApiShared'
 import { getImageGenerationModel } from './imageModels'
 import { isGrokImageProfile, normalizeGrokQuality } from './grok'
+import { getAgnesImageSize, isAgnesImageProfile } from './agnes'
 import { apiFetch, FetchConnectError } from './platform'
 import { isEventStreamResponse, readJsonServerSentEvents } from './serverSentEvents'
 import { formatImageRatio, parseRatio, prependCodexCliSizePrompt } from './size'
@@ -456,7 +457,7 @@ export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile
 
 async function callImagesApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const n = opts.params.n > 0 ? opts.params.n : 1
-  if ((profile.codexCli || (profile.streamImages && n > 1)) && n > 1) {
+  if ((profile.codexCli || profile.streamImages || isAgnesImageProfile(profile)) && n > 1) {
     return callImagesApiConcurrent(opts, profile, n)
   }
 
@@ -487,8 +488,11 @@ async function callImagesApiConcurrent(opts: CallApiOptions, profile: ApiProfile
 async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const { prompt: originalPrompt, params, inputImageDataUrls } = opts
   const isGrok = isGrokImageProfile(profile)
+  const isAgnes = isAgnesImageProfile(profile)
   if (isGrok && opts.maskDataUrl) throw new Error('Grok 不支持遮罩编辑，请使用普通参考图编辑。')
   if (isGrok && opts.nativeTransparentBackground) throw new Error('Grok 不支持原生透明背景，请使用本地后处理。')
+  if (isAgnes && opts.maskDataUrl) throw new Error('Agnes 不支持遮罩编辑，请使用普通参考图编辑。')
+  if (isAgnes && opts.nativeTransparentBackground) throw new Error('Agnes 不支持原生透明背景，请使用本地后处理。')
   const sizePrompt = profile.codexCli && !opts.skipCodexCliSizePrompt
     ? prependCodexCliSizePrompt(originalPrompt, params.size)
     : originalPrompt
@@ -508,7 +512,24 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
   try {
     let response: Response
 
-    if (isGrok) {
+    if (isAgnes) {
+      const body: Record<string, unknown> = {
+        model: profile.model,
+        prompt: originalPrompt,
+        ...getAgnesImageSize(params.size),
+        ...(isEdit
+          ? { extra_body: { image: inputImageDataUrls, response_format: 'b64_json' } }
+          : { return_base64: true }),
+      }
+      assertImageInputPayloadSize(inputImageDataUrls.reduce((sum, url) => sum + getDataUrlDecodedByteSize(url), 0))
+      response = await apiFetch(buildApiUrl(profile.baseUrl, paths.generationPath, proxyConfig, useApiProxy), {
+        method: 'POST',
+        headers: { ...requestHeaders, 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+    } else if (isGrok) {
       const body: Record<string, unknown> = {
         model: profile.model,
         prompt: originalPrompt,
@@ -528,13 +549,21 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
           body.resolution = size.width * size.height > 1_572_864 ? '2k' : '1k'
         }
       }
-      response = await apiFetch(buildApiUrl(profile.baseUrl, isEdit ? paths.editPath : paths.generationPath, proxyConfig, useApiProxy), {
+      const url = buildApiUrl(profile.baseUrl, isEdit ? paths.editPath : paths.generationPath, proxyConfig, useApiProxy)
+      const init: RequestInit = {
         method: 'POST',
         headers: { ...requestHeaders, 'Content-Type': 'application/json' },
         cache: 'no-store',
         body: JSON.stringify(body),
         signal: controller.signal,
-      })
+      }
+      response = await apiFetch(url, init)
+      // 网关错误可能只影响一次连接；同一请求最多补发一次。
+      if ([502, 503, 504, 520, 521, 522, 523, 524].includes(response.status)) {
+        await response.body?.cancel()
+        await sleep(1000, controller.signal)
+        response = await apiFetch(url, init)
+      }
     } else if (isEdit) {
       const formData = new FormData()
       formData.append('model', profile.model)

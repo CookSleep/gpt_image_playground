@@ -5,6 +5,10 @@
   },
   "rewrites": [
     {
+      "source": "/agnes-api/images/generations",
+      "destination": "https://apihub.agnes-ai.com/v1/images/generations"
+    },
+    {
       "source": "/grok-api/images/generations",
       "destination": "https://grok.aisenno.com/v1/images/generations"
     },

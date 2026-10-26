@@ -130,6 +130,7 @@ export function describeImportLink(params: URLSearchParams, settings: AppSetting
     ['API 代理', (p) => onOff(p.apiProxy)],
     ['API 接口', (p) => p.apiMode === 'responses' ? fixed('Responses API') : p.apiMode === 'images' ? fixed('Images API') : literal(clip(String(p.apiMode)))],
     ['首页选中的模型', (p) => literal(clip(p.selectedModel ?? ''))],
+    ['在底部模型菜单中显示', (p) => onOff(p.showInModelPicker)],
     ['图像生成模型', (p) => literal(clip(p.imageGenerationModel ?? ''))],
     ['推理强度', (p) => p.reasoningEffort ? literal(clip(p.reasoningEffort)) : fixed('默认')],
     ['流式传输', (p) => onOff(p.streamImages)],
@@ -141,7 +142,7 @@ export function describeImportLink(params: URLSearchParams, settings: AppSetting
     ['配置说明', (p) => literal(clip(p.description ?? ''))],
   ]
   // 上面已逐项展示的字段；其余字段（如其他服务商的草稿，可能含地址）有变化时统一提示
-  const shownKeys = new Set(['name', 'baseUrl', 'model', 'apiKey', 'provider', 'apiProxy', 'apiMode', 'selectedModel', 'imageGenerationModel', 'reasoningEffort', 'streamImages', 'streamPartialImages', 'transparentBackgroundMethod', 'responseFormatB64Json', 'codexCli', 'timeout', 'description'])
+  const shownKeys = new Set(['name', 'baseUrl', 'model', 'apiKey', 'provider', 'apiProxy', 'apiMode', 'selectedModel', 'showInModelPicker', 'imageGenerationModel', 'reasoningEffort', 'streamImages', 'streamPartialImages', 'transparentBackgroundMethod', 'responseFormatB64Json', 'codexCli', 'timeout', 'description'])
   const hidden = (profile: ApiProfile) => JSON.stringify(Object.entries(profile).filter(([key]) => !shownKeys.has(key)))
   // 新增配置只有 + 行，值为空的字段没有意义，不列出
   const fieldRows = (before: ApiProfile, after: ApiProfile, showBefore: boolean): ImportLinkDiffRow[] => fields

@@ -4,6 +4,7 @@ import { readText } from '@tauri-apps/plugin-clipboard-manager'
 import { normalizeBaseUrl } from '../lib/api'
 import { customProviderSupportsNativeTransparentBackground } from '../lib/customProviderCapabilities'
 import { DEFAULT_GROK_MODEL, isGrokImageProfile } from '../lib/grok'
+import { DEFAULT_AGNES_MODEL, isAgnesImageProfile } from '../lib/agnes'
 import { hasActiveDataOperations, trackDataTransfer } from '../lib/dataOperations'
 import { useSettingsDataTransfer } from '../lib/dataProgress'
 import { isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig } from '../lib/devProxy'
@@ -248,14 +249,15 @@ export default function SettingsModal() {
   const activeProfileLocked = isPresetProfileLocked(activeProfile.id)
   const activeProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, activeProfile.provider)
   const activeProviderIsGrok = isGrokImageProfile(activeProfile)
+  const activeProviderIsAgnes = isAgnesImageProfile(activeProfile)
   const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal'
   const activeCustomProvider = getCustomProviderDefinition(draft, activeProfile.provider)
-  const activeCustomProviderSupportsNativeTransparentBackground = !activeProviderIsGrok && (!activeCustomProvider || customProviderSupportsNativeTransparentBackground(activeCustomProvider))
+  const activeCustomProviderSupportsNativeTransparentBackground = !activeProviderIsGrok && !activeProviderIsAgnes && (!activeCustomProvider || customProviderSupportsNativeTransparentBackground(activeCustomProvider))
   const activeProfileApiProxyEligible = isProfileApiProxyEligible(draft, activeProfile)
   const activeCustomProviderAsync = isAsyncCustomProvider(activeCustomProvider)
   const apiProxyChecked = activeProfileApiProxyEligible && (apiProxyLocked || activeProfile.apiProxy)
   const apiProxyEnabled = apiProxyAvailable && activeProfileApiProxyEligible && apiProxyChecked
-  const defaultProviderOrder = ['openai', 'sb2api-async', 'fal', 'grok', ...draft.customProviders.map(p => p.id)]
+  const defaultProviderOrder = ['openai', 'sb2api-async', 'fal', 'grok', 'agnes', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
 
   const unorderedProviderOptions = [
@@ -263,6 +265,7 @@ export default function SettingsModal() {
     { label: 'sub2api（异步）', value: 'sb2api-async', draggable: true },
     { label: 'fal.ai', value: 'fal', draggable: true },
     { label: 'Grok', value: 'grok', draggable: true },
+    { label: 'Agnes', value: 'agnes', draggable: true },
     ...draft.customProviders.map((provider) => {
       const actions = [
         ...(!presetConfigOnly && !isPresetProviderLocked(provider.id) ? [{ label: '编辑', onClick: () => openEditCustomProvider(provider) }] : []),
@@ -525,14 +528,14 @@ export default function SettingsModal() {
     })
 
   const updateActiveProfile = (patch: Partial<ApiProfile>, commit = false) => {
-    if (activeProfileLocked && (Object.keys(patch).length !== 1 || patch.apiKey === undefined)) return
+    if (activeProfileLocked && (Object.keys(patch).length !== 1 || (patch.apiKey === undefined && patch.showInModelPicker === undefined))) return
     const nextDraft = getDraftWithActiveProfilePatch(patch)
     setDraft(nextDraft)
     if (commit) commitSettings(nextDraft)
   }
 
   const commitActiveProfilePatch = (patch: Partial<ApiProfile>) => {
-    if (activeProfileLocked && (Object.keys(patch).length !== 1 || patch.apiKey === undefined)) return
+    if (activeProfileLocked && (Object.keys(patch).length !== 1 || (patch.apiKey === undefined && patch.showInModelPicker === undefined))) return
     const nextDraft = getDraftWithActiveProfilePatch(patch)
     commitSettings(nextDraft)
   }
@@ -907,7 +910,7 @@ export default function SettingsModal() {
   }
 
   const handleProviderReorder = (sourceValue: string | number, targetValue: string | number, position: 'before' | 'after' | null) => {
-    const currentOrder = draft.providerOrder || ['openai', 'sb2api-async', 'fal', 'grok', ...draft.customProviders.map(p => p.id)]
+    const currentOrder = draft.providerOrder || ['openai', 'sb2api-async', 'fal', 'grok', 'agnes', ...draft.customProviders.map(p => p.id)]
     const sourceIndex = currentOrder.indexOf(String(sourceValue))
     const targetIndex = currentOrder.indexOf(String(targetValue))
     if (sourceIndex < 0 || targetIndex < 0) return
@@ -1439,6 +1442,23 @@ export default function SettingsModal() {
 
               {/* 2. 服务商类型 */}
               <div className="block">
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <span className="text-sm text-gray-600 dark:text-gray-300">在底部模型菜单中显示</span>
+                  <button
+                    type="button"
+                    onClick={() => updateActiveProfile({ showInModelPicker: !activeProfile.showInModelPicker }, true)}
+                    className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${activeProfile.showInModelPicker ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                    role="switch"
+                    aria-checked={!!activeProfile.showInModelPicker}
+                    aria-label="在底部模型菜单中显示"
+                  >
+                    <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${activeProfile.showInModelPicker ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+                  </button>
+                </div>
+                <p className="text-xs leading-relaxed text-gray-500">开启后，可在底部直接切换此配置的模型、地址和密钥。当前正在使用的配置始终显示。</p>
+              </div>
+
+              <div className="block">
                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">服务商类型</span>
                 <Select
                   value={activeProfile.provider}
@@ -1574,7 +1594,7 @@ export default function SettingsModal() {
                   onBlur={(e) => commitActiveProfilePatch({ model: e.target.value })}
                   type="text"
                   disabled={activeProfileLocked}
-                  placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : activeProviderIsGrok ? DEFAULT_GROK_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
+                  placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : activeProviderIsGrok ? DEFAULT_GROK_MODEL : activeProviderIsAgnes ? DEFAULT_AGNES_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
                   className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
                   <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
@@ -1586,6 +1606,8 @@ export default function SettingsModal() {
                     </>
                   ) : activeProviderIsGrok ? (
                     <>使用 Grok 图片模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_GROK_MODEL}</code>。质量支持 low、medium，默认为 medium。</>
+                  ) : activeProviderIsAgnes ? (
+                    <>使用 Agnes 图片模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_AGNES_MODEL}</code>。支持文生图、多图编辑和 1K / 2K / 3K / 4K 尺寸，质量由模型决定。</>
                   ) : activeCustomProvider ? (
                     <>当前使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{activeCustomProvider.name}</code>。</>
                   ) : (activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses' ? (
@@ -1708,8 +1730,8 @@ export default function SettingsModal() {
                   </div>
                 </div>
                 <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                  {activeProviderIsGrok
-                    ? 'Grok 使用本地后处理生成透明背景。'
+                  {activeProviderIsGrok || activeProviderIsAgnes
+                    ? `${activeProviderIsGrok ? 'Grok' : 'Agnes'} 使用本地后处理生成透明背景。`
                     : activeCustomProviderSupportsNativeTransparentBackground
                     ? `API 原生会请求接口直接生成透明背景，需当前接口支持；本地后处理会生成纯色背景并在${isTauri ? '本地' : '浏览器中'}去除。`
                     : <>当前自定义服务商 Manifest 未映射 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">$params.background</code>，无法使用 API 原生透明背景。</>}
@@ -1717,7 +1739,7 @@ export default function SettingsModal() {
               </div>
 
               {/* 10. 返回 Base64 图片数据 */}
-              {activeProviderIsOpenAICompatible && !activeProviderIsGrok && (
+              {activeProviderIsOpenAICompatible && !activeProviderIsGrok && !activeProviderIsAgnes && (
                 <div className="block">
                   <div className="mb-1.5 flex items-center justify-between">
                     <span className="block text-sm text-gray-600 dark:text-gray-300">返回 Base64 图片数据</span>
@@ -1740,7 +1762,7 @@ export default function SettingsModal() {
               )}
 
               {/* 11. Codex CLI 兼容模式 */}
-              {activeProviderIsOpenAICompatible && !activeProviderIsGrok && (
+              {activeProviderIsOpenAICompatible && !activeProviderIsGrok && !activeProviderIsAgnes && (
                 <div className="block">
                   <div className="mb-1.5 flex items-center justify-between">
                     <span className="block text-sm text-gray-600 dark:text-gray-300">Codex CLI 兼容模式</span>

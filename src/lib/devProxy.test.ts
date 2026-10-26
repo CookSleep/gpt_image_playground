@@ -29,6 +29,14 @@ describe('buildApiUrl', () => {
     vi.stubEnv('DEV', false)
     expect(buildApiUrl('https://grok.aisenno.com/v1', 'images/generations')).toBe('https://grok.aisenno.com/v1/images/generations')
   })
+
+  it('proxies Agnes official requests without redirecting custom provider URLs', () => {
+    vi.stubEnv('DEV', true)
+    expect(buildApiUrl('https://apihub.agnes-ai.com/v1', 'images/generations')).toBe('/agnes-api/images/generations')
+    expect(buildApiUrl('https://agnes.example/v1', 'images/generations')).toBe('https://agnes.example/v1/images/generations')
+    vi.stubEnv('DEV', false)
+    expect(buildApiUrl('https://apihub.agnes-ai.com/v1', 'images/generations')).toBe('https://apihub.agnes-ai.com/v1/images/generations')
+  })
   it('uses the same-origin proxy prefix when API proxy is enabled', () => {
     expect(buildApiUrl('http://api.example.com/v1', 'images/edits', null, true)).toBe(
       '/api-proxy/images/edits',

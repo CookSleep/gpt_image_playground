@@ -57,6 +57,7 @@ export default defineConfig(async ({ command, mode }) => {
       __APP_VERSION__: JSON.stringify(pkg.version),
       __DEV_PROXY_CONFIG__: JSON.stringify(devProxyConfig),
       'import.meta.env.VITE_GROK_PROXY_AVAILABLE': JSON.stringify(process.env.VERCEL === '1' ? 'true' : 'false'),
+      'import.meta.env.VITE_AGNES_PROXY_AVAILABLE': JSON.stringify(process.env.VERCEL === '1' ? 'true' : 'false'),
     },
     server: {
       host: true,
@@ -64,6 +65,12 @@ export default defineConfig(async ({ command, mode }) => {
       strictPort: Boolean(process.env.TAURI_ENV_PLATFORM),
       watch: { ignored: ['**/src-tauri/**'] },
       proxy: {
+        '/agnes-api': {
+          target: 'https://apihub.agnes-ai.com',
+          changeOrigin: true,
+          secure: true,
+          rewrite: (path) => path.replace(/^\/agnes-api/, '/v1'),
+        },
         '/grok-api': {
           target: 'https://grok.aisenno.com',
           changeOrigin: true,

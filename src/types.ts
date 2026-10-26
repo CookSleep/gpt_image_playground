@@ -15,7 +15,7 @@ export const ZIP_DOWNLOAD_ROUTE_VALUES = [
 ] as const
 export type ZipDownloadRoute = typeof ZIP_DOWNLOAD_ROUTE_VALUES[number]
 export const DEFAULT_ZIP_DOWNLOAD_ROUTES: ZipDownloadRoute[] = ['task-selection', 'favorite-collection-selection']
-export type BuiltInApiProvider = 'openai' | 'sb2api-async' | 'fal' | 'grok'
+export type BuiltInApiProvider = 'openai' | 'sb2api-async' | 'fal' | 'grok' | 'agnes'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
 export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
@@ -84,6 +84,8 @@ export interface ApiProfile {
   model: string
   /** 首页选中的模型；不在列表中时回退到第一个 */
   selectedModel?: string
+  /** 将此配置的模型加入底部模型菜单。 */
+  showInModelPicker?: boolean
   imageGenerationModel?: string
   timeout: number
   apiMode: ApiMode

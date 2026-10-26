@@ -3,6 +3,7 @@ import type { ApiProfile, AppSettings, BatchProgress, BatchPromptMode, TaskParam
 import { DEFAULT_BATCH_PROMPT_CONCURRENCY, normalizeBatchPromptConcurrency } from '../../lib/batchPrompts'
 import { isTauri } from '../../lib/platform'
 import { isGrokImageProfile, normalizeGrokQuality } from '../../lib/grok'
+import { isAgnesImageProfile } from '../../lib/agnes'
 import { dismissAllTooltips } from '../../lib/tooltipDismiss'
 import Select from '../Select'
 import ButtonTooltip from './buttonTooltip'
@@ -98,6 +99,7 @@ export default function InputParamsPanel({
   params,
   setParams,
   activeProfile,
+  modelValue,
   modelOptions,
   onModelChange,
   isFalProvider,
@@ -148,6 +150,7 @@ export default function InputParamsPanel({
   params: TaskParams
   setParams: (patch: Partial<TaskParams>) => void
   activeProfile: ApiProfile
+  modelValue: string
   modelOptions: Array<{ label: string; value: string }>
   onModelChange: (model: string) => void
   isFalProvider: boolean
@@ -196,9 +199,10 @@ export default function InputParamsPanel({
   onStopBatch: () => void
 }) {
   const isGrok = isGrokImageProfile(activeProfile)
+  const isAgnes = isAgnesImageProfile(activeProfile)
   // 折叠时也展示弹层内每一项的当前值，不支持的参数不显示
   const moreSummary = [
-    isGrok ? '格式自动' : params.output_format.toUpperCase(),
+    isGrok || isAgnes ? '格式自动' : params.output_format.toUpperCase(),
     showTransparentOutputControl
       ? `透明 ${transparentOutputEnabled}`
       : compressionDisabled ? null : `压缩 ${outputCompressionInput || '默认'}`,
@@ -215,7 +219,7 @@ export default function InputParamsPanel({
       {/* 极小的收缩权重：先截断“更多”的摘要，放不下时才压缩模型 ID */}
       <div className="min-w-0 max-w-full sm:shrink-[0.01] max-sm:flex-auto">
         <Select
-          value={activeProfile.model}
+          value={modelValue}
           onChange={(val) => onModelChange(String(val))}
           options={modelOptions}
           showValueTooltips
@@ -261,11 +265,11 @@ export default function InputParamsPanel({
           onChange={(val) => {
             if (!activeProfile.codexCli) setParams({ quality: val as TaskParams['quality'] })
           }}
-          options={qualityOptions}
-          disabled={activeProfile.codexCli}
+          options={isAgnes ? [{ label: '自动', value: 'auto' }] : qualityOptions}
+          disabled={activeProfile.codexCli || isAgnes}
           prefix={prefix('质量')}
           menuClassName="min-w-max"
-          className={activeProfile.codexCli ? CHIP_DISABLED_CLASS : CHIP_CLASS}
+          className={activeProfile.codexCli || isAgnes ? CHIP_DISABLED_CLASS : CHIP_CLASS}
         />
         <ButtonTooltip
           visible={(activeProfile.codexCli || isFalProvider) && qualityHint.visible}
@@ -320,7 +324,7 @@ export default function InputParamsPanel({
               <div className="w-28">
                 <Select
                   value={params.output_format}
-                  disabled={isGrok}
+                  disabled={isGrok || isAgnes}
                   onChange={(val) => {
                     setParams({
                       output_format: val as TaskParams['output_format'],
@@ -328,7 +332,7 @@ export default function InputParamsPanel({
                       ...(val === 'jpeg' ? { transparent_output: false } : {}),
                     })
                   }}
-                  options={isGrok ? [{ label: '接口默认', value: 'png' }] : [
+                  options={isGrok || isAgnes ? [{ label: '接口默认', value: 'png' }] : [
                     { label: 'PNG', value: 'png' },
                     { label: 'JPEG', value: 'jpeg' },
                     { label: 'WebP', value: 'webp' },
@@ -430,7 +434,7 @@ export default function InputParamsPanel({
               </div>
               <ButtonTooltip
                 visible={moderationDisabled && moderationHint.visible}
-                text={isGrok ? 'Grok 不支持审核参数' : 'fal.ai 不支持审核参数'}
+                text={isGrok ? 'Grok 不支持审核参数' : isAgnes ? 'Agnes 不支持审核参数' : 'fal.ai 不支持审核参数'}
               />
             </div>
       </ParamPopoverChip>
