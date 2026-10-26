@@ -2,5 +2,15 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
     "deploymentEnabled": false
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/grok-api/images/generations",
+      "destination": "https://grok.aisenno.com/v1/images/generations"
+    },
+    {
+      "source": "/grok-api/images/edits",
+      "destination": "https://grok.aisenno.com/v1/images/edits"
+    }
+  ]
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildApiUrl, normalizeBaseUrl } from './devProxy'
 
 describe('normalizeBaseUrl', () => {
@@ -15,6 +15,20 @@ describe('normalizeBaseUrl', () => {
 })
 
 describe('buildApiUrl', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('uses the Grok development proxy only for its fixed target', () => {
+    vi.stubEnv('DEV', true)
+    expect(buildApiUrl('https://grok.aisenno.com/v1', 'images/generations')).toBe('/grok-api/images/generations')
+    expect(buildApiUrl('https://grok.aisenno.com/v1/', 'images/edits')).toBe('/grok-api/images/edits')
+    expect(buildApiUrl('https://grok.example/v1', 'images/generations')).toBe('https://grok.example/v1/images/generations')
+    expect(buildApiUrl('https://grok.aisenno.com/v1', 'images/generations', null, true)).toBe('/api-proxy/images/generations')
+  })
+
+  it('keeps Grok direct requests on static hosts without a proxy', () => {
+    vi.stubEnv('DEV', false)
+    expect(buildApiUrl('https://grok.aisenno.com/v1', 'images/generations')).toBe('https://grok.aisenno.com/v1/images/generations')
+  })
   it('uses the same-origin proxy prefix when API proxy is enabled', () => {
     expect(buildApiUrl('http://api.example.com/v1', 'images/edits', null, true)).toBe(
       '/api-proxy/images/edits',

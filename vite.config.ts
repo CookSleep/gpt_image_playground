@@ -56,14 +56,21 @@ export default defineConfig(async ({ command, mode }) => {
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
       __DEV_PROXY_CONFIG__: JSON.stringify(devProxyConfig),
+      'import.meta.env.VITE_GROK_PROXY_AVAILABLE': JSON.stringify(process.env.VERCEL === '1' ? 'true' : 'false'),
     },
     server: {
       host: true,
       // Tauri 开发模式的 devUrl 固定为 5173，端口被占用时直接报错而不是换端口
       strictPort: Boolean(process.env.TAURI_ENV_PLATFORM),
       watch: { ignored: ['**/src-tauri/**'] },
-      proxy:
-        devProxyConfig?.enabled
+      proxy: {
+        '/grok-api': {
+          target: 'https://grok.aisenno.com',
+          changeOrigin: true,
+          secure: true,
+          rewrite: (path) => path.replace(/^\/grok-api/, '/v1'),
+        },
+        ...(devProxyConfig?.enabled
           ? {
               [devProxyConfig.prefix]: {
                 target: devProxyConfig.target,
@@ -76,7 +83,8 @@ export default defineConfig(async ({ command, mode }) => {
                   ),
               },
             }
-          : undefined,
+          : {}),
+      },
     },
   }
 })

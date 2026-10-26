@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
-import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
+import { createDefaultFalProfile, createDefaultGrokProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
 import { getOutputImageLimitForSettings, normalizeParamsForSettings } from './paramCompatibility'
 
 describe('parameter compatibility', () => {
+  it.each(['auto', 'low', 'medium', 'high', 'xhigh', 'max'] as const)('normalizes Grok quality %s and preserves OpenAI quality', (quality) => {
+    const profile = createDefaultGrokProfile()
+    const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id })
+    expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, quality }, settings).quality).toBe(quality === 'low' ? 'low' : 'medium')
+    expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, quality }, DEFAULT_SETTINGS).quality).toBe(quality)
+  })
   it('limits OpenAI output count to 10', () => {
     const openAIProfile = createDefaultOpenAIProfile({ apiKey: 'test-key', streamImages: false })
     const settings = normalizeSettings({

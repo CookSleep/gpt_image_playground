@@ -1,5 +1,6 @@
 import { isTauri } from './platform'
 import { readRuntimeEnv } from './runtimeEnv'
+import { DEFAULT_GROK_BASE_URL } from './grok'
 
 export interface DevProxyConfig {
   enabled: boolean
@@ -71,6 +72,9 @@ export function buildApiUrl(
   }
 
   const normalizedBaseUrl = normalizeBaseUrl(trimmedBaseUrl)
+  if (!isTauri && (import.meta.env.DEV || import.meta.env.VITE_GROK_PROXY_AVAILABLE === 'true') && normalizedBaseUrl.replace(/\/+$/, '') === DEFAULT_GROK_BASE_URL) {
+    return `/grok-api/${endpointPath}`
+  }
   if (trimmedBaseUrl.endsWith('/')) {
     return `${normalizedBaseUrl.replace(/\/+$/, '')}/${endpointPath}`
   }

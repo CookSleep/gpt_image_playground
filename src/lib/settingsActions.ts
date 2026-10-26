@@ -17,6 +17,7 @@ import {
 } from './apiProfiles'
 import { isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig } from './devProxy'
 import { isTauri } from './platform'
+import { DEFAULT_GROK_BASE_URL, DEFAULT_GROK_MODEL } from './grok'
 import {
   getDefaultPresetBaseUrl,
   getDefaultPresetProfileId,
@@ -57,11 +58,11 @@ export function prepareSettingsForCommit(draft: AppSettings): AppSettings {
     const shouldKeepEmptyBaseUrl = profile.provider !== 'fal' && nextApiProxy && !profile.baseUrl.trim()
     const emptyBaseUrlFallback = profile.id === defaultProfileId
       ? getDefaultPresetBaseUrl()
-      : DEFAULT_SETTINGS.baseUrl
+      : profile.provider === 'grok' ? DEFAULT_GROK_BASE_URL : DEFAULT_SETTINGS.baseUrl
     const baseUrl = profile.provider === 'fal'
       ? profile.baseUrl.trim().replace(/\/+$/, '') || (profile.id === defaultProfileId ? '' : DEFAULT_FAL_BASE_URL)
       : shouldKeepEmptyBaseUrl ? '' : normalizeBaseUrl(profile.baseUrl.trim() || emptyBaseUrlFallback)
-    const defaultModel = profile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(profile.apiMode)
+    const defaultModel = profile.provider === 'fal' ? DEFAULT_FAL_MODEL : profile.provider === 'grok' ? DEFAULT_GROK_MODEL : getDefaultModelForMode(profile.apiMode)
     return {
       ...profile,
       name: profile.name.trim() || (profile.id === defaultProfileId ? '默认' : '新配置'),

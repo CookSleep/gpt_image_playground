@@ -25,9 +25,10 @@ import {
   PROMPT_REWRITE_GUARD_PREFIX,
 } from './imageApiShared'
 import { getImageGenerationModel } from './imageModels'
+import { isGrokImageProfile, normalizeGrokQuality } from './grok'
 import { apiFetch, FetchConnectError } from './platform'
 import { isEventStreamResponse, readJsonServerSentEvents } from './serverSentEvents'
-import { prependCodexCliSizePrompt } from './size'
+import { formatImageRatio, parseRatio, prependCodexCliSizePrompt } from './size'
 
 function getStreamPartialImages(profile: ApiProfile): number {
   return profile.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES
@@ -242,7 +243,8 @@ async function parseImagesApiResponse(payload: ImageApiResponse, mime: string, s
     for (const item of data) {
       const b64 = item.b64_json
       if (b64) {
-        images.push(normalizeBase64Image(b64, mime))
+        const imageMime = item.mime_type && Object.values(MIME_MAP).includes(item.mime_type) ? item.mime_type : mime
+        images.push(normalizeBase64Image(b64, imageMime))
         revisedPrompts.push(typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined)
         continue
       }
@@ -484,6 +486,9 @@ async function callImagesApiConcurrent(opts: CallApiOptions, profile: ApiProfile
 
 async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const { prompt: originalPrompt, params, inputImageDataUrls } = opts
+  const isGrok = isGrokImageProfile(profile)
+  if (isGrok && opts.maskDataUrl) throw new Error('Grok 不支持遮罩编辑，请使用普通参考图编辑。')
+  if (isGrok && opts.nativeTransparentBackground) throw new Error('Grok 不支持原生透明背景，请使用本地后处理。')
   const sizePrompt = profile.codexCli && !opts.skipCodexCliSizePrompt
     ? prependCodexCliSizePrompt(originalPrompt, params.size)
     : originalPrompt
@@ -503,7 +508,34 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
   try {
     let response: Response
 
-    if (isEdit) {
+    if (isGrok) {
+      const body: Record<string, unknown> = {
+        model: profile.model,
+        prompt: originalPrompt,
+        n: params.n > 0 ? params.n : 1,
+        quality: normalizeGrokQuality(params.quality),
+        // 直接返回图片，避免浏览器下载远程图片时再次遇到跨域限制。
+        response_format: 'b64_json',
+      }
+      if (isEdit) {
+        assertImageInputPayloadSize(inputImageDataUrls.reduce((sum, url) => sum + getDataUrlDecodedByteSize(url), 0))
+        if (inputImageDataUrls.length === 1) body.image = { url: inputImageDataUrls[0] }
+        else body.images = inputImageDataUrls.map((url) => ({ url }))
+      } else {
+        const size = parseRatio(params.size)
+        if (size) {
+          body.aspect_ratio = formatImageRatio(size.width, size.height).replace(/^≈/, '')
+          body.resolution = size.width * size.height > 1_572_864 ? '2k' : '1k'
+        }
+      }
+      response = await apiFetch(buildApiUrl(profile.baseUrl, isEdit ? paths.editPath : paths.generationPath, proxyConfig, useApiProxy), {
+        method: 'POST',
+        headers: { ...requestHeaders, 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+    } else if (isEdit) {
       const formData = new FormData()
       formData.append('model', profile.model)
       formData.append('prompt', prompt)

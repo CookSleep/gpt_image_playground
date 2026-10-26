@@ -5,6 +5,7 @@ import { DEFAULT_PARAMS, MAX_INPUT_IMAGES, type TaskRecord } from '../types'
 import { getActiveAgentRounds } from '../lib/agentConversationState'
 import { getActiveApiProfile, getAgentImageApiProfile, normalizeSettings, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
 import { getImageGenerationModel, isGptImage25Model } from '../lib/imageModels'
+import { isGrokImageProfile } from '../lib/grok'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { splitBatchPrompts } from '../lib/batchPrompts'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
@@ -513,12 +514,13 @@ export default function InputBar() {
   }, [setPrompt])
   const activeProvider = activeProfile.provider
   const isFalProvider = activeProvider === 'fal'
+  const isGrokProvider = isGrokImageProfile(activeProfile)
   const agentAutoImageCount = appMode === 'agent'
-  const moderationDisabled = isFalProvider
+  const moderationDisabled = isFalProvider || isGrokProvider
   const transparentOutputAvailable = appMode === 'gallery'
   const showTransparentOutputControl = transparentOutputAvailable && (params.output_format === 'png' || params.output_format === 'webp')
   const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
-  const compressionDisabled = params.output_format === 'png' || isFalProvider
+  const compressionDisabled = params.output_format === 'png' || isFalProvider || isGrokProvider
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
   const isFalTextToImage = isFalProvider && inputImages.length === 0
   const nDraftValue = Number(nInput)
@@ -528,17 +530,17 @@ export default function InputBar() {
     ? 'Agent 模式下数量由模型根据提示词自动决定'
     : isFalProvider
     ? `fal.ai 最大请求数量为 ${outputImageLimit}`
-    : `OpenAI 最大请求数量为 ${outputImageLimit}`
+    : `${isGrokProvider ? 'Grok' : 'OpenAI'} 最大请求数量为 ${outputImageLimit}`
   const displaySize = isFalTextToImage && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
     : (activeProfile.codexCli ? normalizeCodexCliImageSize(params.size) : normalizeImageSize(params.size)) || DEFAULT_PARAMS.size
 
   const qualityOptions = [
-    ...(!isFalProvider ? [{ label: 'auto', value: 'auto' }] : []),
+    ...(!isFalProvider && !isGrokProvider ? [{ label: 'auto', value: 'auto' }] : []),
     { label: 'low', value: 'low' },
     { label: 'medium', value: 'medium' },
-    { label: 'high', value: 'high' },
-    ...(isGptImage25Model(getImageGenerationModel(activeProfile))
+    ...(!isGrokProvider ? [{ label: 'high', value: 'high' }] : []),
+    ...(!isGrokProvider && isGptImage25Model(getImageGenerationModel(activeProfile))
       ? [
           { label: 'xhigh', value: 'xhigh' },
           { label: 'max', value: 'max' },

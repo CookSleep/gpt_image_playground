@@ -222,6 +222,10 @@ npm run tauri:build
 
 点击按钮导入仓库，Vercel 会自动构建并部署。
 
+**Grok 图片接口**：在「设置 → API 配置」中选择「Grok」，默认地址为 `https://grok.aisenno.com/v1`，模型为 `grok-imagine-image-2.0`，填入自己的 API Key 后保存。支持文生图与参考图编辑，质量仅支持 `low`、`medium`，默认为 `medium`。参考图编辑采用 JSON 图片 URL / Data URL 协议，不支持遮罩编辑；透明背景使用本地后处理。
+
+Vercel 部署和 `npm run dev` 会自动通过同域路径转发该默认地址的图片请求，解决浏览器跨域限制，无需开启「API 代理」开关。密钥由浏览器随请求传递，不内置于部署代码。其他地址及纯静态部署仍需服务商支持 CORS，或自行配置代理。文生图尺寸会转换为宽高比及 `1k` / `2k` 分辨率，实际支持范围以服务商为准。
+
 **环境变量（可选）**
 
 在 Vercel 项目的 **Settings → Environment Variables** 中添加，添加或修改后需要重新部署：

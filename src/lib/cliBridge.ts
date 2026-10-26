@@ -313,7 +313,7 @@ function saveApiProfile(args: Record<string, unknown>) {
   const base = existing ?? createDefaultOpenAIProfile({ id: newId('openai'), name: '新配置' })
   const provider = typeof fields.provider === 'string' ? fields.provider : base.provider
   const customProvider = getCustomProviderDefinition(settings, provider)
-  if (!['openai', 'sb2api-async', 'fal'].includes(provider) && !customProvider) throw new Error(`没有这个服务商：${provider}`)
+  if (!['openai', 'sb2api-async', 'fal', 'grok'].includes(provider) && !customProvider) throw new Error(`没有这个服务商：${provider}`)
   const switched = provider === base.provider ? base : switchApiProfileProvider(base, provider, customProvider ?? undefined)
   const profile = { ...switched, ...fields, provider } as ApiProfile
   if (fields.selectedModel !== undefined && !splitModelList(profile.model).includes(String(fields.selectedModel))) {
