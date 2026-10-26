@@ -24,6 +24,8 @@ import { normalizeReasoningEffort, normalizeStreamPartialImages, parseDefaultApi
 import { readRuntimeEnv } from './runtimeEnv'
 import { isImportableConfigUrl } from './importableConfigUrl'
 import { DEFAULT_IMAGES_MODEL } from './imageModels'
+import { DEFAULT_GROK_BASE_URL, DEFAULT_GROK_MODEL, isGrokImageProfile } from './grok'
+import { DEFAULT_AGNES_BASE_URL, DEFAULT_AGNES_MODEL, isAgnesImageProfile } from './agnes'
 import { DEFAULT_BATCH_PROMPT_CONCURRENCY, normalizeBatchPromptConcurrency } from './batchPrompts'
 import { normalizeFontMode } from './fonts'
 import { DEFAULT_PRIVACY_MODE_SHORTCUT, normalizeShortcutSetting } from './keyboardShortcut'
@@ -43,7 +45,7 @@ export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
 export const DEFAULT_API_TIMEOUT = 600
 
-const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'sb2api-async', 'fal'])
+const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'sb2api-async', 'fal', 'grok', 'agnes'])
 const DEFAULT_CUSTOM_PROVIDER_PATHS = {
   generationPath: 'images/generations',
   editPath: 'images/edits',
@@ -149,7 +151,7 @@ function normalizeZipDownloadRoutes(value: unknown) {
 function normalizeProviderOrder(value: unknown, customProviders: CustomProviderDefinition[]): string[] | undefined {
   if (!Array.isArray(value)) return undefined
 
-  const providerIds = ['openai', 'sb2api-async', 'fal', ...customProviders.map((provider) => provider.id)]
+  const providerIds = ['openai', 'sb2api-async', 'fal', 'grok', 'agnes', ...customProviders.map((provider) => provider.id)]
   const knownIds = new Set(providerIds)
   const ordered = value
     .map(String)
@@ -382,6 +384,7 @@ export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}):
     apiKey: DEFAULT_API_URL_PATCH?.apiKey ?? '',
     model: DEFAULT_API_URL_PATCH?.model ?? (apiMode === 'responses' ? DEFAULT_RESPONSES_MODEL : DEFAULT_IMAGES_MODEL),
     imageGenerationModel: DEFAULT_API_URL_PATCH?.imageGenerationModel ?? DEFAULT_IMAGES_MODEL,
+    showInModelPicker: false,
     timeout: DEFAULT_API_TIMEOUT,
     reasoningEffort: DEFAULT_API_URL_PATCH?.reasoningEffort,
     codexCli: DEFAULT_API_URL_PATCH?.codexCli ?? false,
@@ -394,6 +397,42 @@ export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}):
   }
 }
 
+export function createDefaultGrokProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
+  return createDefaultOpenAIProfile({
+    id: `grok-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    name: 'Grok',
+    provider: 'grok',
+    baseUrl: DEFAULT_GROK_BASE_URL,
+    apiKey: '',
+    model: DEFAULT_GROK_MODEL,
+    apiMode: 'images',
+    codexCli: false,
+    apiProxy: false,
+    responseFormatB64Json: true,
+    streamImages: false,
+    transparentBackgroundMethod: 'local',
+    ...overrides,
+  })
+}
+
+export function createDefaultAgnesProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
+  return createDefaultOpenAIProfile({
+    id: `agnes-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    name: 'Agnes',
+    provider: 'agnes',
+    baseUrl: DEFAULT_AGNES_BASE_URL,
+    apiKey: '',
+    model: DEFAULT_AGNES_MODEL,
+    apiMode: 'images',
+    codexCli: false,
+    apiProxy: false,
+    responseFormatB64Json: true,
+    streamImages: false,
+    transparentBackgroundMethod: 'local',
+    ...overrides,
+  })
+}
+
 export function createDefaultFalProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
   return {
     id: `fal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
@@ -403,6 +442,7 @@ export function createDefaultFalProfile(overrides: Partial<ApiProfile> = {}): Ap
     apiKey: '',
     model: DEFAULT_FAL_MODEL,
     imageGenerationModel: DEFAULT_IMAGES_MODEL,
+    showInModelPicker: false,
     timeout: DEFAULT_API_TIMEOUT,
     apiMode: 'images',
     codexCli: false,
@@ -432,6 +472,24 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
     },
   }
   const savedDraft = providerDrafts[provider]
+
+  if (provider === 'grok' || provider === 'agnes') {
+    const createProfile = provider === 'grok' ? createDefaultGrokProfile : createDefaultAgnesProfile
+    return createProfile({
+      ...profile,
+      ...savedDraft,
+      provider,
+      baseUrl: savedDraft?.baseUrl ?? (provider === 'grok' ? DEFAULT_GROK_BASE_URL : DEFAULT_AGNES_BASE_URL),
+      model: savedDraft?.model ?? (provider === 'grok' ? DEFAULT_GROK_MODEL : DEFAULT_AGNES_MODEL),
+      apiMode: 'images',
+      codexCli: false,
+      streamImages: false,
+      apiProxy: savedDraft?.apiProxy ?? false,
+      responseFormatB64Json: true,
+      transparentBackgroundMethod: 'local',
+      providerDrafts,
+    })
+  }
 
   if (provider === 'fal') {
     return {
@@ -510,6 +568,10 @@ function normalizeProviderDraft(
   const transparentBackgroundMethod = nativeTransparentBackgroundUnavailable ? 'local' : 'api'
   const fallback = provider === 'fal'
     ? createDefaultFalProfile()
+    : provider === 'grok'
+    ? createDefaultGrokProfile()
+    : provider === 'agnes'
+    ? createDefaultAgnesProfile()
     : createDefaultOpenAIProfile({ transparentBackgroundMethod })
   const baseUrl = typeof input.baseUrl === 'string' ? input.baseUrl : undefined
   const model = (typeof input.model === 'string' && normalizeModelList(input.model)) || undefined
@@ -565,9 +627,16 @@ export function normalizeApiProfile(
     : fallback
   const defaults = provider === 'fal'
     ? createDefaultFalProfile(providerFallback)
+    : provider === 'grok'
+    ? createDefaultGrokProfile(providerFallback)
+    : provider === 'agnes'
+    ? createDefaultAgnesProfile(providerFallback)
     : createDefaultOpenAIProfile({ ...providerFallback, apiMode })
+  const model = (typeof record.model === 'string' && normalizeModelList(record.model)) || defaults.model
+  const isGrok = isGrokImageProfile({ ...defaults, provider, apiMode, model })
+  const isAgnes = isAgnesImageProfile({ ...defaults, provider, apiMode, model })
   const rawBaseUrl = typeof record.baseUrl === 'string' ? record.baseUrl : defaults.baseUrl
-  const streamImages = provider === 'openai'
+  const streamImages = provider === 'openai' && !isGrok && !isAgnes
     ? typeof record.streamImages === 'boolean' ? record.streamImages : defaults.streamImages
     : false
   const nativeTransparentBackgroundUnavailable = customProviderIds.has(provider) && !nativeTransparentProviderIds.has(provider)
@@ -581,20 +650,21 @@ export function normalizeApiProfile(
     provider,
     baseUrl: provider === 'fal' ? rawBaseUrl.trim().replace(/\/+$/, '') : rawBaseUrl,
     apiKey: typeof record.apiKey === 'string' ? record.apiKey : defaults.apiKey,
-    model: (typeof record.model === 'string' && normalizeModelList(record.model)) || defaults.model,
+    model,
     selectedModel: typeof record.selectedModel === 'string' && record.selectedModel.trim() ? record.selectedModel.trim() : undefined,
+    showInModelPicker: record.showInModelPicker === true,
     imageGenerationModel: typeof record.imageGenerationModel === 'string'
       ? record.imageGenerationModel.trim()
       : '',
     timeout: typeof record.timeout === 'number' && Number.isFinite(record.timeout) ? record.timeout : defaults.timeout,
     apiMode,
     reasoningEffort: normalizeReasoningEffort(record.reasoningEffort, defaults.reasoningEffort),
-    codexCli: Boolean(record.codexCli),
+    codexCli: !isGrok && !isAgnes && Boolean(record.codexCli),
     apiProxy: provider === 'sb2api-async' ? false : typeof record.apiProxy === 'boolean' ? record.apiProxy : defaults.apiProxy,
-    responseFormatB64Json: record.responseFormatB64Json === true ? true : undefined,
+    responseFormatB64Json: isGrok || isAgnes || record.responseFormatB64Json === true ? true : undefined,
     streamImages,
     streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages, defaults.streamPartialImages),
-    transparentBackgroundMethod: !nativeTransparentBackgroundUnavailable && (record.transparentBackgroundMethod === 'api' || record.transparentBackgroundMethod === 'local')
+    transparentBackgroundMethod: isGrok || isAgnes ? 'local' : !nativeTransparentBackgroundUnavailable && (record.transparentBackgroundMethod === 'api' || record.transparentBackgroundMethod === 'local')
       ? record.transparentBackgroundMethod
       : defaults.transparentBackgroundMethod,
     providerDrafts: normalizeProviderDrafts(record.providerDrafts, customProviderIds, nativeTransparentProviderIds),
@@ -790,6 +860,8 @@ export function getCustomProviderDefinition(settings: Partial<AppSettings> | unk
 }
 
 export function getApiProviderLabel(settings: Partial<AppSettings> | unknown, provider: ApiProvider): string {
+  if (provider === 'grok') return 'Grok'
+  if (provider === 'agnes') return 'Agnes'
   if (provider === 'fal') return 'fal.ai'
   if (provider === 'openai') return 'OpenAI'
   if (provider === 'sb2api-async') return SUB2API_PROVIDER.name
@@ -797,7 +869,7 @@ export function getApiProviderLabel(settings: Partial<AppSettings> | unknown, pr
 }
 
 export function isOpenAICompatibleProvider(settings: Partial<AppSettings> | unknown, provider: ApiProvider): boolean {
-  return provider === 'openai' || Boolean(getCustomProviderDefinition(settings, provider))
+  return provider === 'openai' || provider === 'grok' || provider === 'agnes' || Boolean(getCustomProviderDefinition(settings, provider))
 }
 
 export interface ImportedProviderSettings extends PresetConfig {
@@ -1245,7 +1317,7 @@ export function mergePresetImportedSettings(
       ? mergePresetProfileSnapshot(previous, normalizedProfile, fields)
       : normalizedProfile
     if (!matched) return importedProfile
-    if (options.lockPresetParams) return { ...importedProfile, apiKey: matched.apiKey }
+    if (options.lockPresetParams) return { ...importedProfile, apiKey: matched.apiKey, showInModelPicker: matched.showInModelPicker }
     if (!previous) return { ...matched, baseUrl: importedProfile.baseUrl, isDefault: importedProfile.isDefault }
 
     const changed: Partial<ApiProfile> = {}

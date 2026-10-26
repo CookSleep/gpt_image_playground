@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
-import { createDefaultOpenAIProfile, DEFAULT_IMAGES_MODEL, DEFAULT_SETTINGS } from './apiProfiles'
+import { createDefaultGrokProfile, createDefaultOpenAIProfile, DEFAULT_IMAGES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
 import { normalizePersistedState } from './persistedState'
 import { callImageApi } from './api'
 import { maybeAppendImageToolDroppedHint, maybeAppendStreamingHint } from './imageApiShared'
@@ -25,6 +25,82 @@ describe('callImageApi', () => {
     vi.restoreAllMocks()
     vi.unstubAllEnvs()
     vi.useRealTimers()
+  })
+
+  it.each(['auto', 'low', 'medium', 'high', 'xhigh', 'max'] as const)('sends Grok JSON generation with compatible %s quality', async (quality) => {
+    const profile = createDefaultGrokProfile({ apiKey: 'test-key' })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: 'aW1hZ2U=' }] })))
+
+    const result = await callImageApi({
+      settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id }),
+      prompt: 'A red chair',
+      params: { ...DEFAULT_PARAMS, quality, size: '2560x1440', n: 2 },
+      inputImageDataUrls: [],
+    })
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(String(url)).toMatch(/\/images\/generations$/)
+    expect(init?.headers).toMatchObject({ Authorization: 'Bearer test-key', 'Content-Type': 'application/json' })
+    expect(JSON.parse(String(init?.body))).toEqual({
+      model: 'grok-imagine-image-2.0',
+      prompt: 'A red chair',
+      n: 2,
+      quality: quality === 'low' ? 'low' : 'medium',
+      aspect_ratio: '16:9',
+      resolution: '2k',
+      response_format: 'b64_json',
+    })
+    expect(result.images).toEqual(['data:image/png;base64,aW1hZ2U='])
+  })
+
+  it.each([1, 2])('sends %s Grok reference images as JSON URL objects', async (count) => {
+    const profile = createDefaultOpenAIProfile({ apiKey: 'test-key', model: 'grok-imagine-image-2.0' })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: 'aW1hZ2U=' }] })))
+    const images = Array.from({ length: count }, () => 'data:image/png;base64,aW1hZ2U=')
+
+    await callImageApi({
+      settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id }),
+      prompt: 'Make it blue',
+      params: DEFAULT_PARAMS,
+      inputImageDataUrls: images,
+    })
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(String(url)).toMatch(/\/images\/edits$/)
+    expect(init?.body).not.toBeInstanceOf(FormData)
+    expect(JSON.parse(String(init?.body))).toEqual({
+      model: 'grok-imagine-image-2.0',
+      prompt: 'Make it blue',
+      n: 1,
+      quality: 'medium',
+      response_format: 'b64_json',
+      ...(count === 1 ? { image: { url: images[0] } } : { images: images.map((url) => ({ url })) }),
+    })
+  })
+
+  it('rejects unsupported Grok mask editing before requesting the API', async () => {
+    const profile = createDefaultGrokProfile({ apiKey: 'test-key' })
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    await expect(callImageApi({
+      settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id }),
+      prompt: 'Make it blue',
+      params: DEFAULT_PARAMS,
+      inputImageDataUrls: ['data:image/png;base64,aW1hZ2U='],
+      maskDataUrl: 'data:image/png;base64,aW1hZ2U=',
+    })).rejects.toThrow('Grok 不支持遮罩编辑')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('uses the actual MIME type returned by Grok instead of the requested format', async () => {
+    const profile = createDefaultGrokProfile({ apiKey: 'test-key' })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: '/9j/aW1hZ2U=', mime_type: 'image/jpeg' }] })))
+    const result = await callImageApi({
+      settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id }),
+      prompt: 'A red circle',
+      params: DEFAULT_PARAMS,
+      inputImageDataUrls: [],
+    })
+    expect(result.images).toEqual(['data:image/jpeg;base64,/9j/aW1hZ2U='])
   })
 
   it.each([false, true])(

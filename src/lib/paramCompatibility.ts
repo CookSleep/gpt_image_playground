@@ -1,6 +1,8 @@
 import { DEFAULT_PARAMS, type AppSettings, type TaskParams } from '../types'
 import { getActiveApiProfile, isOpenAICompatibleProvider } from './apiProfiles'
 import { getImageGenerationModel, isGptImage25Model } from './imageModels'
+import { isGrokImageProfile, normalizeGrokQuality } from './grok'
+import { isAgnesImageProfile, normalizeAgnesImageSize } from './agnes'
 import { normalizeCodexCliImageSize, normalizeImageSize } from './size'
 
 export const DEFAULT_FAL_IMAGE_SIZE = '1360x1024'
@@ -20,7 +22,7 @@ export function normalizeParamsForSettings(
   const outputImageLimit = getOutputImageLimitForSettings(settings)
   const nextParams: TaskParams = {
     ...params,
-    size: normalizeImageSize(params.size) || DEFAULT_PARAMS.size,
+    size: isAgnesImageProfile(activeProfile) ? normalizeAgnesImageSize(params.size) : normalizeImageSize(params.size) || DEFAULT_PARAMS.size,
     n: Math.min(outputImageLimit, Math.max(1, params.n || DEFAULT_PARAMS.n)),
   }
 
@@ -38,6 +40,20 @@ export function normalizeParamsForSettings(
 
   if ((nextParams.quality === 'xhigh' || nextParams.quality === 'max') && !isGptImage25Model(getImageGenerationModel(activeProfile))) {
     nextParams.quality = 'high'
+  }
+
+  if (isGrokImageProfile(activeProfile)) {
+    nextParams.quality = normalizeGrokQuality(nextParams.quality)
+    nextParams.output_format = 'png'
+    nextParams.moderation = DEFAULT_PARAMS.moderation
+    nextParams.output_compression = DEFAULT_PARAMS.output_compression
+  }
+
+  if (isAgnesImageProfile(activeProfile)) {
+    nextParams.quality = 'auto'
+    nextParams.output_format = 'png'
+    nextParams.moderation = DEFAULT_PARAMS.moderation
+    nextParams.output_compression = DEFAULT_PARAMS.output_compression
   }
 
   if (nextParams.output_format === 'png') {

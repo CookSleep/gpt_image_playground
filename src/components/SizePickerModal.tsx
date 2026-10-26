@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { calculateImageSize, normalizeCodexCliImageSize, normalizeImageSize, parseRatio, type SizeTier } from '../lib/size'
+import { AGNES_IMAGE_SIZES, AGNES_SIZE_TIERS, getAgnesImageSize, normalizeAgnesImageSize } from '../lib/agnes'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import ViewportTooltip from './ViewportTooltip'
 
@@ -24,6 +25,7 @@ interface Props {
   onClose: () => void
   allowAuto?: boolean
   codexCli?: boolean
+  agnes?: boolean
 }
 
 type Mode = 'auto' | 'ratio' | 'resolution'
@@ -46,7 +48,7 @@ function findPresetForSize(size: string) {
   return null
 }
 
-export default function SizePickerModal({ currentSize, onSelect, onClose, allowAuto = true, codexCli = false }: Props) {
+export default function SizePickerModal({ currentSize, onSelect, onClose, allowAuto = true, codexCli = false, agnes = false }: Props) {
   usePreventBackgroundScroll(true)
 
   const modalRef = useRef<HTMLDivElement>(null)
@@ -72,7 +74,8 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
     mouseDownTargetRef.current = null
   }
 
-  const currentPreset = findPresetForSize(currentSize)
+  const agnesSize = getAgnesImageSize(currentSize)
+  const currentPreset = agnes ? { tier: agnesSize.size, ratio: agnesSize.ratio } : findPresetForSize(currentSize)
   const currentParsedSize = parseSize(currentSize)
   const [mode, setMode] = useState<Mode>(() => {
     if (!currentSize || currentSize === 'auto') return allowAuto ? 'auto' : 'ratio'
@@ -81,7 +84,7 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
   })
 
   // Ratio mode state
-  const [tier, setTier] = useState<SizeTier>(currentPreset?.tier ?? '1K')
+  const [tier, setTier] = useState<SizeTier | '3K'>(currentPreset?.tier ?? '1K')
   const [ratio, setRatio] = useState(currentPreset?.ratio ?? (allowAuto ? '1:1' : '4:3'))
   const [customRatio, setCustomRatio] = useState('16:9')
 
@@ -91,7 +94,7 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
 
   const [hintVisible, setHintVisible] = useState(false)
   const hintTimerRef = useRef<number | null>(null)
-  const [tierHint, setTierHint] = useState<SizeTier | null>(null)
+  const [tierHint, setTierHint] = useState<SizeTier | '3K' | null>(null)
   const tierHintTimerRef = useRef<number | null>(null)
 
   useEffect(() => () => {
@@ -99,8 +102,8 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
     if (tierHintTimerRef.current != null) window.clearTimeout(tierHintTimerRef.current)
   }, [])
 
-  const normalizeSize = codexCli ? normalizeCodexCliImageSize : normalizeImageSize
-  const sizeLimitText = codexCli ? CODEX_CLI_SIZE_LIMIT_TEXT : SIZE_LIMIT_TEXT
+  const normalizeSize = agnes ? normalizeAgnesImageSize : codexCli ? normalizeCodexCliImageSize : normalizeImageSize
+  const sizeLimitText = agnes ? 'Agnes 支持 1K、2K、3K、4K 和固定宽高比。自定义尺寸会映射至最接近的原生输出尺寸。' : codexCli ? CODEX_CLI_SIZE_LIMIT_TEXT : SIZE_LIMIT_TEXT
 
   const activeRatio = ratio === 'custom' ? customRatio : ratio
   const parsedCustomRatio = parseRatio(customRatio)
@@ -115,7 +118,13 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
     if (mode === 'auto') return 'auto'
     
     if (mode === 'ratio') {
-      const size = calculateImageSize(tier, activeRatio)
+      if (agnes) {
+        if (!parseRatio(activeRatio)) return ''
+        const base = AGNES_IMAGE_SIZES[getAgnesImageSize(activeRatio).ratio]
+        const scale = AGNES_SIZE_TIERS.indexOf(tier) + 1
+        return `${base[0] * scale}x${base[1] * scale}`
+      }
+      const size = calculateImageSize(tier as SizeTier, activeRatio)
       return size ? normalizeSize(size) : ''
     }
     
@@ -129,7 +138,7 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
     }
     
     return ''
-  }, [mode, tier, activeRatio, customW, customH, normalizeSize])
+  }, [mode, tier, activeRatio, customW, customH, normalizeSize, agnes])
 
   const isClamped = useMemo(() => {
     if (!previewSize || previewSize === 'auto') return false
@@ -250,8 +259,8 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
               <div className="space-y-5 animate-fade-in">
                 <section>
                   <div className="mb-2 text-xs font-medium text-gray-400 dark:text-gray-500">基准分辨率</div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {TIERS.map((item) => {
+                  <div className={`grid gap-2 ${agnes ? 'grid-cols-4' : 'grid-cols-3'}`}>
+                    {(agnes ? AGNES_SIZE_TIERS : TIERS).map((item) => {
                       const disabled = codexCli && item !== '1K'
                       return (
                         <div

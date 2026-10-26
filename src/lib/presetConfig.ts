@@ -114,6 +114,7 @@ export function enforcePresetConfigPolicy(
       ...(paramsLocked ? preset : profile),
       apiKey: profile.apiKey,
       selectedModel: profile.selectedModel,
+      showInModelPicker: profile.showInModelPicker,
       provider: paramsLocked || presetConfigOnly ? preset.provider : profile.provider,
       isDefault: profile.id === defaultPresetProfileId ? true : undefined,
     }

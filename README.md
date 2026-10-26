@@ -222,6 +222,16 @@ npm run tauri:build
 
 点击按钮导入仓库，Vercel 会自动构建并部署。
 
+**Grok 图片接口**：在「设置 → API 配置」中选择「Grok」，默认地址为 `https://grok.aisenno.com/v1`，模型为 `grok-imagine-image-2.0`，填入自己的 API Key 后保存。支持文生图与参考图编辑，质量仅支持 `low`、`medium`，默认为 `medium`。参考图编辑采用 JSON 图片 URL / Data URL 协议，不支持遮罩编辑；透明背景使用本地后处理。
+
+Vercel 部署和 `npm run dev` 会自动通过同域路径转发该默认地址的图片请求，解决浏览器跨域限制，无需开启「API 代理」开关。密钥由浏览器随请求传递，不内置于部署代码。其他地址及纯静态部署仍需服务商支持 CORS，或自行配置代理。文生图尺寸会转换为宽高比及 `1k` / `2k` 分辨率，实际支持范围以服务商为准。
+
+Grok 遇到 502、503、504 或 Cloudflare 临时网关错误时会等待 1 秒自动重试一次，再次失败则显示错误；鉴权和参数错误不会自动重试。
+
+**Agnes 图片接口**：选择「Agnes」后，默认使用 `https://apihub.agnes-ai.com/v1` 和 `agnes-image-2.5-flash`，填入 Agnes API Key 即可。支持文生图、参考图编辑、多图合成，以及 1K / 2K / 3K / 4K 原生尺寸与固定比例。参考图通过 `extra_body.image` 传入，图片直接以 Base64 返回；数量大于 1 时拆成多个单图请求。质量由模型决定，不支持遮罩和原生透明背景。Vercel 部署与本地开发自动为该官方地址提供同域转发。协议细节见 [Agnes 官方文档](https://www.agnes-ai.com/zh-Hans/docs/agnes-image-25-flash)。
+
+**底部跨渠道切换**：在「设置 → API 配置」中，为需要的每份配置开启「在底部模型菜单中显示」，即可在底部按「配置名 · 模型名」切换。切换会同时使用该配置的 API 地址、密钥和接口类型，同名模型也能区分。旧配置默认关闭该开关；当前使用的配置始终显示。Agent 混合模式仅切换图像配置，原生模式只列出兼容的 Responses 配置。
+
 **环境变量（可选）**
 
 在 Vercel 项目的 **Settings → Environment Variables** 中添加，添加或修改后需要重新部署：

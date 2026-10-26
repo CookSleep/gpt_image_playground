@@ -7,6 +7,7 @@ import {
   DEFAULT_OPENAI_PROFILE_ID,
   DEFAULT_SETTINGS,
   createDefaultOpenAIProfile,
+  createDefaultGrokProfile,
   createDefaultFalProfile,
   getApiProviderLabel,
   getActiveApiProfile,
@@ -51,6 +52,29 @@ describe('validateApiProfile', () => {
 })
 
 describe('normalizeApiProfile', () => {
+  it('restores Grok profiles with compatible defaults and preserves credentials', () => {
+    expect(normalizeApiProfile({ provider: 'grok', apiKey: 'saved-key', codexCli: true, streamImages: true })).toMatchObject({
+      provider: 'grok',
+      baseUrl: 'https://grok.aisenno.com/v1',
+      model: 'grok-imagine-image-2.0',
+      apiKey: 'saved-key',
+      apiMode: 'images',
+      codexCli: false,
+      streamImages: false,
+      transparentBackgroundMethod: 'local',
+      responseFormatB64Json: true,
+    })
+  })
+
+  it('preserves OpenAI and Grok channel drafts when switching providers', () => {
+    const openai = createDefaultOpenAIProfile({ baseUrl: 'https://openai.example/v1', model: 'gpt-image-2', codexCli: true })
+    const grok = switchApiProfileProvider(openai, 'grok')
+    expect(grok).toMatchObject({ provider: 'grok', baseUrl: 'https://grok.aisenno.com/v1', model: 'grok-imagine-image-2.0', codexCli: false })
+    const restored = switchApiProfileProvider({ ...grok, baseUrl: 'https://grok.example/v1' }, 'openai')
+    expect(restored).toMatchObject({ baseUrl: openai.baseUrl, model: openai.model, codexCli: true })
+    expect(switchApiProfileProvider(restored, 'grok')).toMatchObject({ baseUrl: 'https://grok.example/v1' })
+    expect(normalizeSettings({ profiles: [createDefaultGrokProfile()] }).profiles[0].provider).toBe('grok')
+  })
   it('uses the mode default and preserves the external model field', () => {
     expect(normalizeApiProfile({ apiMode: 'responses' }).model).toBe(DEFAULT_RESPONSES_MODEL)
     expect(normalizeSettings({ apiMode: 'responses' }).model).toBe(DEFAULT_RESPONSES_MODEL)
@@ -1648,7 +1672,7 @@ describe('custom providers', () => {
       ],
     })
 
-    expect(settings.providerOrder).toEqual(['fal', 'openai', 'sb2api-async', 'custom-alpha', 'custom-beta'])
+    expect(settings.providerOrder).toEqual(['fal', 'openai', 'sb2api-async', 'grok', 'agnes', 'custom-alpha', 'custom-beta'])
   })
 
   it('keeps active custom providers in Images API mode when legacy apiMode is responses', () => {

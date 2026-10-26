@@ -3,8 +3,11 @@ import { createPortal } from 'react-dom'
 import { deleteFavoriteCollection, useStore, submitTask, submitAgentMessage, stopAgentResponse, stopBatchPrompts, addImageFromFile, removeMultipleTasks, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { DEFAULT_PARAMS, MAX_INPUT_IMAGES, type TaskRecord } from '../types'
 import { getActiveAgentRounds } from '../lib/agentConversationState'
-import { getActiveApiProfile, getAgentImageApiProfile, normalizeSettings, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
+import { getActiveApiProfile, getAgentImageApiProfile, normalizeSettings, resolveApiProfileModel } from '../lib/apiProfiles'
 import { getImageGenerationModel, isGptImage25Model } from '../lib/imageModels'
+import { isGrokImageProfile } from '../lib/grok'
+import { isAgnesImageProfile } from '../lib/agnes'
+import { getModelPickerOptions, getModelPickerSettingsPatch } from '../lib/modelPicker'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { splitBatchPrompts } from '../lib/batchPrompts'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
@@ -104,6 +107,7 @@ export default function InputBar() {
   const reusedTaskApiProfileId = useStore((s) => s.reusedTaskApiProfileId)
   const reusedTaskApiModel = useStore((s) => s.reusedTaskApiModel)
   const setReusedTaskApiModel = useStore((s) => s.setReusedTaskApiModel)
+  const setReusedTaskApiProfile = useStore((s) => s.setReusedTaskApiProfile)
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const showToast = useStore((s) => s.showToast)
@@ -446,20 +450,18 @@ export default function InputBar() {
     return reusedProfile ? resolveApiProfileModel(reusedProfile, reusedTaskApiModel ?? undefined) : currentActiveProfile
   }, [appMode, currentActiveProfile, reusedTaskApiModel, reusedTaskApiProfileId, settings])
   const isTemporarilyReusedProfile = activeProfile.id !== currentActiveProfile.id
-  const modelOptions = useMemo(() => (
-    splitModelList(settings.profiles.find((profile) => profile.id === activeProfile.id)?.model ?? activeProfile.model)
-      .map((model) => ({ label: model, value: model }))
-  ), [activeProfile.id, activeProfile.model, settings.profiles])
-  const handleModelChange = useCallback((model: string) => {
+  const modelOptions = useMemo(() => getModelPickerOptions(settings, activeProfile, appMode), [settings, activeProfile, appMode])
+  const handleModelChange = useCallback((value: string) => {
+    const option = modelOptions.find((item) => item.value === value)
+    if (!option) return
     // 临时复用其他配置时只切换本次复用的模型，不改动该配置记住的选择
-    if (isTemporarilyReusedProfile) {
-      setReusedTaskApiModel(model)
+    if (isTemporarilyReusedProfile && option.profileId === activeProfile.id) {
+      setReusedTaskApiModel(option.model)
       return
     }
-    setSettings({
-      profiles: settings.profiles.map((profile) => profile.id === activeProfile.id ? { ...profile, selectedModel: model } : profile),
-    })
-  }, [activeProfile.id, isTemporarilyReusedProfile, setReusedTaskApiModel, setSettings, settings.profiles])
+    setReusedTaskApiProfile(null)
+    setSettings(getModelPickerSettingsPatch(settings, option.profileId, option.model, appMode))
+  }, [activeProfile.id, appMode, isTemporarilyReusedProfile, modelOptions, setReusedTaskApiModel, setReusedTaskApiProfile, setSettings, settings])
   const activeAgentConversation = appMode === 'agent'
     ? agentConversations.find((conversation) => conversation.id === activeAgentConversationId) ?? null
     : null
@@ -513,12 +515,14 @@ export default function InputBar() {
   }, [setPrompt])
   const activeProvider = activeProfile.provider
   const isFalProvider = activeProvider === 'fal'
+  const isGrokProvider = isGrokImageProfile(activeProfile)
+  const isAgnesProvider = isAgnesImageProfile(activeProfile)
   const agentAutoImageCount = appMode === 'agent'
-  const moderationDisabled = isFalProvider
+  const moderationDisabled = isFalProvider || isGrokProvider || isAgnesProvider
   const transparentOutputAvailable = appMode === 'gallery'
   const showTransparentOutputControl = transparentOutputAvailable && (params.output_format === 'png' || params.output_format === 'webp')
   const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
-  const compressionDisabled = params.output_format === 'png' || isFalProvider
+  const compressionDisabled = params.output_format === 'png' || isFalProvider || isGrokProvider || isAgnesProvider
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
   const isFalTextToImage = isFalProvider && inputImages.length === 0
   const nDraftValue = Number(nInput)
@@ -528,17 +532,17 @@ export default function InputBar() {
     ? 'Agent 模式下数量由模型根据提示词自动决定'
     : isFalProvider
     ? `fal.ai 最大请求数量为 ${outputImageLimit}`
-    : `OpenAI 最大请求数量为 ${outputImageLimit}`
+    : `${isGrokProvider ? 'Grok' : isAgnesProvider ? 'Agnes' : 'OpenAI'} 最大请求数量为 ${outputImageLimit}`
   const displaySize = isFalTextToImage && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
-    : (activeProfile.codexCli ? normalizeCodexCliImageSize(params.size) : normalizeImageSize(params.size)) || DEFAULT_PARAMS.size
+    : (isAgnesProvider ? params.size : activeProfile.codexCli ? normalizeCodexCliImageSize(params.size) : normalizeImageSize(params.size)) || DEFAULT_PARAMS.size
 
   const qualityOptions = [
-    ...(!isFalProvider ? [{ label: 'auto', value: 'auto' }] : []),
+    ...(!isFalProvider && !isGrokProvider ? [{ label: 'auto', value: 'auto' }] : []),
     { label: 'low', value: 'low' },
     { label: 'medium', value: 'medium' },
-    { label: 'high', value: 'high' },
-    ...(isGptImage25Model(getImageGenerationModel(activeProfile))
+    ...(!isGrokProvider ? [{ label: 'high', value: 'high' }] : []),
+    ...(!isGrokProvider && isGptImage25Model(getImageGenerationModel(activeProfile))
       ? [
           { label: 'xhigh', value: 'xhigh' },
           { label: 'max', value: 'max' },
@@ -1687,6 +1691,7 @@ export default function InputBar() {
       params={params}
       setParams={setParams}
       activeProfile={activeProfile}
+      modelValue={JSON.stringify([activeProfile.id, activeProfile.model])}
       modelOptions={modelOptions}
       onModelChange={handleModelChange}
       isFalProvider={isFalProvider}
@@ -1750,8 +1755,9 @@ export default function InputBar() {
           currentSize={isFalTextToImage && params.size === 'auto' ? DEFAULT_FAL_IMAGE_SIZE : params.size}
           onSelect={(size) => setParams({ size })}
           onClose={() => setShowSizePicker(false)}
-          allowAuto={!isFalTextToImage}
+          allowAuto={!isFalTextToImage && !isAgnesProvider}
           codexCli={activeProfile.codexCli}
+          agnes={isAgnesProvider}
         />
       )}
 

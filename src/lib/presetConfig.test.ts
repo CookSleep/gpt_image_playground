@@ -63,7 +63,7 @@ describe('preset config policy', () => {
 
     const enforced = policy.enforcePresetConfigPolicy(normalizeSettings({
       customProviders: [{ ...provider, submit: { path: 'local/generate' } }],
-      profiles: [{ ...source, baseUrl: 'https://local.example.com/v1', apiKey: 'user-key', model: 'local-model' }, user],
+      profiles: [{ ...source, baseUrl: 'https://local.example.com/v1', apiKey: 'user-key', model: 'local-model', showInModelPicker: true }, user],
       activeProfileId: user.id,
     }))
 
@@ -72,6 +72,7 @@ describe('preset config policy', () => {
       baseUrl: 'https://preset.example.com/v1',
       apiKey: 'user-key',
       model: 'preset-model',
+      showInModelPicker: true,
     })
     expect(enforced.profiles[1]).toMatchObject({ id: user.id, model: 'user-model' })
     expect(enforced.profiles.some((profile) => profile.id === removed.id)).toBe(false)
