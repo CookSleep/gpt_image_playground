@@ -52,7 +52,7 @@ import {
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { updateModalScrollRef, useReleaseUpdates } from '../hooks/useReleaseUpdates'
-import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
+import { DEFAULT_DROPDOWN_MAX_HEIGHT, DROPDOWN_PANEL_CLASS, DROPDOWN_SCROLL_CLASS, getDropdownMaxHeight } from '../lib/dropdown'
 import {
   buildCustomProvider,
   getApiProfileDeleteBlock,
@@ -1302,110 +1302,109 @@ export default function SettingsModal() {
                     
                     {showProfileMenu && !profileMenuDisabled && (
                       <>
-                        <div
-                          className="absolute right-0 top-full z-50 mt-1.5 w-full overflow-hidden overflow-y-auto rounded-xl border border-transparent bg-white/95 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ring-1 ring-black/5 backdrop-blur-xl animate-dropdown-down dark:bg-gray-800/95 dark:shadow-[0_8px_30px_rgb(0,0,0,0.4)] dark:ring-white/[0.06] custom-scrollbar"
-                          style={{ maxHeight: profileMenuMaxHeight }}
-                        >
-                          {!presetConfigOnly && <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault()
-                              createNewProfile()
-                            }}
-                            className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
-                          >
-                            <span className="truncate font-semibold">创建新配置</span>
-                            <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-                              <PlusIcon className="h-4 w-4" />
-                            </span>
-                          </button>}
-                          <div>
-                            {visibleProfiles.map((profile) => {
-                              const isDefaultProfile = profile.id === defaultProfileId
-                              const isPresetProfile = presetProfileIds.has(profile.id)
-                              return (
-                                <div
-                                  key={profile.id}
-                                  data-profile-id={profile.id}
-                                  title={profile.name}
-                                  draggable={!presetConfigOnly}
-                                  onDragStart={(e) => handleProfileDragStart(e, profile.id)}
-                                  onDragOver={(e) => handleProfileDragOver(e, profile.id)}
-                                  onDrop={(e) => handleProfileDrop(e, profile.id)}
-                                  onDragEnd={handleProfileDragEnd}
-                                  onTouchStart={(e) => handleProfileTouchStart(e, profile)}
-                                  onTouchMove={handleProfileTouchMove}
-                                  onTouchEnd={handleProfileTouchEnd}
-                                  onTouchCancel={handleProfileDragEnd}
-                                  onClick={(e) => {
-                                    // 点击拖拽柄时不切换配置。
-                                    if ((e.target as HTMLElement).closest('[data-drag-handle]')) return
-                                    e.preventDefault()
-                                    switchProfile(profile.id)
-                                  }}
-                                  className={`relative group flex w-full cursor-pointer items-center justify-between px-3 py-2 text-left text-xs transition-colors ${draggedProfileId === profile.id ? 'opacity-40 bg-gray-100 dark:bg-white/[0.04]' : profile.id === activeProfile.id ? 'bg-black/[0.05] font-medium text-blue-600 dark:bg-white/[0.08] dark:text-blue-400' : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.06]'}`}
-                                >
-                                {dragOverProfileId === profile.id && dragDropPosition === 'before' && draggedProfileId !== profile.id && (
-                                  <div className="absolute -top-[1px] left-0 right-0 h-[2px] bg-blue-500 rounded-full z-40 shadow-sm pointer-events-none" />
-                                )}
-                                {dragOverProfileId === profile.id && dragDropPosition === 'after' && draggedProfileId !== profile.id && (
-                                  <div className="absolute -bottom-[1px] left-0 right-0 h-[2px] bg-blue-500 rounded-full z-40 shadow-sm pointer-events-none" />
-                                )}
-                                <div className="flex min-w-0 flex-1 items-center gap-2 pr-2">
-                                  {!presetConfigOnly && (
-                                    <div
-                                      data-drag-handle
-                                      className="flex cursor-grab active:cursor-grabbing items-center justify-center text-gray-400 opacity-60 transition-opacity hover:opacity-100 dark:text-gray-500"
-                                      style={{ touchAction: 'none' }}
-                                      title="拖拽排序"
-                                    >
-                                      <DragHandleIcon className="h-3.5 w-3.5" />
-                                    </div>
-                                  )}
-                                  <span className="min-w-0 truncate">{profile.name}</span>
-                                  <span className={`rounded px-1.5 py-0.5 text-[10px] shrink-0 ${profile.id === activeProfile.id ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300' : 'bg-gray-100 text-gray-500 dark:bg-white/[0.08] dark:text-gray-400'}`}>
-                                    {getApiProviderLabel(draft, profile.provider)}
-                                  </span>
-                                </div>
-                                
-                                <div className="flex shrink-0 items-center gap-1">
-                                  <button
-                                    type="button"
+                        <div className={`absolute right-0 top-full z-50 mt-1.5 w-full animate-dropdown-down ${DROPDOWN_PANEL_CLASS}`} style={{ maxHeight: profileMenuMaxHeight }}>
+                          <div className={DROPDOWN_SCROLL_CLASS}>
+                            {!presetConfigOnly && <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                createNewProfile()
+                              }}
+                              className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
+                            >
+                              <span className="truncate font-semibold">创建新配置</span>
+                              <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                                <PlusIcon className="h-4 w-4" />
+                              </span>
+                            </button>}
+                            <div>
+                              {visibleProfiles.map((profile) => {
+                                const isDefaultProfile = profile.id === defaultProfileId
+                                const isPresetProfile = presetProfileIds.has(profile.id)
+                                return (
+                                  <div
+                                    key={profile.id}
+                                    data-profile-id={profile.id}
+                                    title={profile.name}
+                                    draggable={!presetConfigOnly}
+                                    onDragStart={(e) => handleProfileDragStart(e, profile.id)}
+                                    onDragOver={(e) => handleProfileDragOver(e, profile.id)}
+                                    onDrop={(e) => handleProfileDrop(e, profile.id)}
+                                    onDragEnd={handleProfileDragEnd}
+                                    onTouchStart={(e) => handleProfileTouchStart(e, profile)}
+                                    onTouchMove={handleProfileTouchMove}
+                                    onTouchEnd={handleProfileTouchEnd}
+                                    onTouchCancel={handleProfileDragEnd}
                                     onClick={(e) => {
+                                      // 点击拖拽柄时不切换配置。
+                                      if ((e.target as HTMLElement).closest('[data-drag-handle]')) return
                                       e.preventDefault()
-                                      e.stopPropagation()
-                                      confirmCopyProfileImportUrl(profile)
+                                      switchProfile(profile.id)
                                     }}
-                                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-100 hover:text-gray-600 hover:opacity-100 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
-                                    aria-label={`复制导入配置「${profile.name}」的 URL`}
-                                    title="复制导入 URL"
+                                    className={`relative group flex w-full cursor-pointer items-center justify-between px-3 py-2 text-left text-xs transition-colors ${draggedProfileId === profile.id ? 'opacity-40 bg-gray-100 dark:bg-white/[0.04]' : profile.id === activeProfile.id ? 'bg-black/[0.05] font-medium text-blue-600 dark:bg-white/[0.08] dark:text-blue-400' : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.06]'}`}
                                   >
-                                    <LinkIcon className="h-3.5 w-3.5" />
-                                  </button>
-                                  {!presetConfigOnly && (isDefaultProfile || draft.profiles.length > 1) && (
-                                    <TooltipButton
-                                      tooltip={isPresetProfile && presetDeletionPrevented ? '预置配置不可删除' : '删除配置'}
-                                      disabled={isPresetProfile && presetDeletionPrevented}
-                                      showOnClick={isPresetProfile && presetDeletionPrevented}
-                                      stopPropagation
+                                  {dragOverProfileId === profile.id && dragDropPosition === 'before' && draggedProfileId !== profile.id && (
+                                    <div className="absolute -top-[1px] left-0 right-0 h-[2px] bg-blue-500 rounded-full z-40 shadow-sm pointer-events-none" />
+                                  )}
+                                  {dragOverProfileId === profile.id && dragDropPosition === 'after' && draggedProfileId !== profile.id && (
+                                    <div className="absolute -bottom-[1px] left-0 right-0 h-[2px] bg-blue-500 rounded-full z-40 shadow-sm pointer-events-none" />
+                                  )}
+                                  <div className="flex min-w-0 flex-1 items-center gap-2 pr-2">
+                                    {!presetConfigOnly && (
+                                      <div
+                                        data-drag-handle
+                                        className="flex cursor-grab active:cursor-grabbing items-center justify-center text-gray-400 opacity-60 transition-opacity hover:opacity-100 dark:text-gray-500"
+                                        style={{ touchAction: 'none' }}
+                                        title="拖拽排序"
+                                      >
+                                        <DragHandleIcon className="h-3.5 w-3.5" />
+                                      </div>
+                                    )}
+                                    <span className="min-w-0 truncate">{profile.name}</span>
+                                    <span className={`rounded px-1.5 py-0.5 text-[10px] shrink-0 ${profile.id === activeProfile.id ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300' : 'bg-gray-100 text-gray-500 dark:bg-white/[0.08] dark:text-gray-400'}`}>
+                                      {getApiProviderLabel(draft, profile.provider)}
+                                    </span>
+                                  </div>
+                                  
+                                  <div className="flex shrink-0 items-center gap-1">
+                                    <button
+                                      type="button"
                                       onClick={(e) => {
                                         e.preventDefault()
-                                        setConfirmDialog({
-                                          title: '删除配置',
-                                          message: `确定要删除配置「${profile.name}」吗？`,
-                                          action: () => deleteProfile(profile.id)
-                                        })
+                                        e.stopPropagation()
+                                        confirmCopyProfileImportUrl(profile)
                                       }}
-                                      wrapperClassName="relative flex h-5 w-5 shrink-0"
-                                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-60 transition-all ${isPresetProfile && presetDeletionPrevented ? 'cursor-not-allowed text-gray-300 dark:text-gray-600' : 'text-gray-400 hover:bg-red-500/[0.1] hover:text-red-600 hover:opacity-100 dark:hover:bg-red-500/[0.16]'}`}
+                                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-100 hover:text-gray-600 hover:opacity-100 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                                      aria-label={`复制导入配置「${profile.name}」的 URL`}
+                                      title="复制导入 URL"
                                     >
-                                      <TrashIcon className="h-3.5 w-3.5" />
-                                    </TooltipButton>
-                                  )}
+                                      <LinkIcon className="h-3.5 w-3.5" />
+                                    </button>
+                                    {!presetConfigOnly && (isDefaultProfile || draft.profiles.length > 1) && (
+                                      <TooltipButton
+                                        tooltip={isPresetProfile && presetDeletionPrevented ? '预置配置不可删除' : '删除配置'}
+                                        disabled={isPresetProfile && presetDeletionPrevented}
+                                        showOnClick={isPresetProfile && presetDeletionPrevented}
+                                        stopPropagation
+                                        onClick={(e) => {
+                                          e.preventDefault()
+                                          setConfirmDialog({
+                                            title: '删除配置',
+                                            message: `确定要删除配置「${profile.name}」吗？`,
+                                            action: () => deleteProfile(profile.id)
+                                          })
+                                        }}
+                                        wrapperClassName="relative flex h-5 w-5 shrink-0"
+                                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-60 transition-all ${isPresetProfile && presetDeletionPrevented ? 'cursor-not-allowed text-gray-300 dark:text-gray-600' : 'text-gray-400 hover:bg-red-500/[0.1] hover:text-red-600 hover:opacity-100 dark:hover:bg-red-500/[0.16]'}`}
+                                      >
+                                        <TrashIcon className="h-3.5 w-3.5" />
+                                      </TooltipButton>
+                                    )}
+                                  </div>
                                 </div>
-                              </div>
-                              )
-                            })}
+                                )
+                              })}
+                            </div>
                           </div>
                         </div>
                       </>

@@ -33,8 +33,8 @@ function IssueList({ title, items }: { title: string, items: MoveIssue[] }) {
   return (
     <div className="space-y-1.5">
       <div className="text-xs font-medium text-gray-600 dark:text-gray-300">{title}</div>
-      <div className="relative rounded-xl bg-black/[0.03] dark:bg-white/[0.04]">
-        <ul data-selectable-text className="custom-scrollbar max-h-48 space-y-2 overflow-y-auto overscroll-contain py-2.5 pl-3 pr-10 text-xs leading-relaxed">
+      <div className="relative overflow-hidden rounded-xl bg-black/[0.03] dark:bg-white/[0.04]">
+        <ul data-selectable-text className="custom-scrollbar ios-rounded-scroll-fix max-h-48 rounded-xl space-y-2 overflow-y-auto overscroll-contain py-2.5 pl-3 pr-10 text-xs leading-relaxed">
           {items.map((item, idx) => (
             <li key={idx}>
               <div className="break-all text-gray-600 dark:text-gray-300">{item.path}</div>

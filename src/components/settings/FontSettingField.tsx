@@ -144,31 +144,33 @@ export default function FontSettingField({ slot, label, description, mode, name,
             className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-1.5 text-xs text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
           />
           {showList && (
-            <ul
-              ref={listRef}
-              id={listId}
-              role="listbox"
-              className="custom-scrollbar absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-xl bg-white p-1 shadow-lg ring-1 ring-black/5 dark:bg-gray-800 dark:ring-white/10"
-            >
-              {filtered.map((family, idx) => (
-                <li
-                  key={family}
-                  id={`${listId}-${idx}`}
-                  role="option"
-                  aria-selected={idx === activeIdx}
-                  onMouseDown={(e) => {
-                    // 阻止输入框失焦，保证点击能选中
-                    e.preventDefault()
-                    pick(family)
-                  }}
-                  onMouseEnter={() => setActiveIdx(idx)}
-                  className={`cursor-pointer truncate rounded-lg px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 ${idx === activeIdx ? 'bg-black/[0.05] dark:bg-white/[0.08]' : ''}`}
-                  style={optionStyle({ source: 'custom', name: family })}
-                >
-                  {family}
-                </li>
-              ))}
-            </ul>
+            <div className="absolute inset-x-0 top-full z-20 mt-1 overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 dark:bg-gray-800 dark:ring-white/10">
+              <ul
+                ref={listRef}
+                id={listId}
+                role="listbox"
+                className="custom-scrollbar ios-rounded-scroll-fix max-h-56 overflow-y-auto rounded-xl p-1"
+              >
+                {filtered.map((family, idx) => (
+                  <li
+                    key={family}
+                    id={`${listId}-${idx}`}
+                    role="option"
+                    aria-selected={idx === activeIdx}
+                    onMouseDown={(e) => {
+                      // 阻止输入框失焦，保证点击能选中
+                      e.preventDefault()
+                      pick(family)
+                    }}
+                    onMouseEnter={() => setActiveIdx(idx)}
+                    className={`cursor-pointer truncate rounded-lg px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 ${idx === activeIdx ? 'bg-black/[0.05] dark:bg-white/[0.08]' : ''}`}
+                    style={optionStyle({ source: 'custom', name: family })}
+                  >
+                    {family}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}
