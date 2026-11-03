@@ -204,6 +204,24 @@ export default function GeneralSettingsTab({
         </div>
         <div className="block">
           <div className="mb-1 flex items-center justify-between">
+            <span className="block text-sm text-gray-600 dark:text-gray-300">收藏夹页的新任务加入当前收藏夹</span>
+            <button
+              type="button"
+              onClick={() => commitSettings({ ...draft, saveTasksToActiveFavoriteCollection: !draft.saveTasksToActiveFavoriteCollection })}
+              className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${draft.saveTasksToActiveFavoriteCollection ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+              role="switch"
+              aria-checked={draft.saveTasksToActiveFavoriteCollection}
+              aria-label="收藏夹页的新任务加入当前收藏夹"
+            >
+              <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${draft.saveTasksToActiveFavoriteCollection ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+            </button>
+          </div>
+          <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+            开启后，在收藏夹页提交或重试出的新任务会自动加入当前收藏夹，重试出的任务同时沿用原任务的收藏夹；在收藏夹总览或“全部收藏”中提交的任务加入默认收藏夹。
+          </div>
+        </div>
+        <div className="block">
+          <div className="mb-1 flex items-center justify-between">
             <span className="block text-sm text-gray-600 dark:text-gray-300">成功任务仍然展示重试按钮</span>
             <button
               type="button"

@@ -30,6 +30,7 @@
 | `persistInputOnRestart` | 重启后加载上次的输入框 |
 | `enterSubmit` | 为真时按 Enter 提交，否则 Ctrl+Enter |
 | `reuseTaskApiProfileTemporarily` | 复用某个任务的配置时，临时使用该任务的 API 配置 |
+| `saveTasksToActiveFavoriteCollection` | 在收藏夹页新建或重试出的任务自动加入当前收藏夹，重试出的任务同时沿用原任务的收藏夹（总览和“全部收藏”中新建的任务加入默认收藏夹） |
 | `alwaysShowRetryButton` | 成功的任务也显示重试按钮 |
 | `retryMode` | 重试时 `new` 新建任务、`overwriteFailed` 覆盖失败的任务、`overwriteAll` 覆盖任何任务（需开启 `alwaysShowRetryButton`） |
 | `allowPromptRewrite` | 允许模型改写优化提示词 |

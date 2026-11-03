@@ -7,6 +7,7 @@ import {
   createDefaultFavoriteCollection,
   deleteFavoriteCollectionState,
   ensureDefaultFavoriteCollection,
+  getNewTaskFavoritePatch,
   getTaskFavoriteCollectionIds,
   mergeFavoriteCollections,
   normalizeFavoriteCollectionIds,
@@ -193,5 +194,31 @@ describe('favorite collection deletion transform', () => {
 
     expect(result.updatedTasks).toEqual([{ ...shared, favoriteCollectionIds: [collectionB.id], isFavorite: true }])
     expect(result.taskIdsToDelete).toEqual(['only', 'legacy'])
+  })
+})
+
+describe('getNewTaskFavoritePatch', () => {
+  const view = { filterFavorite: true, activeFavoriteCollectionId: collectionB.id, favoriteCollections: [collectionA, collectionB], defaultFavoriteCollectionId: collectionA.id }
+
+  it('uses the active collection on a collection page', () => {
+    expect(getNewTaskFavoritePatch(view)).toEqual({ favoriteCollectionIds: [collectionB.id], isFavorite: true })
+  })
+
+  it('falls back to the default collection on the overview, all favorites or a missing collection', () => {
+    const expected = { favoriteCollectionIds: [collectionA.id], isFavorite: true }
+    expect(getNewTaskFavoritePatch({ ...view, activeFavoriteCollectionId: null })).toEqual(expected)
+    expect(getNewTaskFavoritePatch({ ...view, activeFavoriteCollectionId: ALL_FAVORITES_COLLECTION_ID })).toEqual(expected)
+    expect(getNewTaskFavoritePatch({ ...view, activeFavoriteCollectionId: 'missing' })).toEqual(expected)
+  })
+
+  it('keeps existing source collections alongside the active one', () => {
+    expect(getNewTaskFavoritePatch({ ...view, activeFavoriteCollectionId: ALL_FAVORITES_COLLECTION_ID }, [collectionB.id, 'missing'])).toEqual({ favoriteCollectionIds: [collectionB.id], isFavorite: true })
+    expect(getNewTaskFavoritePatch(view, [collectionA.id, collectionB.id])).toEqual({ favoriteCollectionIds: [collectionB.id, collectionA.id], isFavorite: true })
+    expect(getNewTaskFavoritePatch({ ...view, activeFavoriteCollectionId: null }, ['missing'])).toEqual({ favoriteCollectionIds: [collectionA.id], isFavorite: true })
+  })
+
+  it('returns null outside the favorites page or without a default collection', () => {
+    expect(getNewTaskFavoritePatch({ ...view, filterFavorite: false })).toBeNull()
+    expect(getNewTaskFavoritePatch({ ...view, activeFavoriteCollectionId: null, defaultFavoriteCollectionId: null })).toBeNull()
   })
 })

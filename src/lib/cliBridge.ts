@@ -45,7 +45,7 @@ interface CliReply {
 // API 配置、自定义服务商和启用的配置由各自的参数或工具修改
 const SETTING_KEYS = [
   'providerOrder', 'clearInputAfterSubmit', 'persistInputOnRestart', 'reuseTaskApiProfileTemporarily', 'alwaysShowRetryButton',
-  'retryMode', 'allowPromptRewrite', 'taskCompletionNotification', 'autoCheckUpdate', 'writeLogFile', 'enterSubmit',
+  'saveTasksToActiveFavoriteCollection', 'retryMode', 'allowPromptRewrite', 'taskCompletionNotification', 'autoCheckUpdate', 'writeLogFile', 'enterSubmit',
   'privacyModeShortcut', 'colorMode', 'uiFont', 'uiFontName', 'monoFont', 'monoFontName', 'showBatchPrompt', 'batchPromptEnabled',
   'batchPromptMode', 'batchPromptConcurrencyLimited', 'batchPromptConcurrency', 'referenceImageEditAction', 'zipDownloadRoutes',
   'saveLocationMode', 'agentScrollToBottomAfterSubmit', 'agentMaxToolRounds', 'agentWebSearch', 'agentMathFormattingPrompt',

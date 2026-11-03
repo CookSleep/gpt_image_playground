@@ -94,6 +94,25 @@ export function normalizeFavoritePatch(task: TaskRecord, patch: Partial<TaskReco
   return patch
 }
 
+type FavoriteViewState = {
+  filterFavorite: boolean
+  activeFavoriteCollectionId: string | null
+  favoriteCollections: FavoriteCollection[]
+  defaultFavoriteCollectionId: string | null
+}
+
+/**
+ * 在收藏夹页新建任务时应加入的收藏夹：当前收藏夹，加上重试时原任务所在的收藏夹。
+ * 总览和“全部收藏”没有对应收藏夹，两者都没有时加入默认收藏夹。
+ */
+export function getNewTaskFavoritePatch(view: FavoriteViewState, sourceCollectionIds: string[] = []): Pick<TaskRecord, 'favoriteCollectionIds' | 'isFavorite'> | null {
+  if (!view.filterFavorite) return null
+  const collectionIds = new Set(view.favoriteCollections.map((collection) => collection.id))
+  const ids = [...new Set([view.activeFavoriteCollectionId ?? '', ...sourceCollectionIds])].filter((id) => collectionIds.has(id))
+  if (!ids.length && view.defaultFavoriteCollectionId) ids.push(view.defaultFavoriteCollectionId)
+  return ids.length ? { favoriteCollectionIds: ids, isFavorite: true } : null
+}
+
 export function normalizeLoadedFavoriteState(tasks: TaskRecord[], collections: unknown, preferredDefaultFavoriteCollectionId: unknown, now = Date.now()) {
   let changed = false
   const initialCollections = ensureDefaultFavoriteCollection(normalizeFavoriteCollections(collections, now), now)
