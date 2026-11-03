@@ -184,16 +184,16 @@ Windows 用户可以直接安装桌面客户端；网页版可以部署到 Verce
 **安装**
 
 - 在 [Releases](https://github.com/CookSleep/gpt_image_playground/releases/latest) 中下载以 `_x64-setup.exe` 结尾的安装包。
-- 安装包没有代码签名，遇到 SmartScreen 提示时点击“更多信息 → 仍要运行”。
+- 安装包没有代码签名，遇到 SmartScreen 提示时点击 **「更多信息 → 仍要运行」**。
 - 安装到普通文件夹（如 `D:\Apps\GPT Image Playground`）。装到 `C:\Program Files` 等需要管理员权限写入的位置会导致无法保存数据。
-- 数据默认保存在 `<安装目录>\data` 中，可在“设置 → 数据管理”中更改。
+- 数据默认保存在 `<安装目录>\data` 中，可在 **「设置 → 数据管理」** 中更改。
 
 **CLI 与 Skill**
 
 Claude Code、Codex 等本机 AI 工具可以通过 CLI `gpt-image-playground` 调用客户端：生成和编辑图片、读取历史记录、查看和修改全部设置（API Key 只能写入）。
 
 - 安装时勾选“添加到 PATH”即可直接运行；使用时客户端需要保持打开，用法见 `gpt-image-playground --help`。
-- 在“设置 → Skill”中安装随附的 Skill，AI 工具就知道何时、如何调用它。
+- 在 **「设置 → Skill」** 中安装随附的 Skill，AI 工具就知道何时、如何调用它。
 
 **自行构建**
 
@@ -224,7 +224,7 @@ npm run tauri:build
 
 **环境变量（可选）**
 
-在 Vercel 项目的 **Settings → Environment Variables** 中添加，添加或修改后需要重新部署：
+在 Vercel 项目的 **「Settings → Environment Variables」** 中添加，添加或修改后需要重新部署：
 
 ```dotenv
 VITE_DEFAULT_API_URL=https://api.openai.com/v1
@@ -232,14 +232,14 @@ VITE_DEFAULT_API_URL=https://api.openai.com/v1
 
 **绑定自定义域名（国内直连）**
 
-Vercel 分配的 `.vercel.app` 域名在国内通常无法直接访问，可在 **Settings → Domains** 中绑定自己的域名。
+Vercel 分配的 `.vercel.app` 域名在国内通常无法直接访问，可在 **「Settings → Domains」** 中绑定自己的域名。
 
 **更新方式**
 
 `vercel.json` 关闭了默认的自动部署。Fork 本仓库后，建议配置 Deploy Hook：
 
-1. 在 Vercel 项目的 **Settings → Git → Deploy Hooks** 中创建名为 `Release` 的 Hook（Branch 填 `main`），复制生成的 URL。
-2. 在 Fork 仓库的 **Settings → Secrets and variables → Actions** 中新建 Secret `VERCEL_DEPLOY_HOOK`，填入该 URL。
+1. 在 Vercel 项目的 **「Settings → Git → Deploy Hooks」** 中创建名为 `Release` 的 Hook（Branch 填 `main`），复制生成的 URL。
+2. 在 Fork 仓库的 **「Settings → Secrets and variables → Actions」** 中新建 Secret `VERCEL_DEPLOY_HOOK`，填入该 URL。
 
 配置完成后：
 
@@ -255,7 +255,7 @@ Vercel 分配的 `.vercel.app` 域名在国内通常无法直接访问，可在 
 
 **环境变量（可选）**
 
-在仓库 **Settings → Secrets and variables → Actions** 中，将 `VITE_DEFAULT_API_URL` 添加到 **Secrets**：
+在仓库 **「Settings → Secrets and variables → Actions」** 中，将 `VITE_DEFAULT_API_URL` 添加到 **Secrets**：
 
 ```dotenv
 VITE_DEFAULT_API_URL=https://api.openai.com/v1
@@ -265,7 +265,7 @@ VITE_DEFAULT_API_URL=https://api.openai.com/v1
 
 **初始部署**
 
-1. 在仓库 **Settings → Pages** 中，将 **Build and deployment → Source** 设为 **GitHub Actions**。
+1. 在仓库 **「Settings → Pages」** 中，将 **「Build and deployment → Source」** 设为 **GitHub Actions**。
 2. 在 **Actions** 中选择 **Deploy to GitHub Pages**，对 `main` 分支执行 **Run workflow**，完成首次部署。
 
 **更新方式**
@@ -401,7 +401,7 @@ cp dev-proxy.config.example.json dev-proxy.config.json
 ```
 
 - 将 `dev-proxy.config.json` 中的 `target` 设为完整的 API 基础地址。代理不会自动补 `/v1`，OpenAI 兼容接口通常要写到版本前缀，如 `https://api.example.com/v1`。
-- 重启开发服务器，在设置中开启 **API 代理**，请求会按 `http://localhost:5173/api-proxy/... -> target/...` 转发。
+- 重启开发服务器，在 **「设置 → API 配置」** 中开启“API 代理”，请求会按 `http://localhost:5173/api-proxy/... -> target/...` 转发。
 - 仅在 `npm run dev` 时生效，不影响构建产物。
 
 **4. 本地故障模拟 API（可选）**
@@ -633,7 +633,7 @@ API 不是标准 OpenAI 格式时，在预置 JSON 的 `customProviders` 中定�
 
 **获取供应商定义**
 
-- **AI 生成**：在 [Vercel 在线体验](https://gpt-image-playground.cooksleep.dev) 或 [GitHub Pages 在线体验](https://cooksleep.github.io/gpt_image_playground) 的 **设置 → API 配置 → 供应商类型 → 创建自定义供应商 → AI 一键生成与导入** 中粘贴第三方 API 文档生成配置，再复制该配置的导入链接作为预置值。
+- **AI 生成**：在 [Vercel 在线体验](https://gpt-image-playground.cooksleep.dev) 或 [GitHub Pages 在线体验](https://cooksleep.github.io/gpt_image_playground) 的 **「设置 → API 配置 → 供应商类型 → 创建自定义供应商 → AI 一键生成与导入」** 中粘贴第三方 API 文档生成配置，再复制该配置的导入链接作为预置值。
 - **手动生成**：将 [自定义供应商 LLM 提示词](docs/custom-provider-llm-prompt.md) 和第三方 API 文档发给任意 LLM，获取完整 JSON。
 
 **完整 JSON 示例（异步任务供应商）**
@@ -787,7 +787,7 @@ https://cooksleep.github.io/gpt_image_playground?apiUrl={address}&apiKey={key}&m
 
 ## 🔤 字体许可
 
-本项目内置以下两款字体，由 `VITE_BUILTIN_FONT_SOURCE` 决定从公共 CDN 加载还是使用 [`fonts/`](fonts) 目录中的字体文件。完整许可文本位于 [`third-party-licenses/`](third-party-licenses)，也可在应用的“设置 → 关于 → 第三方许可”中查看。
+本项目内置以下两款字体，由 `VITE_BUILTIN_FONT_SOURCE` 决定从公共 CDN 加载还是使用 [`fonts/`](fonts) 目录中的字体文件。完整许可文本位于 [`third-party-licenses/`](third-party-licenses)，也可在应用的 **「设置 → 关于 → 第三方许可」** 中查看。
 
 | 字体 | 版权方 | 许可 | 项目地址 | 许可文件 |
 |------|------|------|------|------|

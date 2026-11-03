@@ -232,7 +232,7 @@ export default function Lightbox() {
 
     setConfirmDialog({
       title: '编辑图片',
-      message: '画板可在图片上手绘、评论，标注修改意图；遮罩可指定需要重绘的区域。\n若勾选下方选项，之后可在 **设置 → 习惯配置** 中修改。',
+      message: '画板可在图片上手绘、评论，标注修改意图；遮罩可指定需要重绘的区域。\n若勾选下方选项，之后可在「设置 → 习惯配置」中修改。',
       checkbox: { label: '以后默认执行此选择' },
       buttons: [
         {

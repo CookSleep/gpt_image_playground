@@ -643,7 +643,7 @@ pub async fn download_dir_use(
         ensure_writable(&dir).map_err(|err| {
             log::warn!("默认保存地址不可用（{}）：{err}", dir.display());
             format!(
-                "默认保存地址不可用：{}。请在 设置 → 习惯配置 中重新选择，或改为“每次询问”。",
+                "默认保存地址不可用：{}。请在「设置 → 习惯配置」中重新选择，或改为“每次询问”。",
                 dir.display()
             )
         })?;

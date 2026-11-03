@@ -286,7 +286,7 @@ export default function TaskGrid() {
             <p className="text-sm">输入提示词开始生成图片</p>
             {isTauri && !tasks.length && (
               <p className="mt-3 text-xs">
-                从网页版迁移：在网页版的 <strong className="font-semibold">设置 → 数据管理</strong> 中导出备份，再
+                从网页版迁移：在网页版的<strong className="font-semibold">「设置 → 数据管理」</strong>中导出备份，再
                 <button
                   type="button"
                   onClick={() => setShowSettings(true, 'data')}

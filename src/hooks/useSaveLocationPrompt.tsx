@@ -34,7 +34,7 @@ async function askSaveLocation() {
     }
     const dialog: ConfirmDialogState = {
       title: '选择保存方式',
-      message: '保存图片和备份时，「每次询问」会弹出窗口选择保存位置；「默认地址」直接保存到下方地址，遇到同名文件自动加序号，不会覆盖。\n选择之后可在 **设置 → 习惯配置** 中更改。',
+      message: '保存图片和备份时，「每次询问」会弹出窗口选择保存位置；「默认地址」直接保存到下方地址，遇到同名文件自动加序号，不会覆盖。\n选择之后可在「设置 → 习惯配置」中更改。',
       content: (
         <div data-selectable-text className="break-all rounded-xl bg-black/[0.03] px-3 py-2 text-xs leading-relaxed text-gray-600 dark:bg-white/[0.04] dark:text-gray-300">
           {dir}

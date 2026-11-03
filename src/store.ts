@@ -602,7 +602,7 @@ export const useStore = create<AppState>()(
         if (settings.agentApiConfigMode === 'off' && activeProfile.provider === 'openai' && activeProfile.apiMode !== 'responses') {
           state.setConfirmDialog({
             title: '需要 Responses API 配置',
-            message: `当前配置「${activeProfile.name}」使用的是 Images API，仅支持生成图片，无 Agent 模式需要的对话能力。\n\n请在 **设置 → API 配置** 中将当前配置调整为 Responses API，或切换/新建一个支持 Responses API 的配置。`,
+            message: `当前配置「${activeProfile.name}」使用的是 Images API，仅支持生成图片，无 Agent 模式需要的对话能力。\n\n请在「设置 → API 配置」中将当前配置调整为 Responses API，或切换/新建一个支持 Responses API 的配置。`,
             confirmText: '去设置',
             cancelText: '取消',
             action: () => {
@@ -615,7 +615,7 @@ export const useStore = create<AppState>()(
         if (settings.agentApiConfigMode !== 'off') {
           state.setConfirmDialog({
             title: 'Agent API 配置不完整',
-            message: `${agentValidationError.message}\n\n请在 **设置 → Agent 配置** 中选择或新建可用配置。`,
+            message: `${agentValidationError.message}\n\n请在「设置 → Agent 配置」中选择或新建可用配置。`,
             confirmText: '去设置',
             cancelText: '取消',
             action: () => {
@@ -627,7 +627,7 @@ export const useStore = create<AppState>()(
 
         state.setConfirmDialog({
           title: '配置不支持 Agent 模式',
-          message: `当前配置「${activeProfile.name}」所属的服务商暂不支持 Agent 模式。Agent 模式需要使用支持 Responses API 的 OpenAI 配置。\n\n请在 **设置 → API 配置** 中切换或新建一个支持 Responses API 的配置。`,
+          message: `当前配置「${activeProfile.name}」所属的服务商暂不支持 Agent 模式。Agent 模式需要使用支持 Responses API 的 OpenAI 配置。\n\n请在「设置 → API 配置」中切换或新建一个支持 Responses API 的配置。`,
           confirmText: '去设置',
           cancelText: '取消',
           action: () => {
@@ -1367,7 +1367,7 @@ function getAgentProfileValidationError(settings: AppSettings): { profile: ApiPr
 
   if (normalized.agentApiConfigMode === 'hybrid') {
     const imageProfile = getAgentImageApiProfile(normalized)
-    if (!imageProfile) return { profile: null, message: '图像模型 API 配置不存在，请在 设置 → Agent 配置 中选择可用的图像模型配置。' }
+    if (!imageProfile) return { profile: null, message: '图像模型 API 配置不存在，请在「设置 → Agent 配置」中选择可用的图像模型配置。' }
     const imageProfileError = validateApiProfile(imageProfile)
     if (imageProfileError) return { profile: imageProfile, message: `图像模型 API 配置不完整：${imageProfileError}` }
   }

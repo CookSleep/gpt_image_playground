@@ -186,7 +186,7 @@ else params = baseParams
 
 ## 架构约束
 
-- **依赖协议**：只引入 MIT、Apache 2.0、BSD、ISC、Zlib、公有领域等宽松协议的依赖，**不引入 GPL / AGPL / LGPL**。新增依赖前先确认协议；第三方许可清单 `src/assets/third-party-notices.txt` 是提交进仓库的生成文件，在“设置 → 关于 → 第三方许可”中显示（Web 版与客户端相同），Rust 或前端依赖变化后运行 `npm run notices` 重新生成并一起提交；Rust 依赖中出现新的宽松协议时先确认，再加入 `src-tauri/about.toml` 的 `accepted`；npm 包中没有许可文件时生成会失败，需从上游仓库对应版本取许可原文放进 `third-party-licenses/npm/`。Tauri 等带进来的 MPL-2.0 间接依赖（未修改）可以接受，许可清单中注明其源码位置。
+- **依赖协议**：只引入 MIT、Apache 2.0、BSD、ISC、Zlib、公有领域等宽松协议的依赖，**不引入 GPL / AGPL / LGPL**。新增依赖前先确认协议；第三方许可清单 `src/assets/third-party-notices.txt` 是提交进仓库的生成文件，在 **「设置 → 关于 → 第三方许可」** 中显示（Web 版与客户端相同），Rust 或前端依赖变化后运行 `npm run notices` 重新生成并一起提交；Rust 依赖中出现新的宽松协议时先确认，再加入 `src-tauri/about.toml` 的 `accepted`；npm 包中没有许可文件时生成会失败，需从上游仓库对应版本取许可原文放进 `third-party-licenses/npm/`。Tauri 等带进来的 MPL-2.0 间接依赖（未修改）可以接受，许可清单中注明其源码位置。
 - 新增纯函数或工具逻辑时，放 `src/lib/` 而非 `src/store.ts`。store 文件已过大，应只包含 state 定义和 action 入口。
 - 避免在多处重复定义相同工具函数（如 `blobToDataUrl`），优先复用 `src/lib/` 中已有导出。
 - 新增较大功能时，优先拆成独立模块（lib 函数 + hook + 组件），而非全部塞进现有大文件。
