@@ -396,6 +396,8 @@ input[type="number"] {
   opacity: 0;
 }
 .collapse-section > .collapse-inner {
+  /* grid 子项默认不小于内容宽度，不换行的长文本（如参数摘要）会撑出容器 */
+  min-width: 0;
   overflow: visible;
 }
 .collapse-section.collapsed > .collapse-inner {
