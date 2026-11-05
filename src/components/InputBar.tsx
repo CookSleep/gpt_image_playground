@@ -4,11 +4,11 @@ import { deleteFavoriteCollection, useStore, submitTask, submitAgentMessage, sto
 import { DEFAULT_PARAMS, MAX_INPUT_IMAGES, type TaskRecord } from '../types'
 import { getActiveAgentRounds } from '../lib/agentConversationState'
 import { getActiveApiProfile, getAgentImageApiProfile, normalizeSettings, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
-import { isVectorOrAnimatedFormat, supportsExtendedQuality, supportsGptImage26Params } from '../lib/imageModels'
+import { isVectorOrAnimatedFormat } from '../lib/imageModels'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { toReferenceImage } from '../lib/inputImages'
 import { splitBatchPrompts } from '../lib/batchPrompts'
-import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings, supportsTransparentOutput } from '../lib/paramCompatibility'
+import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, getParamDisabledReasons, normalizeParamsForSettings, supportsTransparentOutput } from '../lib/paramCompatibility'
 import { getAtImageQuery, getImageComments, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { normalizeCodexCliImageSize, normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
@@ -22,6 +22,7 @@ import { useVisibleTasks } from '../hooks/usePrivacyMode'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getDownloadErrorMessage, getTaskOutputImageZipEntries, withSaveLocation } from '../lib/downloadImages'
 import { pickSaveDir } from '../lib/saveFile'
 import { isTauri } from '../lib/platform'
+import type { SelectOption } from './Select'
 import SizePickerModal from './SizePickerModal'
 import { CloseIcon, CollapseIcon, ExpandIcon, LinkIcon, SketchIcon } from './icons'
 import { CommentBadge } from './CommentMarks'
@@ -525,12 +526,9 @@ export default function InputBar() {
   const showTransparentOutputControl = transparentOutputAvailable && supportsTransparentOutput(effectiveSettings, activeProfile, params.output_format)
   const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
   const compressionDisabled = panelParams.output_format === 'png' || isVectorOrAnimatedFormat(panelParams.output_format) || isFalProvider
-  const complexityAvailable = supportsGptImage26Params(activeProfile)
-  const vectorAndAnimatedFormatsAvailable = complexityAvailable && appMode === 'gallery'
-  // fal.ai 的 SVG 暂不开放，原因见 falAiImageApi 中的说明
-  const svgFormatAvailable = vectorAndAnimatedFormatsAvailable && !isFalProvider
+  // 不可用的参数和格式仍然显示，置灰并说明原因
+  const disabledReasons = getParamDisabledReasons(activeProfile, { hasInputImages: inputImages.length > 0, agent: appMode === 'agent' })
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
-  const isFalTextToImage = isFalProvider && inputImages.length === 0
   const nDraftValue = Number(nInput)
   const effectiveNValue = Number.isNaN(nDraftValue) ? params.n : nDraftValue
   const streamConcurrentByN = activeProfile.provider === 'openai' && activeProfile.streamImages === true && !agentAutoImageCount && effectiveNValue > 1
@@ -539,21 +537,17 @@ export default function InputBar() {
     : isFalProvider
     ? `fal.ai 最大请求数量为 ${outputImageLimit}`
     : `OpenAI 最大请求数量为 ${outputImageLimit}`
-  const displaySize = isFalTextToImage && params.size === 'auto'
+  const displaySize = disabledReasons.autoSize && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
     : (activeProfile.codexCli ? normalizeCodexCliImageSize(params.size) : normalizeImageSize(params.size)) || DEFAULT_PARAMS.size
 
-  const qualityOptions = [
-    ...(!isFalProvider ? [{ label: 'auto', value: 'auto' }] : []),
+  const qualityOptions: SelectOption[] = [
+    { label: 'auto', value: 'auto', disabledReason: disabledReasons.autoQuality },
     { label: 'low', value: 'low' },
     { label: 'medium', value: 'medium' },
     { label: 'high', value: 'high' },
-    ...(supportsExtendedQuality(activeProfile)
-      ? [
-          { label: 'xhigh', value: 'xhigh' },
-          { label: 'max', value: 'max' },
-        ]
-      : []),
+    { label: 'xhigh', value: 'xhigh', disabledReason: disabledReasons.extendedQuality },
+    { label: 'max', value: 'max', disabledReason: disabledReasons.extendedQuality },
   ]
   const atImageLimit = inputImages.length >= MAX_INPUT_IMAGES
   const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${MAX_INPUT_IMAGES} 张），无法继续添加` : '添加图片'
@@ -563,8 +557,9 @@ export default function InputBar() {
   }, [transparentOutputHint.hide])
   const compressionHint = useHintTooltip({ enabled: () => compressionDisabled })
   const moderationHint = useHintTooltip({ enabled: () => moderationDisabled })
-  const sizeHint = useHintTooltip({ enabled: () => isFalTextToImage || activeProfile.codexCli })
-  const qualityHint = useHintTooltip({ enabled: () => activeProfile.codexCli || isFalProvider })
+  const complexityHint = useHintTooltip({ enabled: () => Boolean(disabledReasons.complexity) })
+  const sizeHint = useHintTooltip({ enabled: () => Boolean(disabledReasons.autoSize) || activeProfile.codexCli })
+  const qualityHint = useHintTooltip({ enabled: () => activeProfile.codexCli })
   const nLimitHint = useHintTooltip({ autoHideMs: 2000 })
   const streamConcurrentHint = useHintTooltip({ enabled: () => streamConcurrentByN })
   const maskTargetImage = maskDraft
@@ -1703,7 +1698,6 @@ export default function InputBar() {
       modelOptions={modelOptions}
       onModelChange={handleModelChange}
       isFalProvider={isFalProvider}
-      isFalTextToImage={isFalTextToImage}
       displaySize={displaySize}
       qualityOptions={qualityOptions}
       selectClass={selectClass}
@@ -1719,9 +1713,8 @@ export default function InputBar() {
       commitOutputCompression={commitOutputCompression}
       moderationHint={moderationHint}
       moderationDisabled={moderationDisabled}
-      complexityAvailable={complexityAvailable}
-      vectorAndAnimatedFormatsAvailable={vectorAndAnimatedFormatsAvailable}
-      svgFormatAvailable={svgFormatAvailable}
+      complexityHint={complexityHint}
+      disabledReasons={disabledReasons}
       hasInputImages={inputImages.length > 0}
       agentAutoImageCount={agentAutoImageCount}
       outputImageLimit={outputImageLimit}
@@ -1764,10 +1757,10 @@ export default function InputBar() {
 
       {showSizePicker && (
         <SizePickerModal
-          currentSize={isFalTextToImage && params.size === 'auto' ? DEFAULT_FAL_IMAGE_SIZE : params.size}
+          currentSize={disabledReasons.autoSize && params.size === 'auto' ? DEFAULT_FAL_IMAGE_SIZE : params.size}
           onSelect={(size) => setParams({ size })}
           onClose={() => setShowSizePicker(false)}
-          allowAuto={!isFalTextToImage}
+          autoDisabledReason={disabledReasons.autoSize}
           codexCli={activeProfile.codexCli}
         />
       )}

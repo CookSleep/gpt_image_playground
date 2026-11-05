@@ -5,12 +5,14 @@ import { ChevronDownIcon, EditIcon, PlusIcon, TrashIcon, DragHandleIcon } from '
 import ViewportTooltip from './ViewportTooltip'
 import { useTooltip } from '../hooks/useTooltip'
 
-interface Option {
+export interface SelectOption {
   label: string
   value: string | number
   /** 选项文字的样式，如用对应字体渲染字体名 */
   style?: CSSProperties
   variant?: 'action' | 'danger'
+  /** 不可选的原因；设置后选项置灰，悬停或点击时显示原因 */
+  disabledReason?: string
   draggable?: boolean
   actions?: Array<{
     label: string
@@ -23,7 +25,7 @@ interface SelectProps {
   value: string | number
   onChange: (value: any) => void
   onReorder?: (sourceValue: string | number, targetValue: string | number, position: 'before' | 'after' | null) => void
-  options: Option[]
+  options: SelectOption[]
   disabled?: boolean
   className?: string
   onOpenChange?: (isOpen: boolean) => void
@@ -368,23 +370,29 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest('button, [data-drag-handle]')) return
                   e.preventDefault()
+                  if (option.disabledReason) {
+                    setHoveredOptionTooltip(option.value)
+                    return
+                  }
                   onChange(option.value)
                   setIsOpen(false)
                   clearOptionTooltipTimer()
                   setHoveredOptionTooltip(null)
                 }}
-                onMouseEnter={() => showValueTooltips && setHoveredOptionTooltip(option.value)}
+                onMouseEnter={() => (showValueTooltips || option.disabledReason) && setHoveredOptionTooltip(option.value)}
                 onMouseLeave={() => {
                   clearOptionTooltipTimer()
                   setHoveredOptionTooltip(null)
                 }}
-                onFocus={() => showValueTooltips && setHoveredOptionTooltip(option.value)}
+                onFocus={() => (showValueTooltips || option.disabledReason) && setHoveredOptionTooltip(option.value)}
                 onBlur={() => {
                   clearOptionTooltipTimer()
                   setHoveredOptionTooltip(null)
                 }}
-                className={`relative flex min-h-9 cursor-pointer items-center justify-between gap-2 px-3 py-2 text-xs transition-colors ${
-                  draggedValue === option.value
+                className={`relative flex min-h-9 items-center justify-between gap-2 px-3 py-2 text-xs transition-colors ${option.disabledReason ? 'cursor-not-allowed' : 'cursor-pointer'} ${
+                  option.disabledReason
+                    ? 'opacity-40 text-gray-700 dark:text-gray-300'
+                    : draggedValue === option.value
                     ? 'opacity-40 bg-gray-100 dark:bg-white/[0.04]'
                     : option.variant === 'action'
                     ? 'font-semibold text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10'
@@ -401,9 +409,9 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
                 {dragOverValue === option.value && dragDropPosition === 'after' && draggedValue !== option.value && (
                   <div className="absolute -bottom-[1px] left-0 right-0 h-[2px] bg-blue-500 rounded-full z-40 shadow-sm pointer-events-none" />
                 )}
-                {showValueTooltips && hoveredOptionTooltip === option.value && (
+                {(showValueTooltips || option.disabledReason) && hoveredOptionTooltip === option.value && (
                   <ViewportTooltip visible={true} className="max-w-[300px] break-words whitespace-pre-wrap">
-                    {option.label}
+                    {option.disabledReason ?? option.label}
                   </ViewportTooltip>
                 )}
                 <div className="flex min-w-0 flex-1 items-center gap-2 pr-2">

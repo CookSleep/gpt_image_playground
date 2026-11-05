@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS, type ApiProfile } from '../types'
-import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
+import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, getActiveApiProfile, normalizeSettings } from './apiProfiles'
 import { callImageApi } from './api'
 import { appendModerationDetails } from './imageApiShared'
 import { DEFAULT_SVG_MODEL, isGptImage25PlusModel, isGptImage26PlusModel } from './imageModels'
-import { normalizeParamsForSettings, supportsTransparentOutput } from './paramCompatibility'
+import { getParamDisabledReasons, normalizeParamsForSettings, supportsTransparentOutput } from './paramCompatibility'
 
 function createSettings(patch: Partial<ApiProfile>) {
   const profile = createDefaultOpenAIProfile({ apiKey: 'test-key', streamImages: false, ...patch })
@@ -91,6 +91,15 @@ describe('GPT Image 2.6 parameter compatibility', () => {
   it('keeps 2.6 params in Codex CLI mode', () => {
     const next = normalizeParamsForSettings(params, createSettings({ model: 'gpt-image-2.6-flare', codexCli: true }))
     expect(next).toMatchObject({ quality: 'auto', complexity: 'low', output_format: 'svg' })
+  })
+
+  it('points Responses users to the image model when 2.6 params are unavailable', () => {
+    const profile = getActiveApiProfile(createSettings({ apiMode: 'responses', model: 'gpt-image-2.6-sunburst', imageGenerationModel: '' }))
+    expect(getParamDisabledReasons(profile)).toMatchObject({
+      complexity: '图像模型 ID 需为 GPT Image 2.6 及以上',
+      gif: '图像模型 ID 需为 GPT Image 2.6 及以上',
+      svg: '图像模型 ID 需为 GPT Image 2.6 及以上',
+    })
   })
 })
 

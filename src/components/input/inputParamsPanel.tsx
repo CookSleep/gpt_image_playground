@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { GIF_FRAME_COUNT_RANGE, GIF_FRAME_DURATION_RANGE, IMAGE_COMPLEXITIES, type ApiProfile, type AppSettings, type BatchProgress, type BatchPromptMode, type TaskParams } from '../../types'
+import { GIF_FRAME_COUNT_RANGE, GIF_FRAME_DURATION_RANGE, IMAGE_COMPLEXITIES, type ApiProfile, type AppSettings, type BatchProgress, type BatchPromptMode, type ParamDisabledReasons, type TaskParams } from '../../types'
 import { DEFAULT_BATCH_PROMPT_CONCURRENCY, normalizeBatchPromptConcurrency } from '../../lib/batchPrompts'
 import { isTauri } from '../../lib/platform'
 import { dismissAllTooltips } from '../../lib/tooltipDismiss'
-import Select from '../Select'
+import Select, { type SelectOption } from '../Select'
 import ButtonTooltip from './buttonTooltip'
 import ParamPopoverChip, { CHIP_BASE_CLASS, CHIP_IDLE_CLASS } from './paramPopoverChip'
 
@@ -143,7 +143,6 @@ export default function InputParamsPanel({
   modelOptions,
   onModelChange,
   isFalProvider,
-  isFalTextToImage,
   displaySize,
   qualityOptions,
   selectClass,
@@ -159,9 +158,8 @@ export default function InputParamsPanel({
   commitOutputCompression,
   moderationHint,
   moderationDisabled,
-  complexityAvailable,
-  vectorAndAnimatedFormatsAvailable,
-  svgFormatAvailable,
+  complexityHint,
+  disabledReasons,
   hasInputImages,
   agentAutoImageCount,
   outputImageLimit,
@@ -197,9 +195,8 @@ export default function InputParamsPanel({
   modelOptions: Array<{ label: string; value: string }>
   onModelChange: (model: string) => void
   isFalProvider: boolean
-  isFalTextToImage: boolean
   displaySize: string
-  qualityOptions: Array<{ label: string; value: string }>
+  qualityOptions: SelectOption[]
   selectClass: string
   transparentOutputAvailable: boolean
   showTransparentOutputControl: boolean
@@ -213,11 +210,8 @@ export default function InputParamsPanel({
   commitOutputCompression: () => void
   moderationHint: HintTooltipState
   moderationDisabled: boolean
-  /** 当前模型支持 complexity（GPT Image 2.6 及以上） */
-  complexityAvailable: boolean
-  /** 可选 GIF 输出格式 */
-  vectorAndAnimatedFormatsAvailable: boolean
-  svgFormatAvailable: boolean
+  complexityHint: HintTooltipState
+  disabledReasons: ParamDisabledReasons
   hasInputImages: boolean
   agentAutoImageCount: boolean
   outputImageLimit: number
@@ -250,7 +244,7 @@ export default function InputParamsPanel({
   // 折叠时也展示弹层内每一项的当前值，不支持的参数不显示
   const isGif = params.output_format === 'gif'
   const moreSummary = [
-    complexityAvailable ? `复杂度 ${params.complexity}` : null,
+    disabledReasons.complexity ? null : `复杂度 ${params.complexity}`,
     params.output_format.toUpperCase(),
     isGif ? `${params.frame_count} 帧` : null,
     showTransparentOutputControl
@@ -295,10 +289,8 @@ export default function InputParamsPanel({
           <span className="font-mono">{displaySize}</span>
         </button>
         <ButtonTooltip
-          visible={(isFalTextToImage || activeProfile.codexCli) && sizeHint.visible}
-          text={isFalTextToImage
-            ? <>fal.ai 的文生图模式不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 参数</>
-            : 'Codex CLI 不支持尺寸参数，此处设置仅基于提示词工程'}
+          visible={(Boolean(disabledReasons.autoSize) || activeProfile.codexCli) && sizeHint.visible}
+          text={disabledReasons.autoSize ?? 'Codex CLI 不支持尺寸参数，此处设置仅基于提示词工程'}
         />
       </div>
       <div
@@ -322,8 +314,8 @@ export default function InputParamsPanel({
           className={activeProfile.codexCli ? CHIP_DISABLED_CLASS : CHIP_CLASS}
         />
         <ButtonTooltip
-          visible={(activeProfile.codexCli || isFalProvider) && qualityHint.visible}
-          text={isFalProvider ? <>fal.ai 不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 质量参数</> : 'Codex CLI 不支持质量参数'}
+          visible={activeProfile.codexCli && qualityHint.visible}
+          text="Codex CLI 不支持质量参数"
         />
       </div>
       <label
@@ -369,19 +361,32 @@ export default function InputParamsPanel({
         <ButtonTooltip visible={streamConcurrentByN && streamConcurrentHint.visible && !nLimitHint.visible} text="数量大于 1 时会将多图生成拆分为并发单图" />
       </label>
       <ParamPopoverChip label="更多" summary={moreSummary} className="sm:min-w-[5rem]">
-            {complexityAvailable && (
-              <div className={ROW_CLASS}>
-                <span className={ROW_LABEL_CLASS}>复杂度</span>
-                <div className="w-28">
-                  <Select
-                    value={params.complexity}
-                    onChange={(val) => setParams({ complexity: val as TaskParams['complexity'] })}
-                    options={IMAGE_COMPLEXITIES.map((value) => ({ label: value, value }))}
-                    className={selectClass}
-                  />
-                </div>
+            <div
+              className={ROW_CLASS}
+              onMouseEnter={complexityHint.show}
+              onMouseLeave={complexityHint.hide}
+              onTouchStart={complexityHint.startTouch}
+              onTouchEnd={complexityHint.clearTimer}
+              onTouchCancel={complexityHint.hide}
+              onClick={complexityHint.show}
+            >
+              <span className={ROW_LABEL_CLASS}>复杂度</span>
+              <div className="w-28">
+                <Select
+                  value={disabledReasons.complexity ? 'auto' : params.complexity}
+                  onChange={(val) => {
+                    if (!disabledReasons.complexity) setParams({ complexity: val as TaskParams['complexity'] })
+                  }}
+                  options={IMAGE_COMPLEXITIES.map((value) => ({ label: value, value }))}
+                  disabled={Boolean(disabledReasons.complexity)}
+                  className={disabledReasons.complexity ? CONTROL_DISABLED_CLASS : selectClass}
+                />
               </div>
-            )}
+              <ButtonTooltip
+                visible={Boolean(disabledReasons.complexity) && complexityHint.visible}
+                text={disabledReasons.complexity}
+              />
+            </div>
             <div className={ROW_CLASS}>
               <span className={ROW_LABEL_CLASS}>格式</span>
               <div className="w-28">
@@ -398,8 +403,8 @@ export default function InputParamsPanel({
                     { label: 'PNG', value: 'png' },
                     { label: 'JPEG', value: 'jpeg' },
                     { label: 'WebP', value: 'webp' },
-                    ...(svgFormatAvailable ? [{ label: 'SVG', value: 'svg' }] : []),
-                    ...(vectorAndAnimatedFormatsAvailable ? [{ label: 'GIF', value: 'gif' }] : []),
+                    { label: 'SVG', value: 'svg', disabledReason: disabledReasons.svg },
+                    { label: 'GIF', value: 'gif', disabledReason: disabledReasons.gif },
                   ]}
                   className={selectClass}
                 />

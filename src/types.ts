@@ -206,6 +206,16 @@ export const IMAGE_COMPLEXITIES = ['auto', 'low', 'medium', 'high'] as const
 export const GIF_FRAME_COUNT_RANGE = { min: 2, max: 16 }
 export const GIF_FRAME_DURATION_RANGE = { min: 20, max: 2000 }
 
+/** 参数面板中不可选的项及原因，undefined 表示可选 */
+export interface ParamDisabledReasons {
+  complexity?: string
+  gif?: string
+  svg?: string
+  autoQuality?: string
+  extendedQuality?: string
+  autoSize?: string
+}
+
 export interface TaskParams {
   size: string
   quality: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
