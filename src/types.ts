@@ -578,3 +578,17 @@ export interface ExportData {
     thumbnailVersion?: number
   }>
 }
+
+// ===== Skill（仅客户端） =====
+
+/** 对应 Rust `src-tauri/src/cli/skill.rs` 的 `SkillTarget`：`~/.claude/skills` 或 `~/.agents/skills` */
+export type SkillTarget = 'claude' | 'agents'
+/** 对应 Rust `State`：找不到用户文件夹、未安装、已安装、已安装但与当前版本不同、同名文件夹不是本应用的 Skill */
+export type SkillState = 'notFound' | 'absent' | 'added' | 'outdated' | 'invalid'
+
+export interface SkillInfo {
+  /** 随安装包附带的 Skill 文件夹 */
+  skillDir: string
+  /** `path` 为安装后的 Skill 文件夹 */
+  skills: { id: SkillTarget; path: string; state: SkillState }[]
+}

@@ -1,24 +1,13 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTooltip } from '../../hooks/useTooltip'
+import type { SkillInfo, SkillTarget } from '../../types'
 import { useStore } from '../../store'
 import { CheckIcon } from '../editor/EditorControls'
 import { ClaudeCodeIcon, CodexIcon, FolderIcon } from '../icons'
 import ViewportTooltip from '../ViewportTooltip'
 
-/** 对应 Rust `src-tauri/src/cli/skill.rs` 的 `SkillTarget`：`~/.claude/skills` 或 `~/.agents/skills` */
-type SkillTarget = 'claude' | 'agents'
-/** 对应 Rust `State`：找不到用户文件夹、未安装、已安装、已安装但与当前版本不同、同名文件夹不是本应用的 Skill */
-type SkillState = 'notFound' | 'absent' | 'added' | 'outdated' | 'invalid'
-
-interface SkillInfo {
-  /** 随安装包附带的 Skill 文件夹 */
-  skillDir: string
-  /** `path` 为安装后的 Skill 文件夹 */
-  skills: { id: SkillTarget; path: string; state: SkillState }[]
-}
-
-const SKILL_LABEL: Record<SkillTarget, string> = {
+export const SKILL_LABEL: Record<SkillTarget, string> = {
   claude: 'Claude Code',
   agents: 'Codex 等',
 }
@@ -103,7 +92,7 @@ export default function SkillSettingsSection() {
       <div className="space-y-1">
         <h4 className={SECTION_TITLE}>Skill</h4>
         <p data-selectable-text className={ROW_DESC}>
-          Skill 为 AI 工具提供 GPT Image Playground CLI 的使用说明，包括何时调用、如何生图与修改设置。Claude Code 读取「~\.claude\skills」，Codex 读取「~\.agents\skills」，Cursor、VS Code 与 OpenCode 两处都会读取，安装其中一处即可。
+          Skill 为 AI 工具提供 GPT Image Playground CLI 的使用说明，包括何时调用、如何生图与修改设置。Claude Code 读取「~\.claude\skills」，Codex 读取「~\.agents\skills」，Cursor、VS Code 与 OpenCode 两处都会读取，安装其中一处即可。已安装的 Skill 会在客户端启动时自动更新到当前版本。
         </p>
         {error && <p data-selectable-text className="text-xs text-red-500 dark:text-red-400">{error}</p>}
       </div>

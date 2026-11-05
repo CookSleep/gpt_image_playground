@@ -194,7 +194,7 @@ Windows 用户可以直接安装桌面客户端；网页版可以部署到 Verce
 Claude Code、Codex 等本机 AI 工具可以通过 CLI `gpt-image-playground` 调用客户端：生成和编辑图片、读取历史记录、查看和修改全部设置（API Key 只能写入）。
 
 - 安装时勾选“添加到 PATH”即可直接运行；使用时客户端需要保持打开，用法见 `gpt-image-playground --help`。
-- 在 **「设置 → Skill」** 中安装随附的 Skill，AI 工具就知道何时、如何调用它。
+- 在 **「设置 → Skill」** 中安装随附的 Skill，AI 工具就知道何时、如何调用它；客户端启动时会自动把已安装的 Skill 更新到当前版本。
 
 **自行构建**
 

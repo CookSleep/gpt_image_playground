@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
+import type { SkillInfo } from './types'
 import { initStore, useStore } from './store'
 import { clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
 import { createDefaultOpenAIProfile, hasDefaultPresetConfig, isAgentTextApiProfile, normalizeSettings } from './lib/apiProfiles'
@@ -32,6 +34,7 @@ import ImageContextMenu from './components/ImageContextMenu'
 import SupportPromptModal from './components/SupportPromptModal'
 import AnnouncementModal from './components/AnnouncementModal'
 import { preloadMarkdownRenderer } from './components/MarkdownRenderer'
+import { SKILL_LABEL } from './components/settings/SkillSettingsSection'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { showStartupNotices, type NoticeSection } from './components/startupNotice'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
@@ -67,6 +70,31 @@ export default function App() {
 
   useEffect(() => {
     if (isTauri) return installCliBridge()
+  }, [])
+
+  useEffect(() => {
+    if (!isTauri) return
+    // 安装的 Skill 是复制过去的，不会随客户端升级；启动时把内容已过时的更新为当前版本，未安装的不处理
+    void invoke<SkillInfo>('skill_info')
+      .then(async (info) => {
+        const outdated = info.skills.filter((s) => s.state === 'outdated')
+        if (!outdated.length) return
+        // 各处分别更新，一处失败不影响另一处；失败时原有的 Skill 保持不变
+        const failed: string[] = []
+        for (const s of outdated) {
+          try {
+            await invoke('skill_install', { target: s.id })
+          } catch (err) {
+            console.warn(`自动更新 ${SKILL_LABEL[s.id]} 的 Skill 失败：`, err)
+            failed.push(SKILL_LABEL[s.id])
+          }
+        }
+        useStore.getState().showToast(
+          failed.length ? `Skill 自动更新失败（${failed.join('、')}），可在「设置 → Skill」中手动更新` : 'Skill 已更新到当前版本',
+          failed.length ? 'error' : 'success',
+        )
+      })
+      .catch((err) => console.warn('读取 Skill 的安装状态失败：', err))
   }, [])
 
   useEffect(() => {
