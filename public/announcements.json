@@ -1,14 +1,5 @@
 [
   {
-    "id": "2026-10-rummage",
-    "title": "新项目 Rummage 发布",
-    "content": "**Rummage** 是一款本地运行的多模态文件语义搜索器。\n\n用一句话描述文件内容，就能在选定的文件夹中找到文档、照片、截图、录音和视频，也可以以图搜图。模糊描述、跨模态搜索甚至直接提问，都能得到准确的结果。",
-    "note": "纯本地推理，数据不离机\n支持 Windows 10 / 11 与 Android 11+",
-    "when": { "os": ["windows", "android"] },
-    "media": { "type": "image", "src": "announcements/rummage.jpg", "aspectRatio": "2/1" },
-    "action": { "label": "在 GitHub 查看", "url": "https://github.com/CookSleep/Rummage" }
-  },
-  {
     "id": "2026-10-desktop-client",
     "title": "推荐使用全新的客户端",
     "content": "Windows 桌面客户端现已推出。",
