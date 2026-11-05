@@ -85,27 +85,26 @@ function ConcurrencyInput({ value, disabled, onCommit }: { value: number; disabl
   )
 }
 
-/** GIF 帧参数输入框：留空表示使用接口默认值，超出范围时取边界值 */
-function GifParamInput({ value, range, placeholder, onCommit }: {
-  value: number | null
+/** GIF 帧参数输入框：超出范围时取边界值，清空或无效时保留原值 */
+function GifParamInput({ value, range, onCommit }: {
+  value: number
   range: { min: number; max: number }
-  placeholder: string
-  onCommit: (value: number | null) => void
+  onCommit: (value: number) => void
 }) {
-  const [input, setInput] = useState(value == null ? '' : String(value))
+  const [input, setInput] = useState(String(value))
   const latestRef = useRef({ input, value, onCommit })
   latestRef.current = { input, value, onCommit }
 
-  const parse = (text: string) => {
+  const parse = (text: string, fallback: number) => {
     const parsed = Number(text)
-    if (!text.trim() || !Number.isFinite(parsed)) return null
+    if (!text.trim() || !Number.isFinite(parsed)) return fallback
     return Math.min(range.max, Math.max(range.min, Math.round(parsed)))
   }
 
   // 直接关闭弹层时输入框被卸载而不会触发 blur，卸载时补一次提交
   useEffect(() => () => {
     const latest = latestRef.current
-    const next = parse(latest.input)
+    const next = parse(latest.input, latest.value)
     if (next !== latest.value) latest.onCommit(next)
   }, [])
 
@@ -114,8 +113,8 @@ function GifParamInput({ value, range, placeholder, onCommit }: {
       value={input}
       onChange={(e) => setInput(e.target.value)}
       onBlur={() => {
-        const next = parse(input)
-        setInput(next == null ? '' : String(next))
+        const next = parse(input, value)
+        setInput(String(next))
         if (next !== value) onCommit(next)
       }}
       onKeyDown={(e) => {
@@ -124,7 +123,6 @@ function GifParamInput({ value, range, placeholder, onCommit }: {
       type="number"
       min={range.min}
       max={range.max}
-      placeholder={placeholder}
       className="w-28 px-3 py-1.5 rounded-xl border border-transparent bg-black/[0.04] dark:bg-white/[0.06] focus:border-blue-300 dark:focus:border-blue-500/50 focus:outline-none text-xs transition-all duration-200"
     />
   )
@@ -254,7 +252,7 @@ export default function InputParamsPanel({
   const moreSummary = [
     complexityAvailable ? `复杂度 ${params.complexity}` : null,
     params.output_format.toUpperCase(),
-    isGif ? `${params.frame_count ?? 9} 帧` : null,
+    isGif ? `${params.frame_count} 帧` : null,
     showTransparentOutputControl
       ? `透明 ${transparentOutputEnabled}`
       : compressionDisabled ? null : `压缩 ${outputCompressionInput || '默认'}`,
@@ -419,7 +417,6 @@ export default function InputParamsPanel({
                   <GifParamInput
                     value={params.frame_count}
                     range={GIF_FRAME_COUNT_RANGE}
-                    placeholder="默认 9"
                     onCommit={(frame_count) => setParams({ frame_count })}
                   />
                 </label>
@@ -428,7 +425,6 @@ export default function InputParamsPanel({
                   <GifParamInput
                     value={params.frame_duration_ms}
                     range={GIF_FRAME_DURATION_RANGE}
-                    placeholder="默认 200"
                     onCommit={(frame_duration_ms) => setParams({ frame_duration_ms })}
                   />
                 </label>

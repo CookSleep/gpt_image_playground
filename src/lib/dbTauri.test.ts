@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { TaskRecord } from '../types'
+import { DEFAULT_PARAMS, type TaskRecord } from '../types'
 
 const invoke = vi.hoisted(() => vi.fn())
 
@@ -57,8 +57,8 @@ describe('dbTauri', () => {
   })
 
   it('db.ts 门面在客户端中转发到 Rust 命令', async () => {
-    invoke.mockResolvedValue([{ id: 't1' }])
-    await expect(getAllTasks()).resolves.toEqual([{ id: 't1' }])
+    invoke.mockResolvedValue([{ id: 't1', params: DEFAULT_PARAMS }])
+    await expect(getAllTasks()).resolves.toEqual([{ id: 't1', params: DEFAULT_PARAMS }])
     expect(invoke).toHaveBeenCalledWith('tasks_get_all', undefined, undefined)
   })
 

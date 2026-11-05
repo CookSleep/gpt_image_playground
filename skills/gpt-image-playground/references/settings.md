@@ -12,7 +12,7 @@
 | `quality` | `auto`、`low`、`medium`、`high`、`xhigh`、`max`；`xhigh`、`max` 只在支持的模型上有效，其他模型降为 `high` |
 | `complexity` | `auto`、`low`、`medium`、`high`；只有 GPT Image 2.6 支持，`auto` 为不发送 |
 | `output_format` | `png`、`jpeg`、`webp`、`svg`、`gif`；`svg`、`gif` 只有 GPT Image 2.6 支持，`svg` 只能文生图，`gif` 也可用于参考图编辑 |
-| `frame_count`、`frame_duration_ms` | GIF 的帧数（2–16）和每帧毫秒数（20–2000）；`null` 为接口默认值 |
+| `frame_count`、`frame_duration_ms` | GIF 的帧数（2–16，默认 9）和每帧毫秒数（20–2000，默认 200） |
 | `output_compression` | 0–100，jpeg、webp 的压缩质量；`null` 为不指定 |
 | `moderation` | `auto`、`low` |
 | `n` | 每个任务生成的张数，上限取决于当前配置 |

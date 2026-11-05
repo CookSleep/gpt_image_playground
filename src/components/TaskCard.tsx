@@ -312,8 +312,8 @@ export default function TaskCard({
 
   const qualityDisplay = getParamDisplay(task, 'quality')
   const showQuality = task.params.quality !== 'auto' || qualityDisplay.isMismatch
-  // 旧任务记录没有 complexity；接口也不回传该字段
-  const showComplexity = Boolean(task.params.complexity) && task.params.complexity !== 'auto'
+  // 接口不回传 complexity，只显示设置的值
+  const showComplexity = task.params.complexity !== 'auto'
 
   const sizeDisplay = getParamDisplay(task, 'size')
   const showSize = task.params.size !== 'auto' || sizeDisplay.isMismatch

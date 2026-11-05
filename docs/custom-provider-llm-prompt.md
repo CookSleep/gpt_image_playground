@@ -55,7 +55,7 @@ body 模板变量：
 - $profile.model：用户在设置里填写的模型 ID。
 - $prompt：当前提示词。
 - $params.size、$params.quality、$params.output_format、$params.output_compression、$params.moderation、$params.n：应用内参数。
-- $params.complexity、$params.frame_count、$params.frame_duration_ms、$params.svg：GPT Image 2.6 参数，只在模型 ID 为 GPT Image 2.6 及以上时可用；复杂度选 auto 时省略 complexity，帧参数只在输出 GIF 且填写了值时传入，svg 只在输出 SVG 时传入，值为 {"model":"SVG 编写模型 ID"}。
+- $params.complexity、$params.frame_count、$params.frame_duration_ms、$params.svg：GPT Image 2.6 参数，只在模型 ID 为 GPT Image 2.6 及以上时可用；复杂度选 auto 时省略 complexity，帧参数只在输出 GIF 时传入，svg 只在输出 SVG 时传入，值为 {"model":"SVG 编写模型 ID"}。
 - $params.background：API 原生透明背景参数；启用时为 `"transparent"`，未启用时自动省略。
 - $inputImages.dataUrls：参考图 data URL 数组；没有参考图时会自动省略该字段。
 - $inputImages.base64：参考图 base64 数组，不含 `data:image/png;base64,` 前缀；没有参考图时会自动省略该字段。

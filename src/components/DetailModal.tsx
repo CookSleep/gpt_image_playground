@@ -992,7 +992,7 @@ export default function DetailModal() {
                   <DetailParamValue task={task} paramKey="quality" className="font-medium" actualParams={currentActualParams} />
                 </div>
               </div>
-              {task.params.complexity && task.params.complexity !== 'auto' && (
+              {task.params.complexity !== 'auto' && (
                 <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
                   <span className="text-gray-400 dark:text-gray-500">复杂度</span>
                   <br />
@@ -1028,14 +1028,14 @@ export default function DetailModal() {
                     <span className="text-gray-400 dark:text-gray-500">帧数</span>
                     <br />
                     <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                      <span className="font-medium text-gray-700 dark:text-gray-300">{task.params.frame_count ?? '默认'}</span>
+                      <span className="font-medium text-gray-700 dark:text-gray-300">{task.params.frame_count}</span>
                     </div>
                   </div>
                   <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
                     <span className="text-gray-400 dark:text-gray-500">每帧时长</span>
                     <br />
                     <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                      <span className="font-medium text-gray-700 dark:text-gray-300">{task.params.frame_duration_ms == null ? '默认' : `${task.params.frame_duration_ms} ms`}</span>
+                      <span className="font-medium text-gray-700 dark:text-gray-300">{task.params.frame_duration_ms} ms</span>
                     </div>
                   </div>
                 </>

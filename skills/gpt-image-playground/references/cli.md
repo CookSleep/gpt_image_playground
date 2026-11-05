@@ -23,7 +23,7 @@ gpt-image-playground generate <提示词> [--prompt <提示词>]… [--image <�
 | `--complexity` | 模型渲染前的规划程度，只有 GPT Image 2.6 支持，其他模型按 `auto`（不发送）处理 |
 | `-n` | 每个任务的张数 |
 | `--format`、`--compression` | 输出格式；`jpeg`、`webp` 的压缩质量 0–100。`svg`、`gif` 只有 GPT Image 2.6 支持，`svg` 只能文生图，`gif` 也可用于参考图编辑 |
-| `--frames`、`--frame-duration` | GIF 的帧数和每帧毫秒数，不给时使用接口默认值（9 帧、200 ms） |
+| `--frames`、`--frame-duration` | GIF 的帧数和每帧毫秒数，默认 9 帧、200 ms |
 | `--moderation` | `auto` 或 `low` |
 | `--transparent` | 透明背景，不支持 `jpeg`；自定义供应商未映射 `$params.background` 时 `svg`、`gif` 也不支持 |
 | `--output` | 把结果图片另外复制到这个目录，不存在时创建；文件名为 `task-<任务 ID>`，一个任务有多张时加 `-01`、`-02` |

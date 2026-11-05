@@ -113,8 +113,8 @@ function parseParams(args: Record<string, unknown>) {
   for (const [key, range] of [['frame_count', GIF_FRAME_COUNT_RANGE], ['frame_duration_ms', GIF_FRAME_DURATION_RANGE]] as const) {
     const value = args[key]
     if (value === undefined) continue
-    if (value !== null && (typeof value !== 'number' || !Number.isInteger(value) || value < range.min || value > range.max)) {
-      throw new Error(`${key} 必须是 ${range.min}–${range.max} 的整数或 null`)
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < range.min || value > range.max) {
+      throw new Error(`${key} 必须是 ${range.min}–${range.max} 的整数`)
     }
     patch[key] = value
   }

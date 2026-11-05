@@ -13,14 +13,13 @@ export const MIME_MAP: Record<string, string> = {
 
 /** GPT Image 2.6 的 complexity、SVG 和 GIF 字段；Images API 生成请求和 Responses 图像工具格式相同 */
 export function applyGptImage26Params(target: Record<string, unknown>, params: TaskParams, profile: ApiProfile) {
-  // 旧任务记录没有这些字段
-  if (params.complexity && params.complexity !== 'auto') target.complexity = params.complexity
+  if (params.complexity !== 'auto') target.complexity = params.complexity
   if (params.output_format === 'svg') {
     target.svg = { model: profile.svgModel?.trim() || DEFAULT_SVG_MODEL }
   }
   if (params.output_format === 'gif') {
-    if (params.frame_count != null) target.frame_count = params.frame_count
-    if (params.frame_duration_ms != null) target.frame_duration_ms = params.frame_duration_ms
+    target.frame_count = params.frame_count
+    target.frame_duration_ms = params.frame_duration_ms
   }
 }
 

@@ -216,9 +216,9 @@ export interface TaskParams {
   moderation: 'auto' | 'low'
   n: number
   transparent_output: boolean
-  /** 仅 GIF 输出；null 表示使用接口默认值 */
-  frame_count: number | null
-  frame_duration_ms: number | null
+  /** 仅 GIF 输出 */
+  frame_count: number
+  frame_duration_ms: number
 }
 
 export const DEFAULT_PARAMS: TaskParams = {
@@ -230,8 +230,8 @@ export const DEFAULT_PARAMS: TaskParams = {
   moderation: 'auto',
   n: 1,
   transparent_output: false,
-  frame_count: null,
-  frame_duration_ms: null,
+  frame_count: 9,
+  frame_duration_ms: 200,
 }
 
 // ===== 输入图片（UI 层面） =====

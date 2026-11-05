@@ -264,9 +264,8 @@ describe('GPT Image 2.6 custom providers', () => {
     })
 
     const body = getJsonBodies(fetchMock)[0]
-    expect(body).toMatchObject({ output_format: 'gif', frame_count: 4 })
+    expect(body).toMatchObject({ output_format: 'gif', frame_count: 4, frame_duration_ms: 200 })
     expect(body).not.toHaveProperty('complexity')
-    expect(body).not.toHaveProperty('frame_duration_ms')
     expect(body).not.toHaveProperty('svg')
   })
 

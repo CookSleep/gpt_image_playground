@@ -1,4 +1,4 @@
-import type { StoredImage, StoredImageThumbnail } from '../types'
+import { DEFAULT_PARAMS, type StoredImage, type StoredImageThumbnail, type TaskRecord } from '../types'
 import * as indexedDbBackend from './dbIndexedDb'
 import * as tauriBackend from './dbTauri'
 import { isTauri } from './platform'
@@ -13,7 +13,6 @@ export const CURRENT_THUMBNAIL_VERSION = THUMBNAIL_VERSION
 const backend: typeof indexedDbBackend = isTauri ? tauriBackend : indexedDbBackend
 
 export const {
-  getAllTasks,
   putTask,
   deleteTask,
   commitTaskDeletion,
@@ -32,6 +31,19 @@ export const {
   deleteImage,
   clearImages,
 } = backend
+
+/** 旧任务记录没有 GPT Image 2.6 参数，帧参数也可能为 null，读出时补全，之后使用的任务参数都是完整的 */
+export async function getAllTasks(): Promise<TaskRecord[]> {
+  return (await backend.getAllTasks()).map((task) => ({
+    ...task,
+    params: {
+      ...task.params,
+      complexity: task.params.complexity ?? DEFAULT_PARAMS.complexity,
+      frame_count: task.params.frame_count ?? DEFAULT_PARAMS.frame_count,
+      frame_duration_ms: task.params.frame_duration_ms ?? DEFAULT_PARAMS.frame_duration_ms,
+    },
+  }))
+}
 
 // ===== Thumbnails =====
 
