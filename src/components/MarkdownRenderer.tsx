@@ -120,6 +120,8 @@ const canLoadStreamdown = (() => {
 
 let streamdownPromise: Promise<MarkdownRendererState> | null = null
 let legacyMarkdownPromise: Promise<MarkdownRendererState> | null = null
+// 加载完成后新挂载的组件直接用它渲染，不再先显示一帧原文
+let loadedRenderer: MarkdownRendererState | null = null
 
 function loadLegacyMarkdown() {
   legacyMarkdownPromise ??= Promise.all([import('react-markdown'), import('remark-gfm')])
@@ -139,8 +141,15 @@ function loadLegacyMarkdown() {
 }
 
 function loadMarkdownRenderer() {
-  if (!canLoadStreamdown) return loadLegacyMarkdown()
+  return (canLoadStreamdown ? loadStreamdown() : loadLegacyMarkdown()).then((next) => (loadedRenderer = next))
+}
 
+/** 渲染库较大，不放进首屏；页面空闲时预加载，打开公告、更新日志或 Agent 对话时可以直接渲染 */
+export function preloadMarkdownRenderer() {
+  void loadMarkdownRenderer()
+}
+
+function loadStreamdown() {
   streamdownPromise ??= Promise.all([
     import('streamdown'),
     import('@streamdown/math'),
@@ -163,12 +172,12 @@ function loadMarkdownRenderer() {
   return streamdownPromise!
 }
 
-function PlainTextMarkdown({ content, className = '' }: MarkdownRendererProps) {
+function PlainTextMarkdown({ content, className = '', hidden = false }: MarkdownRendererProps & { hidden?: boolean }) {
   return (
     <div
       className={`markdown-renderer ${className}`.trim()}
       dir="auto"
-      style={{ whiteSpace: 'pre-wrap' }}
+      style={{ whiteSpace: 'pre-wrap', visibility: hidden ? 'hidden' : undefined }}
     >
       {content}
     </div>
@@ -180,10 +189,14 @@ const MarkdownRenderer = memo(function MarkdownRenderer({
   streaming = false,
   className = '',
 }: MarkdownRendererProps) {
-  const [renderer, setRenderer] = useState<MarkdownRendererState>({ type: 'loading' })
+  const [renderer, setRenderer] = useState<MarkdownRendererState>(() => loadedRenderer ?? { type: 'loading' })
+  const [showRawText, setShowRawText] = useState(false)
 
   useEffect(() => {
+    if (renderer.type !== 'loading') return
     let disposed = false
+    // 渲染库通常很快就能加载完，先隐藏原文并保留占位，加载较慢时再显示原文
+    const timer = setTimeout(() => setShowRawText(true), 300)
 
     loadMarkdownRenderer().then((nextRenderer) => {
       if (!disposed) setRenderer(nextRenderer)
@@ -191,8 +204,9 @@ const MarkdownRenderer = memo(function MarkdownRenderer({
 
     return () => {
       disposed = true
+      clearTimeout(timer)
     }
-  }, [])
+  }, [renderer.type])
 
   if (renderer.type === 'legacy') {
     const { ReactMarkdown, remarkGfm } = renderer.module
@@ -210,7 +224,7 @@ const MarkdownRenderer = memo(function MarkdownRenderer({
   }
 
   if (renderer.type !== 'modern') {
-    return <PlainTextMarkdown content={content} className={className} />
+    return <PlainTextMarkdown content={content} className={className} hidden={renderer.type === 'loading' && !showRawText} />
   }
 
   const StreamdownComponent = renderer.Component

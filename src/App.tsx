@@ -31,6 +31,7 @@ import TitleBar from './components/TitleBar'
 import ImageContextMenu from './components/ImageContextMenu'
 import SupportPromptModal from './components/SupportPromptModal'
 import AnnouncementModal from './components/AnnouncementModal'
+import { preloadMarkdownRenderer } from './components/MarkdownRenderer'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { showStartupNotices, type NoticeSection } from './components/startupNotice'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
@@ -66,6 +67,15 @@ export default function App() {
 
   useEffect(() => {
     if (isTauri) return installCliBridge()
+  }, [])
+
+  useEffect(() => {
+    if (!('requestIdleCallback' in window)) {
+      const timer = setTimeout(preloadMarkdownRenderer, 1_000)
+      return () => clearTimeout(timer)
+    }
+    const id = window.requestIdleCallback(preloadMarkdownRenderer, { timeout: 3_000 })
+    return () => window.cancelIdleCallback(id)
   }, [])
 
   useEffect(() => {
