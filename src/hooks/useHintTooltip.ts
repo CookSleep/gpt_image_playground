@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { onDismissTooltips } from '../lib/tooltipDismiss'
 
 interface UseHintTooltipOptions {
   enabled?: () => boolean
@@ -55,6 +56,9 @@ export function useHintTooltip(options: UseHintTooltipOptions = {}) {
       show()
     }, touchDelayMs)
   }, [clearTimer, show, touchDelayMs])
+
+  // 显示状态由调用方保存，提示所在的弹层关闭后仍会保留，需随全局关闭一起清除
+  useEffect(() => onDismissTooltips(hide), [hide])
 
   useEffect(() => () => {
     clearTimer()

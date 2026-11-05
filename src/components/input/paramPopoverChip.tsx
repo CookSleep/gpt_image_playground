@@ -28,12 +28,17 @@ export default function ParamPopoverChip({
 
   useEffect(() => {
     if (!open) return
+    // 弹层内的提示随弹层一起关闭
+    const close = () => {
+      dismissAllTooltips()
+      setOpen(false)
+    }
     const handlePointerDown = (e: PointerEvent) => {
       const target = e.target as Node
-      if (!panelRef.current?.contains(target) && !buttonRef.current?.contains(target)) setOpen(false)
+      if (!panelRef.current?.contains(target) && !buttonRef.current?.contains(target)) close()
     }
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') close()
     }
     document.addEventListener('pointerdown', handlePointerDown)
     document.addEventListener('keydown', handleKeyDown)

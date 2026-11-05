@@ -459,8 +459,9 @@ export default function InputParamsPanel({
                     onOpenChange={onTransparentOutputMenuOpenChange}
                   />
                 </div>
+                {/* SVG 和 GIF 只能用接口原生透明背景，没有可选的实现方式 */}
                 <ButtonTooltip
-                  visible={transparentOutputHint.visible}
+                  visible={transparentOutputHint.visible && params.output_format !== 'svg' && !isGif}
                   text={<>实现方式可在<strong className="font-semibold">「设置 → API 配置」</strong>中选择</>}
                 />
               </div>
