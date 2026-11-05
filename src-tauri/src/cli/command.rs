@@ -15,8 +15,9 @@ use serde_json::{json, Map, Value};
 
 const USAGE: &str = "用法：
   gpt-image-playground generate <提示词> [--prompt <提示词>]… [--image <图片>]… [--size <尺寸>]
-                                [--quality <质量>] [-n <数量>] [--format png|jpeg|webp] [--compression <0-100>]
-                                [--moderation auto|low] [--transparent] [--output <目录>] [--json]
+                                [--quality <质量>] [--complexity auto|low|medium|high] [-n <数量>]
+                                [--format png|jpeg|webp|svg|gif] [--frames <2-16>] [--frame-duration <20-2000>]
+                                [--compression <0-100>] [--moderation auto|low] [--transparent] [--output <目录>] [--json]
   gpt-image-playground history [<任务 ID>…] [--limit <数量>] [--offset <数量>] [--json]
   gpt-image-playground image <图片 ID 或任务 ID> [--output <目录>] [--json]
   gpt-image-playground settings [--json]                  设置、生图参数、API 配置、自定义服务商与代理
@@ -112,7 +113,8 @@ pub fn parse(
     }
     let allowed: &[&str] = match (cmd.as_str(), words.first().map(String::as_str)) {
         ("generate", _) => &[
-            "--prompt", "--image", "--size", "--quality", "-n", "--format", "--compression", "--moderation", "--transparent", "--output",
+            "--prompt", "--image", "--size", "--quality", "--complexity", "-n", "--format", "--frames", "--frame-duration", "--compression",
+            "--moderation", "--transparent", "--output",
         ],
         ("history", _) => &["--limit", "--offset"],
         ("image", _) => &["--output"],
@@ -159,6 +161,9 @@ pub fn parse(
             }
             "--size" => ("size", value.into()),
             "--quality" => ("quality", value.into()),
+            "--complexity" => ("complexity", value.into()),
+            "--frames" => ("frame_count", int(&flag, &value, 2, 16)?.into()),
+            "--frame-duration" => ("frame_duration_ms", int(&flag, &value, 20, 2000)?.into()),
             "-n" => ("n", int(&flag, &value, 1, 100)?.into()),
             "--format" => ("output_format", value.into()),
             "--compression" => ("output_compression", int(&flag, &value, 0, 100)?.into()),

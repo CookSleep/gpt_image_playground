@@ -1,12 +1,28 @@
+import { blobToDataUrl } from './dataUrl'
 import { assertUsableMaskCoverage, classifyMaskAlpha, type MaskCoverage } from './mask'
 
 export async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
+  const src = await withSvgIntrinsicSize(dataUrl)
   return new Promise((resolve, reject) => {
     const image = new Image()
     image.onload = () => resolve(image)
     image.onerror = () => reject(new Error('图片加载失败'))
-    image.src = dataUrl
+    image.src = src
   })
+}
+
+/** 宽高缺失、为百分比或 auto 的 SVG 会按 300×150 的默认尺寸加载，画到 Canvas 上会很小，用 viewBox 的宽高补上 */
+async function withSvgIntrinsicSize(dataUrl: string): Promise<string> {
+  if (!/^data:image\/svg\+xml[;,]/i.test(dataUrl)) return dataUrl
+  const svg = new DOMParser().parseFromString(await (await fetch(dataUrl)).text(), 'image/svg+xml').documentElement
+  // pt、mm 等绝对单位浏览器能自行换算，保留原值
+  const hasSize = (name: string) => !/^(|auto|.*%)$/i.test(svg.getAttribute(name)?.trim() ?? '')
+  if (hasSize('width') && hasSize('height')) return dataUrl
+  const box = svg.getAttribute('viewBox')?.trim().split(/[\s,]+/).map(Number)
+  if (!box || box.length !== 4 || !(box[2] > 0) || !(box[3] > 0)) return dataUrl
+  svg.setAttribute('width', String(box[2]))
+  svg.setAttribute('height', String(box[3]))
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(svg))}`
 }
 
 export async function dataUrlToBlob(dataUrl: string, fallbackType = 'image/png'): Promise<Blob> {
@@ -24,6 +40,25 @@ export async function imageDataUrlToPngBlob(dataUrl: string): Promise<Blob> {
   if (!ctx) throw new Error('当前浏览器不支持 Canvas')
   ctx.drawImage(image, 0, 0)
   return canvasToBlob(canvas, 'image/png')
+}
+
+/** 图像接口不接受 SVG 和 GIF 作为输入图，转成 PNG（GIF 取第一帧） */
+export async function toApiInputImageDataUrl(dataUrl: string): Promise<string> {
+  if (!/^data:image\/(svg\+xml|gif)[;,]/i.test(dataUrl)) return dataUrl
+  return blobToDataUrl(await imageDataUrlToPngBlob(dataUrl))
+}
+
+/** 把 markup 标注层画到原图上，供不支持 markup 的接口使用 */
+export async function composeMarkupDataUrl(imageDataUrl: string, markupDataUrl: string): Promise<string> {
+  const [image, markup] = await Promise.all([loadImage(imageDataUrl), loadImage(markupDataUrl)])
+  const canvas = document.createElement('canvas')
+  canvas.width = image.naturalWidth
+  canvas.height = image.naturalHeight
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('当前浏览器不支持 Canvas')
+  ctx.drawImage(image, 0, 0)
+  ctx.drawImage(markup, 0, 0, canvas.width, canvas.height)
+  return blobToDataUrl(await canvasToBlob(canvas, 'image/png'))
 }
 
 export async function maskDataUrlToPngBlob(maskDataUrl: string): Promise<Blob> {

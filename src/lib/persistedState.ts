@@ -1,4 +1,4 @@
-import type { AgentConversation, AgentInputDraft, AppMode, AppSettings, FavoriteCollection, InputImage, MaskDraft, PresetConfig, TaskParams } from '../types'
+import { GIF_FRAME_COUNT_RANGE, GIF_FRAME_DURATION_RANGE, IMAGE_COMPLEXITIES, OUTPUT_FORMATS, type AgentConversation, type AgentInputDraft, type AppMode, type AppSettings, type FavoriteCollection, type InputImage, type MaskDraft, type PresetConfig, type TaskParams } from '../types'
 import { normalizePresetAgent, normalizeSettings } from './apiProfiles'
 import { normalizeAgentConversations } from './agentConversationState'
 import { ensureDefaultFavoriteCollection, normalizeFavoriteCollections, resolveDefaultFavoriteCollectionId } from './favoriteState'
@@ -74,6 +74,10 @@ function normalizeStringArray(value: unknown, fallback: string[]) {
   return value.filter((item): item is string => typeof item === 'string')
 }
 
+function normalizeGifParam(value: unknown, range: { min: number; max: number }) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= range.min && value <= range.max ? value : null
+}
+
 function normalizeParams(value: unknown, fallback: TaskParams): TaskParams {
   if (!isRecord(value)) return fallback
   return {
@@ -81,13 +85,20 @@ function normalizeParams(value: unknown, fallback: TaskParams): TaskParams {
     quality: value.quality === 'auto' || value.quality === 'low' || value.quality === 'medium' || value.quality === 'high' || value.quality === 'xhigh' || value.quality === 'max'
       ? value.quality
       : fallback.quality,
-    output_format: value.output_format === 'png' || value.output_format === 'jpeg' || value.output_format === 'webp' ? value.output_format : fallback.output_format,
+    complexity: IMAGE_COMPLEXITIES.includes(value.complexity as TaskParams['complexity'])
+      ? value.complexity as TaskParams['complexity']
+      : fallback.complexity,
+    output_format: OUTPUT_FORMATS.includes(value.output_format as TaskParams['output_format'])
+      ? value.output_format as TaskParams['output_format']
+      : fallback.output_format,
     output_compression: value.output_compression === null || (typeof value.output_compression === 'number' && Number.isFinite(value.output_compression))
       ? value.output_compression
       : fallback.output_compression,
     moderation: value.moderation === 'auto' || value.moderation === 'low' ? value.moderation : fallback.moderation,
     n: typeof value.n === 'number' && Number.isFinite(value.n) ? value.n : fallback.n,
     transparent_output: typeof value.transparent_output === 'boolean' ? value.transparent_output : fallback.transparent_output,
+    frame_count: normalizeGifParam(value.frame_count, GIF_FRAME_COUNT_RANGE),
+    frame_duration_ms: normalizeGifParam(value.frame_duration_ms, GIF_FRAME_DURATION_RANGE),
   }
 }
 
@@ -103,13 +114,13 @@ export function createPersistedState(state: PersistedStateSource, includeLegacyA
     ...(settings.persistInputOnRestart && (state.appMode === 'gallery' || galleryInputDraft)
       ? {
           prompt: galleryInputDraft?.prompt ?? '',
-          inputImages: galleryInputDraft?.inputImages.map((img) => ({ id: img.id, dataUrl: '' })) ?? [],
+          inputImages: galleryInputDraft?.inputImages.map((img) => ({ id: img.id, dataUrl: '', markupImageId: img.markupImageId })) ?? [],
         }
       : {}),
     dismissedCodexCliPrompts: state.dismissedCodexCliPrompts,
     appMode: state.appMode,
     galleryInputDraft: settings.persistInputOnRestart && galleryInputDraft
-      ? { ...galleryInputDraft, inputImages: galleryInputDraft.inputImages.map((img) => ({ id: img.id, dataUrl: '' })) }
+      ? { ...galleryInputDraft, inputImages: galleryInputDraft.inputImages.map((img) => ({ id: img.id, dataUrl: '', markupImageId: img.markupImageId })) }
       : null,
     ...(includeLegacyAgentConversations
       ? { agentConversations: getPersistableAgentConversations(state.agentConversations) }

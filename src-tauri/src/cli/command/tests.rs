@@ -21,6 +21,17 @@ fn generate_joins_words_and_collects_prompts() {
 }
 
 #[test]
+fn generate_parses_complexity_and_gif_flags() {
+    let cmd = run_parse(&["generate", "x", "--complexity", "low", "--format", "gif", "--frames", "4", "--frame-duration", "120"]).unwrap();
+    assert_eq!(cmd.arguments["complexity"], "low");
+    assert_eq!(cmd.arguments["output_format"], "gif");
+    assert_eq!(cmd.arguments["frame_count"], 4);
+    assert_eq!(cmd.arguments["frame_duration_ms"], 120);
+    assert!(run_parse(&["generate", "x", "--frames", "17"]).is_err());
+    assert!(run_parse(&["generate", "x", "--frame-duration", "10"]).is_err());
+}
+
+#[test]
 fn reference_images_are_read_relative_to_cwd() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("ref.png"), [1u8, 2, 3]).unwrap();

@@ -55,9 +55,11 @@ import { showBrowserNotification } from './lib/browserNotification'
 import { IMAGE_FETCH_CORS_HINT, isHttpUrl } from './lib/imageApiShared'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
-import { validateMaskMatchesImage } from './lib/canvasImage'
+import { toApiInputImageDataUrl, validateMaskMatchesImage } from './lib/canvasImage'
+import { persistTaskInputImages, toReferenceImage } from './lib/inputImages'
 import { orderInputImagesForMask } from './lib/mask'
-import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompatibility'
+import { getChangedParams, normalizeParamsForSettings, supportsTransparentOutput } from './lib/paramCompatibility'
+import { isVectorOrAnimatedFormat } from './lib/imageModels'
 import { runWithConcurrency, splitBatchPrompts } from './lib/batchPrompts'
 import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { blobToDataUrl, fileToDataUrl } from './lib/dataUrl'
@@ -329,6 +331,8 @@ interface AppState {
   inputImages: InputImage[]
   addInputImage: (img: InputImage) => void
   replaceInputImage: (idx: number, img: InputImage) => void
+  /** 设置或清除参考图上的 markup 标注层 */
+  setInputImageMarkup: (imageId: string, markupImageId: string | undefined) => void
   removeInputImage: (idx: number) => void
   clearInputImages: () => void
   setInputImages: (imgs: InputImage[], options?: { equivalentImageIds?: Record<string, string> }) => void
@@ -485,9 +489,9 @@ interface AppState {
 }
 
 function isImageReferencedByState(state: AppState, imageId: string) {
-  if (state.inputImages.some((img) => img.id === imageId)) return true
-  if (state.galleryInputDraft?.inputImages.some((img) => img.id === imageId)) return true
-  if (Object.values(state.agentInputDrafts).some((draft) => draft.inputImages.some((img) => img.id === imageId))) return true
+  if (state.inputImages.some((img) => img.id === imageId || img.markupImageId === imageId)) return true
+  if (state.galleryInputDraft?.inputImages.some((img) => img.id === imageId || img.markupImageId === imageId)) return true
+  if (Object.values(state.agentInputDrafts).some((draft) => draft.inputImages.some((img) => img.id === imageId || img.markupImageId === imageId))) return true
   if (getPrivacySnapshotImageIds(state.privacyMode).includes(imageId)) return true
   if (state.tasks.some((task) =>
     task.inputImageIds.includes(imageId) ||
@@ -495,7 +499,8 @@ function isImageReferencedByState(state: AppState, imageId: string) {
     task.transparentOriginalImages?.includes(imageId) ||
     task.streamPartialImageIds?.includes(imageId) ||
     task.maskTargetImageId === imageId ||
-    task.maskImageId === imageId
+    task.maskImageId === imageId ||
+    task.markupImageId === imageId
   )) return true
   return state.agentConversations.some((conversation) =>
     conversation.rounds.some((round) =>
@@ -758,20 +763,38 @@ export const useStore = create<AppState>()(
           return syncActiveInputDraft(s, { inputImages: [...s.inputImages, img] })
         }),
       replaceInputImage: (idx, img) => {
-        let removedImageId: string | null = null
+        let removed = null as InputImage | null
         set((s) => {
           if (idx < 0 || idx >= s.inputImages.length) return s
           const previous = s.inputImages[idx]
           if (!previous || previous.id === img.id) return s
           if (s.inputImages.some((item, itemIdx) => itemIdx !== idx && item.id === img.id)) return s
-          removedImageId = previous.id
+          removed = previous
           const inputImages = s.inputImages.map((item, itemIdx) => itemIdx === idx ? img : item)
           return syncActiveInputDraft(s, updateInputDraftImages(s, inputImages, {
             equivalentImageIds: { [previous.id]: img.id },
             clearMissingMask: previous.id === s.maskDraft?.targetImageId,
           }))
         })
-        if (removedImageId) void deleteImageIfUnreferenced(removedImageId)
+        // 换了图片后旧标注对不上新图，随旧图一起清理
+        for (const id of [removed?.id, removed?.markupImageId]) {
+          if (id) void deleteImageIfUnreferenced(id)
+        }
+      },
+      setInputImageMarkup: (imageId, markupImageId) => {
+        let previousMarkupId: string | undefined
+        set((s) => {
+          const target = s.inputImages.find((img) => img.id === imageId)
+          if (!target || target.markupImageId === markupImageId) return s
+          previousMarkupId = target.markupImageId
+          const inputImages = s.inputImages.map((img) => {
+            if (img.id !== imageId) return img
+            const { markupImageId: _previous, ...rest } = img
+            return markupImageId ? { ...rest, markupImageId } : rest
+          })
+          return syncActiveInputDraft(s, { inputImages })
+        })
+        if (previousMarkupId) void deleteImageIfUnreferenced(previousMarkupId)
       },
       removeInputImage: (idx) =>
         set((s) => {
@@ -1274,9 +1297,9 @@ function usesConcurrentImageRequests(settings: AppSettings, profile: ApiProfile,
   if (n <= 1) return false
   if (profile.provider === 'openai') {
     if (profile.apiMode === 'responses') return true
-    return profile.apiMode === 'images' && (profile.codexCli || profile.streamImages)
+    return profile.apiMode === 'images' && (profile.codexCli || params.output_format === 'svg' || (profile.streamImages && params.output_format !== 'gif'))
   }
-  return profile.provider !== 'fal' && profile.codexCli && !isAsyncCustomProviderTask(settings, profile.provider, hasInputImages)
+  return profile.provider !== 'fal' && (profile.codexCli || params.output_format === 'svg') && !isAsyncCustomProviderTask(settings, profile.provider, hasInputImages)
 }
 
 export function taskHasOutputErrors(task: Pick<TaskRecord, 'outputErrors'>) {
@@ -1670,12 +1693,12 @@ export async function initStore() {
   const galleryInputDraft = state.galleryInputDraft
   const agentConversations = state.agentConversations
   const agentInputDrafts = state.agentInputDrafts
-  for (const img of persistedInputImages) referencedIds.add(img.id)
+  for (const img of persistedInputImages) addInputImageReferencedIds(referencedIds, img)
   if (galleryInputDraft) {
-    for (const img of galleryInputDraft.inputImages) referencedIds.add(img.id)
+    for (const img of galleryInputDraft.inputImages) addInputImageReferencedIds(referencedIds, img)
   }
   for (const draft of Object.values(agentInputDrafts)) {
-    for (const img of draft.inputImages) referencedIds.add(img.id)
+    for (const img of draft.inputImages) addInputImageReferencedIds(referencedIds, img)
   }
   for (const conversation of agentConversations) {
     for (const round of conversation.rounds) {
@@ -1853,6 +1876,13 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     return []
   }
 
+  const normalizedParams = normalizeParamsForSettings(params, requestSettings, { hasInputImages: inputImages.length > 0 })
+  // 编辑接口不接受 SVG 参数；GIF 实测在编辑时也能正常生成
+  if (inputImages.length > 0 && normalizedParams.output_format === 'svg') {
+    showToast('SVG 只能用于文生图，请移除参考图或切换输出格式', 'error')
+    return []
+  }
+
   const batchPrompts = input && input.prompts.length > 1
     ? input.prompts
     : normalizedSettings.showBatchPrompt && normalizedSettings.batchPromptEnabled ? splitBatchPrompts(prompt) : []
@@ -1898,10 +1928,9 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   }
 
   // 持久化输入图片到 IndexedDB（此前只在内存缓存中）
+  let taskInputImages = orderedInputImages
   try {
-    for (const img of orderedInputImages) {
-      await storeImage(img.dataUrl)
-    }
+    taskInputImages = await persistTaskInputImages(orderedInputImages, true)
   } catch (err) {
     console.error('保存参考图失败', err)
     endBatch(batchId)
@@ -1909,8 +1938,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     return []
   }
 
-  const normalizedParams = normalizeParamsForSettings(params, requestSettings, { hasInputImages: orderedInputImages.length > 0 })
-  const shouldUseTransparentOutput = (normalizedParams.output_format === 'png' || normalizedParams.output_format === 'webp') && normalizedParams.transparent_output
+  const shouldUseTransparentOutput = normalizedParams.transparent_output && supportsTransparentOutput(requestSettings, activeProfile, normalizedParams.output_format)
   const taskParams = shouldUseTransparentOutput
     ? getTransparentRequestParams(normalizedParams)
     : { ...normalizedParams, transparent_output: false }
@@ -1932,7 +1960,8 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
         defaultFavoriteCollectionId: useStore.getState().defaultFavoriteCollectionId,
       })
       : null
-    const transparentMeta = taskParams.transparent_output && activeProfile.transparentBackgroundMethod === 'local'
+    // SVG 和 GIF 无法本地抠图，只能使用接口原生透明背景
+    const transparentMeta = taskParams.transparent_output && activeProfile.transparentBackgroundMethod === 'local' && !isVectorOrAnimatedFormat(taskParams.output_format)
       ? createTransparentOutputMeta(taskPrompt)
       : null
     const task: TaskRecord = {
@@ -1944,9 +1973,10 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
       apiProfileName: activeProfile.name,
       apiMode: activeProfile.apiMode,
       apiModel: activeProfile.model,
-      inputImageIds: orderedInputImages.map((i) => i.id),
+      inputImageIds: taskInputImages.map((i) => i.id),
       maskTargetImageId,
       maskImageId,
+      markupImageId: taskInputImages[0]?.markupImageId ?? null,
       transparentOutput: transparentMeta?.transparentOutput,
       transparentPrompt: transparentMeta?.effectivePrompt,
       outputImages: [],
@@ -2286,18 +2316,24 @@ function addAgentReferencedImageIds(target: Set<string>, conversations = useStor
     }
   }
   for (const draft of Object.values(inputDrafts)) {
-    for (const img of draft.inputImages) target.add(img.id)
+    for (const img of draft.inputImages) addInputImageReferencedIds(target, img)
   }
+}
+
+function addInputImageReferencedIds(target: Set<string>, img: InputImage) {
+  target.add(img.id)
+  if (img.markupImageId) target.add(img.markupImageId)
 }
 
 function addInputDraftReferencedImageIds(target: Set<string>, draft: AgentInputDraft | null) {
   if (!draft) return
-  for (const img of draft.inputImages) target.add(img.id)
+  for (const img of draft.inputImages) addInputImageReferencedIds(target, img)
 }
 
 function addTaskReferencedImageIds(target: Set<string>, task: TaskRecord) {
   for (const id of task.inputImageIds || []) target.add(id)
   if (task.maskImageId) target.add(task.maskImageId)
+  if (task.markupImageId) target.add(task.markupImageId)
   for (const id of task.outputImages || []) target.add(id)
   for (const id of task.transparentOriginalImages || []) {
     if (id) target.add(id)
@@ -2364,7 +2400,7 @@ async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
   for (const task of tasks) addTaskReferencedImageIds(stillUsed, task)
   addAgentReferencedImageIds(stillUsed)
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
-  for (const img of inputImages) stillUsed.add(img.id)
+  for (const img of inputImages) addInputImageReferencedIds(stillUsed, img)
 
   for (const imgId of candidates) {
     if (stillUsed.has(imgId)) continue
@@ -2551,7 +2587,7 @@ async function continueRecoveredAgentRound(taskId: string) {
     }
     const roundTasks = updatedState.tasks.filter((item) => item.agentRoundId === round.id)
     const resumeParams = roundTasks.find((item) => item.params)?.params
-      ?? normalizeParamsForSettings(updatedState.params, createSettingsForApiProfile(normalizedSettings, imageProfile), { hasInputImages: round.inputImageIds.length > 0 })
+      ?? normalizeParamsForSettings(updatedState.params, createSettingsForApiProfile(normalizedSettings, imageProfile), { hasInputImages: round.inputImageIds.length > 0, agent: true })
     const maxToolCalls = Number.isFinite(normalizedSettings.agentMaxToolRounds)
       ? Math.max(1, Math.trunc(normalizedSettings.agentMaxToolRounds))
       : DEFAULT_AGENT_MAX_TOOL_ROUNDS
@@ -2636,11 +2672,15 @@ export async function submitAgentMessage() {
     }
   }
 
-  const inputImageIds = uniqueIds(orderedInputImages.map((image) => image.id))
-
-  for (const image of orderedInputImages) {
-    await storeImage(image.dataUrl)
+  // Agent 通过 Responses 发送图片，不支持 markup，标注直接合成进图片
+  try {
+    orderedInputImages = await persistTaskInputImages(orderedInputImages, false)
+    if (maskTargetImageId) maskTargetImageId = orderedInputImages[0].id
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : String(err), 'error')
+    return
   }
+  const inputImageIds = uniqueIds(orderedInputImages.map((image) => image.id))
 
   const requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
   const imageRequestSettings = createSettingsForApiProfile(normalizedSettings, imageProfile)
@@ -2668,7 +2708,7 @@ export async function submitAgentMessage() {
   const parentRoundId = editingRound ? editingRound.parentRoundId ?? null : activeLeafId
   const parentPath = parentRoundId ? getAgentRoundPath(conversation, parentRoundId) : []
   const normalizedParams = {
-    ...normalizeParamsForSettings(params, imageRequestSettings, { hasInputImages: inputImageIds.length > 0 }),
+    ...normalizeParamsForSettings(params, imageRequestSettings, { hasInputImages: inputImageIds.length > 0, agent: true }),
     n: DEFAULT_PARAMS.n,
     transparent_output: false,
   }
@@ -2773,7 +2813,7 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
   const requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
   const imageRequestSettings = createSettingsForApiProfile(normalizedSettings, imageProfile)
   const normalizedParams = {
-    ...normalizeParamsForSettings(params, imageRequestSettings, { hasInputImages: inputImageIds.length > 0 }),
+    ...normalizeParamsForSettings(params, imageRequestSettings, { hasInputImages: inputImageIds.length > 0, agent: true }),
     n: DEFAULT_PARAMS.n,
     transparent_output: false,
   }
@@ -2885,7 +2925,7 @@ async function executeAgentRound(
     const resumedAssistantContent = resume ? existingAssistantMessage?.content.trim() ?? '' : ''
     const shouldStreamAssistantMessage = activeProfile.streamImages === true
     const imageRequestSettings = createSettingsForApiProfile(requestSettings, imageProfile)
-    const imageParams = normalizeParamsForSettings(params, imageRequestSettings, { hasInputImages: round.inputImageIds.length > 0 })
+    const imageParams = normalizeParamsForSettings(params, imageRequestSettings, { hasInputImages: round.inputImageIds.length > 0, agent: true })
     const streamingTaskIds: string[] = resume ? [...round.outputTaskIds] : []
     const taskIdByToolCallId = new Map<string, string>()
     const taskByToolCallId = new Map<string, TaskRecord>()
@@ -3215,7 +3255,7 @@ async function executeAgentRound(
       const references = await resolveReferenceImages(referenceIds)
       const toolCallId = callId || genId()
       const taskParams = {
-        ...normalizeParamsForSettings(imageParams, imageRequestSettings, { hasInputImages: references.dataUrls.length > 0 }),
+        ...normalizeParamsForSettings(imageParams, imageRequestSettings, { hasInputImages: references.dataUrls.length > 0, agent: true }),
         n: 1,
       }
 
@@ -3283,7 +3323,7 @@ async function executeAgentRound(
         const batchToolCallId = genId()
         const taskParams = requestSettings.agentApiConfigMode === 'hybrid'
           ? {
-              ...normalizeParamsForSettings(imageParams, imageRequestSettings, { hasInputImages: references.dataUrls.length > 0 }),
+              ...normalizeParamsForSettings(imageParams, imageRequestSettings, { hasInputImages: references.dataUrls.length > 0, agent: true }),
               n: 1,
             }
           : { ...imageParams, n: 1 }
@@ -3876,6 +3916,8 @@ async function executeTask(taskId: string) {
       maskDataUrl = await ensureImageCached(task.maskImageId)
       if (!maskDataUrl) throw new Error('遮罩图片已不存在')
     }
+    const markupDataUrl = task.markupImageId ? await ensureImageCached(task.markupImageId) : undefined
+    if (task.markupImageId && !markupDataUrl) throw new Error('标注图片已不存在')
 
     const requestPrompt = task.transparentOutput && task.transparentPrompt
       ? task.transparentPrompt
@@ -3889,6 +3931,7 @@ async function executeTask(taskId: string) {
       inputImageDataUrls: inputDataUrls,
       inputImageUrls: task.inputImageIds.map((id) => useStore.getState().imageSourceUrls[id] ?? null),
       maskDataUrl,
+      markupDataUrl,
       skipCodexCliSizePrompt: task.sourceMode === 'agent',
       onFalRequestEnqueued: (request) => {
         if (taskExecutions.get(taskId) !== execution) return
@@ -4159,11 +4202,11 @@ export async function retryTask(task: TaskRecord) {
   if (!source || source.status === 'running' || source.falRecoverable || source.customRecoverable) return
   const activeProfile = getActiveApiProfile(settings)
   const normalizedParams = normalizeParamsForSettings(source.params, settings, { hasInputImages: source.inputImageIds.length > 0 })
-  const shouldUseTransparentOutput = (normalizedParams.output_format === 'png' || normalizedParams.output_format === 'webp') && normalizedParams.transparent_output
+  const shouldUseTransparentOutput = normalizedParams.transparent_output && supportsTransparentOutput(settings, activeProfile, normalizedParams.output_format)
   const taskParams = shouldUseTransparentOutput
     ? getTransparentRequestParams(normalizedParams)
     : { ...normalizedParams, transparent_output: false }
-  const transparentMeta = taskParams.transparent_output && activeProfile.transparentBackgroundMethod === 'local'
+  const transparentMeta = taskParams.transparent_output && activeProfile.transparentBackgroundMethod === 'local' && !isVectorOrAnimatedFormat(taskParams.output_format)
     ? createTransparentOutputMeta(source.prompt.trim())
     : null
   const overwrite = !isAgentTask(source) && (
@@ -4188,6 +4231,7 @@ export async function retryTask(task: TaskRecord) {
     inputImageIds: [...source.inputImageIds],
     maskTargetImageId: source.maskTargetImageId ?? null,
     maskImageId: source.maskImageId ?? null,
+    markupImageId: source.markupImageId ?? null,
     transparentOutput: transparentMeta?.transparentOutput,
     transparentPrompt: transparentMeta?.effectivePrompt,
     outputImages: [],
@@ -4267,11 +4311,12 @@ export async function reuseConfig(task: TaskRecord) {
 
   // 恢复输入图片
   const imgs: InputImage[] = []
-  for (const imgId of task.inputImageIds) {
+  for (const [idx, imgId] of task.inputImageIds.entries()) {
     const dataUrl = await ensureImageCached(imgId)
-    if (dataUrl) {
-      imgs.push({ id: imgId, dataUrl })
-    }
+    if (!dataUrl) continue
+    // 标注层始终属于第一张参考图
+    const markupImageId = idx === 0 && task.markupImageId && await ensureImageCached(task.markupImageId) ? task.markupImageId : undefined
+    imgs.push(markupImageId ? { id: imgId, dataUrl, markupImageId } : { id: imgId, dataUrl })
   }
   setInputImages(imgs)
   // 部分参考图可能已被删除，按图片 id 重新对齐提示词中的图片序号，避免评论和提及错位到其他图片
@@ -4319,12 +4364,12 @@ export async function editOutputs(task: TaskRecord) {
 
   let added = 0
   for (const imgId of task.outputImages) {
-    if (inputImages.find((i) => i.id === imgId)) continue
     const dataUrl = await ensureImageCached(imgId)
-    if (dataUrl) {
-      addInputImage({ id: imgId, dataUrl })
-      added++
-    }
+    if (!dataUrl) continue
+    const image = await toReferenceImage(imgId, dataUrl)
+    if (inputImages.some((i) => i.id === image.id)) continue
+    addInputImage(image)
+    added++
   }
   showToast(`已添加 ${added} 张输出图到输入`, 'success')
 }
@@ -4999,7 +5044,8 @@ export async function addImageFromFile(file: File): Promise<void> {
 
 export async function createInputImageFromFile(file: File): Promise<InputImage | null> {
   if (!file.type.startsWith('image/')) return null
-  const dataUrl = await fileToDataUrl(file)
+  // 图像接口不接受 SVG 和 GIF，加入时就转成 PNG
+  const dataUrl = await toApiInputImageDataUrl(await fileToDataUrl(file))
   const id = await storeImage(dataUrl, 'upload')
   cacheImage(id, dataUrl)
   // 本地添加的图片即使与链接添加的内容相同，也不再沿用当时的链接，以免提交已过期的链接
@@ -5013,7 +5059,8 @@ export async function addImageFromUrl(src: string): Promise<void> {
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const blob = await res.blob()
   if (!blob.type.startsWith('image/')) throw new Error('不是有效的图片')
-  const dataUrl = await blobToDataUrl(blob)
+  // 图像接口不接受 SVG 和 GIF，加入时就转成 PNG
+  const dataUrl = await toApiInputImageDataUrl(await blobToDataUrl(blob))
   const id = await storeImage(dataUrl, 'upload')
   cacheImage(id, dataUrl)
   // 内容相同的图片共用一个 id，记录最近一次添加的链接

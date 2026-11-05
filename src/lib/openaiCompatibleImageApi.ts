@@ -2,6 +2,7 @@ import { DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type CustomProviderDefi
 import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import {
+  applyGptImage26Params,
   assertImageInputPayloadSize,
   assertMaskEditFileSize,
   appendStreamingFormatHint,
@@ -24,7 +25,7 @@ import {
   pickActualParams,
   PROMPT_REWRITE_GUARD_PREFIX,
 } from './imageApiShared'
-import { getImageGenerationModel } from './imageModels'
+import { getImageGenerationModel, isVectorOrAnimatedFormat } from './imageModels'
 import { apiFetch, FetchConnectError } from './platform'
 import { isEventStreamResponse, readJsonServerSentEvents } from './serverSentEvents'
 import { prependCodexCliSizePrompt } from './size'
@@ -155,6 +156,7 @@ function createResponsesImageTool(
   if (!profile.codexCli) {
     tool.quality = params.quality
   }
+  applyGptImage26Params(tool, params, profile)
 
   if (params.output_format !== 'png' && params.output_compression != null) {
     tool.output_compression = params.output_compression
@@ -443,18 +445,22 @@ export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile
       ? customProvider.editSubmit
       : customProvider.submit
     const isAsync = Boolean(submitMapping.taskIdPath)
-    if (profile.codexCli && n > 1 && !isAsync) return callCustomHttpImageApiConcurrent(opts, profile, customProvider, n)
+    // SVG 每次请求只能生成一张
+    if ((profile.codexCli || opts.params.output_format === 'svg') && n > 1 && !isAsync) return callCustomHttpImageApiConcurrent(opts, profile, customProvider, n)
     return callCustomHttpImageApi(opts, profile, customProvider)
   }
 
-  return profile.apiMode === 'responses'
-    ? callResponsesImageApi(opts, profile)
-    : callImagesApi(opts, profile)
+  // SVG 和 GIF 不支持流式和中间图
+  const requestProfile = isVectorOrAnimatedFormat(opts.params.output_format) ? { ...profile, streamImages: false } : profile
+  return requestProfile.apiMode === 'responses'
+    ? callResponsesImageApi(opts, requestProfile)
+    : callImagesApi(opts, requestProfile)
 }
 
 async function callImagesApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const n = opts.params.n > 0 ? opts.params.n : 1
-  if ((profile.codexCli || (profile.streamImages && n > 1)) && n > 1) {
+  // SVG 每次请求只能生成一张
+  if ((profile.codexCli || profile.streamImages || opts.params.output_format === 'svg') && n > 1) {
     return callImagesApiConcurrent(opts, profile, n)
   }
 
@@ -519,6 +525,12 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
       if (!profile.codexCli) {
         formData.append('quality', params.quality)
       }
+      // 与生成接口共用同一份 2.6 参数；编辑接口不支持 SVG，不会出现对象字段
+      const gptImage26Params: Record<string, unknown> = {}
+      applyGptImage26Params(gptImage26Params, params, profile)
+      for (const [key, value] of Object.entries(gptImage26Params)) {
+        if (typeof value !== 'object') formData.append(key, String(value))
+      }
 
       if (params.output_format !== 'png' && params.output_compression != null) {
         formData.append('output_compression', String(params.output_compression))
@@ -548,8 +560,10 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
         assertMaskEditFileSize('遮罩主图文件', imageBlobs[0]?.size ?? 0)
         assertMaskEditFileSize('遮罩文件', maskBlob?.size ?? 0)
       }
+      const markupBlob = opts.markupDataUrl ? await dataUrlToBlob(opts.markupDataUrl, 'image/png') : null
+      if (markupBlob) assertMaskEditFileSize('标注文件', markupBlob.size)
       assertImageInputPayloadSize(
-        imageBlobs.reduce((sum, blob) => sum + blob.size, 0) + (maskBlob?.size ?? 0),
+        imageBlobs.reduce((sum, blob) => sum + blob.size, 0) + (maskBlob?.size ?? 0) + (markupBlob?.size ?? 0),
       )
 
       for (let i = 0; i < imageBlobs.length; i++) {
@@ -560,6 +574,9 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
 
       if (maskBlob) {
         formData.append('mask', maskBlob, 'mask.png')
+      }
+      if (markupBlob) {
+        formData.append('markup', markupBlob, 'markup.png')
       }
 
       response = await apiFetch(buildApiUrl(profile.baseUrl, paths.editPath, proxyConfig, useApiProxy), {
@@ -588,6 +605,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
       if (!profile.codexCli) {
         body.quality = params.quality
       }
+      applyGptImage26Params(body, params, profile)
 
       if (params.output_format !== 'png' && params.output_compression != null) {
         body.output_compression = params.output_compression
@@ -692,8 +710,15 @@ function createCustomProviderContext(opts: CallApiOptions, profile: ApiProfile) 
   const prompt = profile.codexCli && !opts.settings.allowPromptRewrite
     ? `${PROMPT_REWRITE_GUARD_PREFIX}\n${sizePrompt}`
     : sizePrompt
+  // 2.6 参数与原生接口同样处理：不适用的字段为 undefined，模板中自动省略
+  const gptImage26Params: Record<string, unknown> = {}
+  applyGptImage26Params(gptImage26Params, opts.params, profile)
   const params = {
     ...opts.params,
+    complexity: undefined,
+    frame_count: undefined,
+    frame_duration_ms: undefined,
+    ...gptImage26Params,
     ...(profile.codexCli ? { size: undefined, quality: undefined } : {}),
     ...(opts.nativeTransparentBackground ? { background: 'transparent' } : {}),
   }

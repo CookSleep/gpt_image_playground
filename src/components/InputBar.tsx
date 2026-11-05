@@ -4,10 +4,11 @@ import { deleteFavoriteCollection, useStore, submitTask, submitAgentMessage, sto
 import { DEFAULT_PARAMS, MAX_INPUT_IMAGES, type TaskRecord } from '../types'
 import { getActiveAgentRounds } from '../lib/agentConversationState'
 import { getActiveApiProfile, getAgentImageApiProfile, normalizeSettings, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
-import { getImageGenerationModel, isGptImage25Model } from '../lib/imageModels'
+import { isVectorOrAnimatedFormat, supportsExtendedQuality, supportsGptImage26Params } from '../lib/imageModels'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
+import { toReferenceImage } from '../lib/inputImages'
 import { splitBatchPrompts } from '../lib/batchPrompts'
-import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
+import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings, supportsTransparentOutput } from '../lib/paramCompatibility'
 import { getAtImageQuery, getImageComments, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { normalizeCodexCliImageSize, normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
@@ -29,6 +30,7 @@ import ButtonTooltip from './input/buttonTooltip'
 import DragUploadOverlay from './input/dragUploadOverlay'
 import InputBatchBars from './input/inputBatchBars'
 import InputParamsPanel from './input/inputParamsPanel'
+import MarkupOverlay from './input/markupOverlay'
 
 function getFavoriteCollectionTasksForBatch(collectionId: string, tasks: TaskRecord[], defaultFavoriteCollectionId: string | null) {
   const favoriteTasks = tasks.filter((task) => task.isFavorite)
@@ -515,10 +517,18 @@ export default function InputBar() {
   const isFalProvider = activeProvider === 'fal'
   const agentAutoImageCount = appMode === 'agent'
   const moderationDisabled = isFalProvider
+  // Agent 只用位图，SVG 和 GIF 在提交时换成 PNG，参数面板按实际发送的格式显示
+  const panelParams = appMode === 'agent' && isVectorOrAnimatedFormat(params.output_format)
+    ? { ...params, output_format: 'png' as const }
+    : params
   const transparentOutputAvailable = appMode === 'gallery'
-  const showTransparentOutputControl = transparentOutputAvailable && (params.output_format === 'png' || params.output_format === 'webp')
+  const showTransparentOutputControl = transparentOutputAvailable && supportsTransparentOutput(effectiveSettings, activeProfile, params.output_format)
   const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
-  const compressionDisabled = params.output_format === 'png' || isFalProvider
+  const compressionDisabled = panelParams.output_format === 'png' || isVectorOrAnimatedFormat(panelParams.output_format) || isFalProvider
+  const complexityAvailable = supportsGptImage26Params(activeProfile)
+  const vectorAndAnimatedFormatsAvailable = complexityAvailable && appMode === 'gallery'
+  // fal.ai 的 SVG 暂不开放，原因见 falAiImageApi 中的说明
+  const svgFormatAvailable = vectorAndAnimatedFormatsAvailable && !isFalProvider
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
   const isFalTextToImage = isFalProvider && inputImages.length === 0
   const nDraftValue = Number(nInput)
@@ -538,7 +548,7 @@ export default function InputBar() {
     { label: 'low', value: 'low' },
     { label: 'medium', value: 'medium' },
     { label: 'high', value: 'high' },
-    ...(isGptImage25Model(getImageGenerationModel(activeProfile))
+    ...(supportsExtendedQuality(activeProfile)
       ? [
           { label: 'xhigh', value: 'xhigh' },
           { label: 'max', value: 'max' },
@@ -689,10 +699,12 @@ export default function InputBar() {
   useEffect(() => {
     const normalizedParams = normalizeParamsForSettings(params, effectiveSettings, { hasInputImages: inputImages.length > 0 })
     const patch = getChangedParams(params, normalizedParams)
+    // SVG 和 GIF 是画廊的选择，Agent 提交时会自行换成位图，这里不改写，切回画廊后仍然保留
+    if (appMode === 'agent' && isVectorOrAnimatedFormat(params.output_format)) delete patch.output_format
     if (Object.keys(patch).length) {
       setParams(patch)
     }
-  }, [inputImages.length, params, effectiveSettings, setParams])
+  }, [appMode, inputImages.length, params, effectiveSettings, setParams])
 
   useEffect(() => () => {
     if (imageHintTimerRef.current != null) {
@@ -1041,7 +1053,7 @@ export default function InputBar() {
             showToast('部分图片已不存在', 'error')
             return
           }
-          addInputImage({ id: imageId, dataUrl })
+          addInputImage(await toReferenceImage(imageId, dataUrl))
         })).then(() => {
           showToast('已上传图片', 'success')
         }).catch((err) => showToast(`上传图片失败：${err instanceof Error ? err.message : String(err)}`, 'error'))
@@ -1495,7 +1507,7 @@ export default function InputBar() {
         )}
         <div
           className={`relative w-[52px] h-[52px] rounded-xl overflow-hidden shadow-sm cursor-grab active:cursor-grabbing select-none ${
-            isMaskTarget || commentCount > 0
+            isMaskTarget || commentCount > 0 || img.markupImageId
               ? 'border-2 border-blue-500'
               : 'border border-gray-200 dark:border-white/[0.08]'
           }`}
@@ -1513,6 +1525,7 @@ export default function InputBar() {
               />
             </div>
           )}
+          {img.markupImageId && !isMaskTarget && <MarkupOverlay imageId={img.markupImageId} />}
           {isMaskTarget && (
             <span className="absolute left-1 top-1 rounded bg-blue-500/90 px-1.5 py-0.5 text-[8px] leading-none text-white font-bold tracking-wider backdrop-blur-sm z-10 pointer-events-none">
               MASK
@@ -1684,7 +1697,7 @@ export default function InputBar() {
 
   const renderParams = () => (
     <InputParamsPanel
-      params={params}
+      params={panelParams}
       setParams={setParams}
       activeProfile={activeProfile}
       modelOptions={modelOptions}
@@ -1706,6 +1719,10 @@ export default function InputBar() {
       commitOutputCompression={commitOutputCompression}
       moderationHint={moderationHint}
       moderationDisabled={moderationDisabled}
+      complexityAvailable={complexityAvailable}
+      vectorAndAnimatedFormatsAvailable={vectorAndAnimatedFormatsAvailable}
+      svgFormatAvailable={svgFormatAvailable}
+      hasInputImages={inputImages.length > 0}
       agentAutoImageCount={agentAutoImageCount}
       outputImageLimit={outputImageLimit}
       nInput={nInput}

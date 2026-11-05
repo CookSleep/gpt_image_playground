@@ -6,7 +6,7 @@ import { useStore } from '../store'
 import { canvasToBlob, loadImage } from '../lib/canvasImage'
 import { blobToDataUrl } from '../lib/dataUrl'
 import { storeImage } from '../lib/db'
-import { cacheImage } from '../lib/imageCache'
+import { cacheImage, ensureImageCached } from '../lib/imageCache'
 import {
   SKETCH_FONT_FAMILY,
   SKETCH_HANDLES,
@@ -75,6 +75,7 @@ type EndpointHandle = 'start' | 'end'
 interface HistoryEntry {
   elements: SketchElement[]
   comments: SketchComment[]
+  markupCleared: boolean
 }
 
 type Gesture =
@@ -186,6 +187,11 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
 
   const [docSize, setDocSize] = useState(() => baseImageSrc ? null : getSketchCanvasSize(useStore.getState().params.size))
   const [baseImage, setBaseImage] = useState<HTMLImageElement | null>(null)
+  // 参考图上已有的标注层：作为底图的一部分显示，完成时与新笔画合并成新的标注层
+  const [existingMarkupId] = useState(() => replaceImageId ? useStore.getState().inputImages.find((img) => img.id === replaceImageId)?.markupImageId : undefined)
+  const [markupImage, setMarkupImage] = useState<HTMLImageElement | null>(null)
+  const [markupCleared, setMarkupCleared] = useState(false)
+  const hasVisibleMarkup = Boolean(markupImage) && !markupCleared
   const [elements, setElements] = useState<SketchElement[]>([])
   const [draft, setDraft] = useState<SketchElement | null>(null)
   const [liveErase, setLiveErase] = useState<SketchEraseStroke | null>(null)
@@ -230,7 +236,7 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
   const selected = elements.find((el) => el.id === selectedId) ?? null
   const canUndo = undoRef.current.length > 0 && !isSaving
   const canRedo = redoRef.current.length > 0 && !isSaving
-  const canConfirm = elements.length > 0 || commentsChanged || (Boolean(baseImage) && !replaceImageId)
+  const canConfirm = elements.length > 0 || commentsChanged || markupCleared || (Boolean(baseImage) && !replaceImageId)
 
   const closeNow = () => setSketchBoard(null)
 
@@ -248,7 +254,7 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
       setShowShapeMenu(false)
       return
     }
-    if (elements.length === 0 && !commentsChanged) {
+    if (elements.length === 0 && !commentsChanged && !markupCleared) {
       closeNow()
       return
     }
@@ -284,6 +290,20 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
   }, [baseImageSrc, setSketchBoard, showToast])
 
   useEffect(() => {
+    if (!existingMarkupId) return
+    let cancelled = false
+    ensureImageCached(existingMarkupId)
+      .then((dataUrl) => dataUrl ? loadImage(dataUrl) : null)
+      .then((image) => {
+        if (!cancelled) setMarkupImage(image)
+      })
+      .catch((err) => console.warn('标注层加载失败', err))
+    return () => {
+      cancelled = true
+    }
+  }, [existingMarkupId])
+
+  useEffect(() => {
     if (!showShapeMenu) return
     const closeMenu = (event: PointerEvent) => {
       if (shapeMenuRef.current?.contains(event.target as Node)) return
@@ -293,7 +313,8 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
     return () => document.removeEventListener('pointerdown', closeMenu, true)
   }, [showShapeMenu])
 
-  function drawScene(ctx: CanvasRenderingContext2D, items: SketchElement[], erase?: SketchEraseStroke | null) {
+  /** 把笔画画到透明的笔画层上 */
+  function renderInk(items: SketchElement[], erase?: SketchEraseStroke | null) {
     const size = docSize!
     if (inkCanvas.width !== size.width || inkCanvas.height !== size.height) {
       inkCanvas.width = size.width
@@ -303,11 +324,16 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
     inkCtx.clearRect(0, 0, size.width, size.height)
     for (const el of items) drawSketchElementWithErase(inkCtx, el, scratchCanvas)
     if (erase) drawEraseStroke(inkCtx, erase)
+  }
 
+  function drawScene(ctx: CanvasRenderingContext2D, items: SketchElement[], erase?: SketchEraseStroke | null) {
+    const size = docSize!
+    renderInk(items, erase)
     ctx.clearRect(0, 0, size.width, size.height)
     ctx.fillStyle = paperColor
     ctx.fillRect(0, 0, size.width, size.height)
     if (baseImage) ctx.drawImage(baseImage, 0, 0, size.width, size.height)
+    if (markupImage && !markupCleared) ctx.drawImage(markupImage, 0, 0, size.width, size.height)
     ctx.drawImage(inkCanvas, 0, 0)
   }
 
@@ -331,7 +357,7 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
     const ctx = canvasRef.current!.getContext('2d')!
     const visible = elements.filter((el) => el.id !== editingText?.id)
     drawScene(ctx, draft ? [...visible, draft] : visible, liveErase)
-  }, [elements, draft, liveErase, editingText, baseImage, docSize])
+  }, [elements, draft, liveErase, editingText, baseImage, markupImage, markupCleared, docSize])
 
   // 选中框单独画在叠加层上，缩放时只需重绘这一层
   useEffect(() => {
@@ -373,7 +399,7 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
   }
 
   function pushHistory(before: SketchElement[], beforeComments = comments) {
-    undoRef.current.push({ elements: before, comments: beforeComments })
+    undoRef.current.push({ elements: before, comments: beforeComments, markupCleared })
     if (undoRef.current.length > MAX_HISTORY) undoRef.current.shift()
     redoRef.current = []
     syncHistory()
@@ -388,9 +414,10 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
     commitCustomColor()
     const previous = undoRef.current.pop()
     if (!previous) return
-    redoRef.current.push({ elements, comments })
+    redoRef.current.push({ elements, comments, markupCleared })
     setElements(previous.elements)
     restoreComments(previous.comments)
+    setMarkupCleared(previous.markupCleared)
     setSelectedId(null)
     syncHistory()
   }
@@ -399,16 +426,18 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
     commitCustomColor()
     const next = redoRef.current.pop()
     if (!next) return
-    undoRef.current.push({ elements, comments })
+    undoRef.current.push({ elements, comments, markupCleared })
     setElements(next.elements)
     restoreComments(next.comments)
+    setMarkupCleared(next.markupCleared)
     setSelectedId(null)
     syncHistory()
   }
 
   function clearAll() {
-    if (elements.length === 0) return
+    if (elements.length === 0 && !hasVisibleMarkup) return
     commit([])
+    if (markupImage) setMarkupCleared(true)
     setSelectedId(null)
   }
 
@@ -812,11 +841,42 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
       return
     }
 
-    // 只改了评论时不必重新导出图片
-    if (replaceIdx >= 0 && elements.length === 0) {
-      saveComments(replaceIdx)
-      showToast('评论已更新', 'success')
-      closeNow()
+    // 在参考图上画的内容保存为与原图同尺寸的透明标注层，原图保持不变；只改了评论时不必重新导出
+    if (replaceIdx >= 0 && baseImage && replaceImageId) {
+      if (elements.length === 0 && !markupCleared) {
+        saveComments(replaceIdx)
+        showToast('评论已更新', 'success')
+        closeNow()
+        return
+      }
+      try {
+        setIsSaving(true)
+        // 旧标注可能还没加载完，保存时直接从图片库读取，避免丢掉它
+        const existingMarkup = existingMarkupId && !markupCleared
+          ? markupImage ?? await ensureImageCached(existingMarkupId).then((dataUrl) => dataUrl ? loadImage(dataUrl) : null)
+          : null
+        let markupImageId: string | undefined
+        if (elements.length > 0 || existingMarkup) {
+          const canvas = document.createElement('canvas')
+          canvas.width = baseImage.naturalWidth
+          canvas.height = baseImage.naturalHeight
+          const ctx = canvas.getContext('2d')!
+          if (existingMarkup) ctx.drawImage(existingMarkup, 0, 0, canvas.width, canvas.height)
+          renderInk(elements)
+          ctx.drawImage(inkCanvas, 0, 0, canvas.width, canvas.height)
+          const dataUrl = await blobToDataUrl(await canvasToBlob(canvas, 'image/png'))
+          markupImageId = await storeImage(dataUrl, 'mask')
+          cacheImage(markupImageId, dataUrl)
+        }
+        useStore.getState().setInputImageMarkup(replaceImageId, markupImageId)
+        if (commentsChanged) saveComments(replaceIdx)
+        showToast(markupImageId ? '标注已保存，原图保持不变' : '标注已清除', 'success')
+        closeNow()
+      } catch (err) {
+        console.error(err)
+        showToast(`标注保存失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+        setIsSaving(false)
+      }
       return
     }
 
@@ -969,7 +1029,7 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
             <TooltipButton tooltip="重做" className={EDITOR_ICON_BUTTON_CLASS} disabled={!canRedo} onClick={redo}>
               <RedoIcon />
             </TooltipButton>
-            <TooltipButton tooltip="清空画布" wrapperClassName="relative hidden sm:inline-flex" className={EDITOR_ICON_BUTTON_CLASS} disabled={elements.length === 0 || isSaving} onClick={clearAll}>
+            <TooltipButton tooltip="清空画布" wrapperClassName="relative hidden sm:inline-flex" className={EDITOR_ICON_BUTTON_CLASS} disabled={(elements.length === 0 && !hasVisibleMarkup) || isSaving} onClick={clearAll}>
               <ClearIcon />
             </TooltipButton>
           </>

@@ -4,6 +4,7 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   jpeg: 'image/jpeg',
   webp: 'image/webp',
   gif: 'image/gif',
+  svg: 'image/svg+xml',
 }
 
 export function bytesToBase64(bytes: Uint8Array): string {

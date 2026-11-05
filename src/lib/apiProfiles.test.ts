@@ -716,6 +716,21 @@ describe('mergePresetImportedSettings', () => {
     expect(merged.customProviders[0]).toMatchObject({ id: 'source-provider', submit: { path: 'v2/generate' } })
   })
 
+  it('syncs a changed SVG authoring model from the deployment', () => {
+    const withSvgModel = (svgModel: string) => {
+      const config = createConfig('model-v1', 'old/generate')
+      return { ...config, profiles: [{ ...config.profiles[0], provider: 'openai', svgModel }], customProviders: [] }
+    }
+    const initial = mergeDefaultImportedSettings(DEFAULT_SETTINGS, withSvgModel('svg-v1'))
+    expect(initial.settings.profiles[0].svgModel).toBe('svg-v1')
+
+    const unlocked = mergeDefaultImportedSettings(initial.settings, withSvgModel('svg-v2'), { previousPresetConfig: initial.presetConfig })
+    expect(unlocked.settings.profiles[0].svgModel).toBe('svg-v2')
+
+    const locked = mergeDefaultImportedSettings(unlocked.settings, withSvgModel('svg-v3'), { previousPresetConfig: unlocked.presetConfig, lockPresetParams: true })
+    expect(locked.settings.profiles[0].svgModel).toBe('svg-v3')
+  })
+
   it('keeps the local API key while updating other locked preset parameters', () => {
     const initialConfig = createConfig('model-v1', 'old/generate')
     initialConfig.profiles[0].apiKey = 'deployed-key'

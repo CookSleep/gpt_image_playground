@@ -10,11 +10,13 @@
 |---|---|
 | `size` | 如 `1024x1024`、`1536x1024`、`1024x1536`，或 `auto` |
 | `quality` | `auto`、`low`、`medium`、`high`、`xhigh`、`max`；`xhigh`、`max` 只在支持的模型上有效，其他模型降为 `high` |
-| `output_format` | `png`、`jpeg`、`webp` |
+| `complexity` | `auto`、`low`、`medium`、`high`；只有 GPT Image 2.6 支持，`auto` 为不发送 |
+| `output_format` | `png`、`jpeg`、`webp`、`svg`、`gif`；`svg`、`gif` 只有 GPT Image 2.6 支持，`svg` 只能文生图，`gif` 也可用于参考图编辑 |
+| `frame_count`、`frame_duration_ms` | GIF 的帧数（2–16）和每帧毫秒数（20–2000）；`null` 为接口默认值 |
 | `output_compression` | 0–100，jpeg、webp 的压缩质量；`null` 为不指定 |
 | `moderation` | `auto`、`low` |
 | `n` | 每个任务生成的张数，上限取决于当前配置 |
-| `transparent_output` | 透明背景，需要 png 或 webp |
+| `transparent_output` | 透明背景，不支持 jpeg；自定义供应商未映射 `$params.background` 时 svg、gif 也不支持 |
 
 ## 偏好设置（settings）
 
@@ -65,6 +67,7 @@
 | `selectedModel` | 首页选中的模型，必须在 `model` 列表中 |
 | `apiMode` | `images`（Images API）或 `responses`（Responses API，需要支持 `image_generation` 工具的文本模型） |
 | `imageGenerationModel` | Responses API 下 `image_generation` 工具使用的图像模型 |
+| `svgModel` | GPT Image 2.6 输出 SVG 时负责编写 SVG 的文本模型，留空使用默认值 |
 | `reasoningEffort` | Responses API 的推理强度：`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max` |
 | `timeout` | 请求超时（秒） |
 | `streamImages`、`streamPartialImages` | 流式传输，及请求的中间步骤图数（0–3），仅 OpenAI 兼容接口 |

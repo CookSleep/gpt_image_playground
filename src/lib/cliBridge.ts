@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { MAX_INPUT_IMAGES, type ApiProfile, type AppSettings, type InputImage, type TaskParams } from '../types'
+import { GIF_FRAME_COUNT_RANGE, GIF_FRAME_DURATION_RANGE, IMAGE_COMPLEXITIES, MAX_INPUT_IMAGES, OUTPUT_FORMATS, type ApiProfile, type AppSettings, type InputImage, type TaskParams } from '../types'
 import {
   createDefaultOpenAIProfile,
   getActiveApiProfile,
@@ -12,6 +12,8 @@ import {
 } from './apiProfiles'
 import { requestBrowserNotificationPermission } from './browserNotification'
 import { ensureImageCached } from './imageCache'
+import { toReferenceImage } from './inputImages'
+import { normalizeParamsForSettings, supportsTransparentOutput } from './paramCompatibility'
 import { getProxySetting, setProxySetting } from './networkProxy'
 import { getPresetProfileIds, isPresetConfigOnlyEnabled, isPresetProfileLocked, isPresetProvider, isPresetProviderLocked } from './presetConfig'
 import {
@@ -54,11 +56,10 @@ const SETTING_KEYS = [
 
 const PROFILE_FIELDS = new Set([
   'name', 'provider', 'baseUrl', 'apiKey', 'model', 'selectedModel', 'imageGenerationModel', 'timeout', 'apiMode',
-  'reasoningEffort', 'codexCli', 'apiProxy', 'responseFormatB64Json', 'streamImages', 'streamPartialImages', 'transparentBackgroundMethod',
+  'reasoningEffort', 'codexCli', 'apiProxy', 'responseFormatB64Json', 'streamImages', 'streamPartialImages', 'transparentBackgroundMethod', 'svgModel',
 ])
 
 const QUALITIES = ['auto', 'low', 'medium', 'high', 'xhigh', 'max']
-const OUTPUT_FORMATS = ['png', 'jpeg', 'webp']
 
 const text = (value: string): CliReply => ({ text: value, data: { message: value } })
 const json = (value: unknown): CliReply => ({ text: JSON.stringify(value, null, 2), data: value })
@@ -101,9 +102,21 @@ function parseParams(args: Record<string, unknown>) {
     if (typeof args.quality !== 'string' || !QUALITIES.includes(args.quality)) throw new Error(`quality 只能是 ${QUALITIES.join('、')}`)
     patch.quality = args.quality as TaskParams['quality']
   }
+  if (args.complexity !== undefined) {
+    if (!IMAGE_COMPLEXITIES.includes(args.complexity as TaskParams['complexity'])) throw new Error(`complexity 只能是 ${IMAGE_COMPLEXITIES.join('、')}`)
+    patch.complexity = args.complexity as TaskParams['complexity']
+  }
   if (args.output_format !== undefined) {
-    if (typeof args.output_format !== 'string' || !OUTPUT_FORMATS.includes(args.output_format)) throw new Error(`output_format 只能是 ${OUTPUT_FORMATS.join('、')}`)
+    if (!OUTPUT_FORMATS.includes(args.output_format as TaskParams['output_format'])) throw new Error(`output_format 只能是 ${OUTPUT_FORMATS.join('、')}`)
     patch.output_format = args.output_format as TaskParams['output_format']
+  }
+  for (const [key, range] of [['frame_count', GIF_FRAME_COUNT_RANGE], ['frame_duration_ms', GIF_FRAME_DURATION_RANGE]] as const) {
+    const value = args[key]
+    if (value === undefined) continue
+    if (value !== null && (typeof value !== 'number' || !Number.isInteger(value) || value < range.min || value > range.max)) {
+      throw new Error(`${key} 必须是 ${range.min}–${range.max} 的整数或 null`)
+    }
+    patch[key] = value
   }
   if (args.moderation !== undefined) {
     if (args.moderation !== 'auto' && args.moderation !== 'low') throw new Error('moderation 只能是 auto、low')
@@ -125,8 +138,8 @@ function parseParams(args: Record<string, unknown>) {
     patch.transparent_output = args.transparent_output
   }
   const format = patch.output_format ?? useStore.getState().params.output_format
-  if (patch.transparent_output && format !== 'png' && format !== 'webp') {
-    throw new Error('透明背景只支持 png 或 webp 格式')
+  if (patch.transparent_output && format === 'jpeg') {
+    throw new Error('透明背景不支持 jpeg 格式')
   }
   return patch
 }
@@ -155,6 +168,14 @@ async function generateImage(requestId: number, args: Record<string, unknown>): 
 
   const references = Array.isArray(args.reference_images) ? args.reference_images : []
   if (references.length > MAX_INPUT_IMAGES) throw new Error(`参考图最多 ${MAX_INPUT_IMAGES} 张`)
+  const params = parseParams(args)
+  // 与 submitTask 相同：按提交时的配置规范化后再检查，不支持 SVG 的模型会自动改用 PNG
+  const settings = getSettings()
+  const finalParams = normalizeParamsForSettings({ ...useStore.getState().params, ...params }, settings, { hasInputImages: references.length > 0 })
+  if (references.length && finalParams.output_format === 'svg') throw new Error('SVG 只能用于文生图，请去掉参考图或换用其他格式')
+  if (finalParams.transparent_output && !supportsTransparentOutput(settings, getActiveApiProfile(settings), finalParams.output_format)) {
+    throw new Error('当前自定义服务商未映射 $params.background，SVG 和 GIF 无法使用透明背景，请关闭透明背景或换用 PNG、WebP')
+  }
   const inputImages: InputImage[] = []
   for (const item of references) {
     if (typeof item !== 'string') throw new Error('参考图中有无法识别的项')
@@ -168,10 +189,9 @@ async function generateImage(requestId: number, args: Record<string, unknown>): 
     }
     const dataUrl = await ensureImageCached(item)
     if (!dataUrl) throw new Error(`找不到参考图中的图片 ID：${item}`)
-    inputImages.push({ id: item, dataUrl })
+    inputImages.push(await toReferenceImage(item, dataUrl))
   }
 
-  const params = parseParams(args)
   if (Object.keys(params).length) useStore.getState().setParams(params)
   const taskIds = await submitTask({ input: { prompts, inputImages } })
   if (!taskIds.length) throw new Error('应用没有创建任务，原因见应用中的提示')
