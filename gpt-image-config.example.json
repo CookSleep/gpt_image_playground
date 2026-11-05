@@ -5,7 +5,7 @@
       "name": "示例配置",
       "provider": "openai",
       "baseUrl": "https://api.example.com/v1",
-      "model": "gpt-image-2.5-sunburst",
+      "model": "gpt-image-2.6-sunburst",
       "apiMode": "images",
       "isDefault": true
     }

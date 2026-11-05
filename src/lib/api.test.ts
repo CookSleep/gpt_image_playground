@@ -1769,7 +1769,7 @@ describe('callImageApi', () => {
 
     expect(fetchMock.mock.calls[0][0]).toBe('https://sub2api.example.com/v1/images/generations/async')
     expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toMatchObject({
-      model: 'gpt-image-2.5-sunburst',
+      model: DEFAULT_IMAGES_MODEL,
       prompt: 'prompt',
       n: 1,
     })

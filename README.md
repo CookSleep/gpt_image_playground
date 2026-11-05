@@ -152,7 +152,7 @@
 
 ### 🔌 多配置与供应商增强
 - **多配置管理**：保存多个 API 配置（供应商、API Key、模型等）并快速切换；可一键复制当前配置到列表底部，配置和供应商列表均可拖拽排序。
-- **多模型切换**：模型 ID 可用逗号分隔填写多个（如 `gpt-image-2.5-sunburst, gpt-image-2`），在首页切换，按配置分别记住；预置配置、URL 传参与导入导出均支持此写法。
+- **多模型切换**：模型 ID 可用逗号分隔填写多个（如 `gpt-image-2.6-sunburst, gpt-image-2`），在首页切换，按配置分别记住；预置配置、URL 传参与导入导出均支持此写法。
 - **多供应商接入**：内置 OpenAI 兼容接口（`Images API` / `Responses API`）、sub2api（异步）、fal.ai（队列），并可通过 JSON 导入自定义 HTTP 供应商（同步/异步任务）。
 - **Agent 模式独立 API 配置**：Agent 可使用原生（Responses API）或混合（Responses API + Images API）的独立配置，适配不支持 `image_generation` 工具的供应商或模型。
 - **API 代理**：OpenAI 兼容接口与 fal.ai 均可配置自定义代理；OpenAI 兼容接口还可走同源 `/api-proxy/`，由 Docker 或本地开发服务器转发，绕开浏览器 CORS 限制。
@@ -470,7 +470,7 @@ VITE_DEFAULT_API_URL=https://api.openai.com/v1
 **2. API 地址 + 查询参数**
 
 ```dotenv
-VITE_DEFAULT_API_URL=https://api.openai.com/v1?model=gpt-image-2.5-sunburst&apiMode=images
+VITE_DEFAULT_API_URL=https://api.openai.com/v1?model=gpt-image-2.6-sunburst&apiMode=images
 ```
 
 在地址后追加参数，预填 Key、模型等字段。可用参数与下文 [URL 传参快速填充](#url-quick-fill) 相同（`profileId` 除外）。
@@ -519,7 +519,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 | `baseUrl` | 是 | API 基础地址，末尾 `/` 的规则见表下说明；fal.ai 可留空。 |
 | `apiKey` | 否 | API Key。建议省略，由用户自行填写。 |
 | `model` | 是 | 模型 ID。多个模型以逗号分隔，默认使用第一个，用户可在首页切换。 |
-| `imageGenerationModel` | 否 | Responses API 的 `image_generation` 工具模型，默认 `gpt-image-2.5-sunburst`，也可用 `gpt-image-2.5-flare`；留空时不发送，使用 API 默认值。 |
+| `imageGenerationModel` | 否 | Responses API 的 `image_generation` 工具模型，默认 `gpt-image-2.6-sunburst`，也可用 `gpt-image-2.6-flare`；留空时不发送，使用 API 默认值。 |
 | `apiMode` | 否 | `"images"` 或 `"responses"`，默认 `"images"`。 |
 | `svgModel` | 否 | GPT Image 2.6 输出 SVG 时负责编写 SVG 的文本模型，默认 `gpt-6.1-sol`。 |
 | `isDefault` | 否 | 有多个配置时为默认项设置 `true`（只能有一个），首次使用时自动选中；只有一个配置时不填。 |
@@ -544,7 +544,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
       "description": "使用前请阅读 [接口说明](https://example.com/docs)。",
       "provider": "openai",
       "baseUrl": "https://api.openai.com/v1",
-      "model": "gpt-image-2.5-sunburst"
+      "model": "gpt-image-2.6-sunburst"
     }
   ]
 }
@@ -560,7 +560,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
       "name": "OpenAI",
       "provider": "openai",
       "baseUrl": "https://api.openai.com/v1",
-      "model": "gpt-image-2.5-sunburst",
+      "model": "gpt-image-2.6-sunburst",
       "isDefault": true
     },
     {
@@ -568,7 +568,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
       "name": "sub2api 异步",
       "provider": "sb2api-async",
       "baseUrl": "https://api.example.com/v1",
-      "model": "gpt-image-2.5-sunburst"
+      "model": "gpt-image-2.6-sunburst"
     },
     {
       "id": "fal-profile",
@@ -683,7 +683,7 @@ API 不是标准 OpenAI 格式时，在预置 JSON 的 `customProviders` 中定�
       "name": "示例异步任务供应商",
       "provider": "custom-example-task",
       "baseUrl": "https://api.example.com/v1",
-      "model": "gpt-image-2.5-sunburst",
+      "model": "gpt-image-2.6-sunburst",
       "apiMode": "images"
     }
   ]
@@ -701,8 +701,8 @@ API 不是标准 OpenAI 格式时，在预置 JSON 的 `customProviders` 中定�
 |------|------|------|
 | `apiUrl` | API Base URL | `?apiUrl=https://api.example.com/v1` |
 | `apiKey` | API Key | `?apiKey=sk-xxxx` |
-| `model` | 模型 ID，多个模型以逗号分隔，可在首页切换 | `?model=gpt-image-2.5-sunburst,gpt-image-2` |
-| `imageGenerationModel` | Responses API 的图像生成工具模型，留空使用 API 默认值 | `?imageGenerationModel=gpt-image-2.5-sunburst` |
+| `model` | 模型 ID，多个模型以逗号分隔，可在首页切换 | `?model=gpt-image-2.6-sunburst,gpt-image-2` |
+| `imageGenerationModel` | Responses API 的图像生成工具模型，留空使用 API 默认值 | `?imageGenerationModel=gpt-image-2.6-sunburst` |
 | `apiMode` | `images` 或 `responses`，默认 `images` | `?apiMode=responses` |
 | `profileName` | 配置名称，默认“URL 参数配置” | `?profileName=我的配置` |
 | `reasoningEffort` | Responses API 推理强度 | `?reasoningEffort=high` |
