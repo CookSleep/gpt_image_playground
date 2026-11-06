@@ -294,7 +294,7 @@ export type TaskStatus = 'running' | 'done' | 'error'
 
 export interface ImageSearchGrounding {
   renderedContent?: string
-  sources: Array<{ uri: string; title: string }>
+  sources: Array<{ uri: string; title: string; imageUri?: string; domain?: string }>
 }
 
 export interface TaskRecord {

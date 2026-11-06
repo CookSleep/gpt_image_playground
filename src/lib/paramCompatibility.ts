@@ -84,17 +84,17 @@ export function getParamDisabledReasons(profile: ApiProfile, options: { hasInput
     // Agent 的图片会进入对话上下文继续编辑，只用位图格式
     ? 'Agent 模式只能输出位图格式'
     : gptImage26 ? undefined
-    : isResponses ? '图像模型 ID 需为 GPT Image 2.6 及以上' : '仅 GPT Image 2.6 及以上模型支持此格式'
+    : isResponses ? '当前图像模型不支持此格式' : '当前模型不支持此格式'
   return {
     complexity: gptImage26 ? undefined
-      : isResponses ? '图像模型 ID 需为 GPT Image 2.6 及以上' : '仅 GPT Image 2.6 及以上模型支持复杂度参数',
+      : isResponses ? '当前图像模型不支持复杂度参数' : '当前模型不支持复杂度参数',
     gif,
     // fal.ai 的 SVG 暂不开放，原因见 falAiImageApi 中的说明
     svg: gif ?? (isFal ? 'fal.ai 暂不支持此格式' : undefined),
     autoQuality: isFal ? 'fal.ai 不支持 auto 质量参数' : undefined,
     extendedQuality: supportsExtendedQuality(profile) ? undefined
       : isFal && isGptImage26PlusModel(profile.model) ? 'fal.ai 的 GPT Image 2.6 最高只支持 high'
-      : isResponses ? '图像模型 ID 需为 GPT Image 2.5 及以上' : '仅 GPT Image 2.5 及以上模型支持此质量',
+      : isResponses ? '当前图像模型不支持此质量' : '当前模型不支持此质量',
     autoSize: isFal && !options.hasInputImages ? 'fal.ai 的文生图模式不支持自动尺寸' : undefined,
   }
 }

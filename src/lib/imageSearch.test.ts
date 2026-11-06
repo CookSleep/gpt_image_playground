@@ -75,11 +75,12 @@ describe('图像搜索', () => {
     const result = await callImageApi({ settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id }), prompt: 'example', params: { ...DEFAULT_PARAMS, n: 2, google_search: true, image_search: true }, inputImageDataUrls: [] })
     expect(result.images).toHaveLength(2)
     expect(result.searchGrounding).toHaveLength(2)
-    expect(result.searchGrounding?.[0]).toEqual({ renderedContent: '<div>Google Search</div>', sources: [{ uri: 'https://example.com/source', title: 'Example source' }] })
+    expect(result.searchGrounding?.[0]).toEqual({ renderedContent: '<div>Google Search</div>', sources: [{ uri: 'https://example.com/source', title: 'Example source', imageUri: 'https://example.com/image.png' }] })
   })
 
   it('清洗搜索来源，忽略非网页链接并去重', () => {
     expect(parseImageSearchGrounding({ groundingChunks: [null, { web: { uri: 'javascript:alert(1)' } }, { web: { uri: 'https://example.com', title: 'Example' } }, { image: { sourceUri: 'https://example.com', title: 'Example' } }] })).toEqual({ sources: [{ uri: 'https://example.com', title: 'Example' }] })
+    expect(parseImageSearchGrounding({ groundingChunks: [{ image: { sourceUri: 'https://example.com/a', imageUri: 'http://example.com/a.png', title: 'A', domain: 'example.com' } }] })).toEqual({ sources: [{ uri: 'https://example.com/a', title: 'A', domain: 'example.com' }] })
     expect(parseImageSearchGrounding(null)).toBeUndefined()
   })
 

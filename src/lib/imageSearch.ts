@@ -57,7 +57,15 @@ export function parseImageSearchGrounding(value: unknown): ImageSearchGrounding 
     const source = item?.image ?? item?.web
     const uri = source?.sourceUri ?? source?.uri
     if (typeof uri !== 'string' || !/^https?:\/\//i.test(uri) || sources.some((item) => item.uri === uri)) continue
-    sources.push({ uri, title: typeof source.title === 'string' && source.title ? source.title : uri })
+    // 只保留 https 图片，避免 https 页面加载 http 资源被拦截
+    const imageUri = typeof source.imageUri === 'string' && /^https:\/\//i.test(source.imageUri) ? source.imageUri : undefined
+    const domain = typeof source.domain === 'string' && source.domain ? source.domain : undefined
+    sources.push({
+      uri,
+      title: typeof source.title === 'string' && source.title ? source.title : uri,
+      ...(imageUri ? { imageUri } : {}),
+      ...(domain ? { domain } : {}),
+    })
   }
   return renderedContent || sources.length ? { renderedContent, sources } : undefined
 }

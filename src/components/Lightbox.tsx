@@ -797,7 +797,7 @@ function LightboxInner({ src, comments, imageId, markupImageId, maskPreviewSrc, 
               alt=""
             />
           )}
-          {markupImageId && <MarkupOverlay key={markupImageId} imageId={markupImageId} fit="contain" />}
+          {markupImageId && <MarkupOverlay key={markupImageId} imageId={markupImageId} className="object-contain rounded-lg" />}
           {comments.map((comment, idx) => (
             // 气泡尖角落在评论位置，并抵消外层缩放，保持屏幕上的大小不变；靠右的评论文字放到气泡左侧，避免伸出图片
             <div

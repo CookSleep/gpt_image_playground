@@ -96,9 +96,9 @@ describe('GPT Image 2.6 parameter compatibility', () => {
   it('points Responses users to the image model when 2.6 params are unavailable', () => {
     const profile = getActiveApiProfile(createSettings({ apiMode: 'responses', model: 'gpt-image-2.6-sunburst', imageGenerationModel: '' }))
     expect(getParamDisabledReasons(profile)).toMatchObject({
-      complexity: '图像模型 ID 需为 GPT Image 2.6 及以上',
-      gif: '图像模型 ID 需为 GPT Image 2.6 及以上',
-      svg: '图像模型 ID 需为 GPT Image 2.6 及以上',
+      complexity: '当前图像模型不支持复杂度参数',
+      gif: '当前图像模型不支持此格式',
+      svg: '当前图像模型不支持此格式',
     })
   })
 })
@@ -182,7 +182,7 @@ describe('GPT Image 2.6 requests', () => {
     expect(body.get('complexity')).toBe('low')
   })
 
-  it('切换 2.6、2.5 再切回时保留原图和独立标注', async () => {
+  it('keeps the original image and separate markup when switching 2.6, 2.5 and back', async () => {
     const originalFetch = globalThis.fetch
     const fetchMock = mockImageResponse()
     fetchMock.mockImplementation(async (input, init) => {
