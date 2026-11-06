@@ -32,6 +32,32 @@ async function importPresetConfigOnlyUrlSettings(options: { locked?: boolean, mu
 }
 
 describe('URL settings params', () => {
+  it.each([false, true])('初始 API 配置导入链接时保留其他本地设置，配置变更：%s', (changed) => {
+    const current = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      colorMode: 'dark',
+      enterSubmit: true,
+      uiFont: 'system',
+      monoFont: 'system',
+      showBatchPrompt: true,
+      taskCompletionNotification: true,
+    })
+    const params = new URLSearchParams({ settings: JSON.stringify({
+      profiles: [{ ...current.profiles[0], id: undefined, ...(changed ? { apiKey: 'new-key' } : {}) }],
+      colorMode: 'light',
+      enterSubmit: false,
+    }) })
+    const next = normalizeSettings({ ...current, ...buildSettingsFromUrlParams(current, params) })
+    expect(next).toEqual(normalizeSettings({
+      ...current,
+      profiles: next.profiles,
+      customProviders: next.customProviders,
+      activeProfileId: next.activeProfileId,
+    }))
+    if (changed) expect(next.profiles[0].apiKey).toBe('new-key')
+    else expect(next).toEqual(current)
+  })
+
   it('preserves an existing model when apiMode changes', () => {
     const current = normalizeSettings({ profiles: [createDefaultOpenAIProfile({ id: 'saved', model: 'vendor/model', imageGenerationModel: '' })] })
     const switched = normalizeSettings(buildSettingsFromUrlParams(current, new URLSearchParams('profileId=saved&apiMode=responses')))

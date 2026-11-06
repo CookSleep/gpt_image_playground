@@ -5,6 +5,7 @@ import {
   DEFAULT_IMAGES_MODEL,
   DEFAULT_RESPONSES_MODEL,
   findEquivalentApiProfile,
+  getApiProfileContentKey,
   mergeImportedSettings,
   normalizeModelList,
   normalizeSettings,
@@ -95,12 +96,17 @@ function ensureUrlSettingsProfileIds(value: unknown, currentSettings: Partial<Ap
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value
   const record = value as Record<string, unknown>
   if (!Array.isArray(record.profiles)) return value
-  const usedIds = new Set(normalizeSettings(currentSettings).profiles.map((profile) => profile.id))
+  const current = normalizeSettings(currentSettings)
+  const usedIds = new Set(current.profiles.map((profile) => profile.id))
+  const explicitIds = new Set<string>()
   const emittedIds = new Set<string>()
   for (const item of record.profiles) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue
     const id = typeof (item as { id?: unknown }).id === 'string' ? (item as { id: string }).id.trim() : ''
-    if (id) usedIds.add(id)
+    if (id) {
+      usedIds.add(id)
+      explicitIds.add(id)
+    }
   }
   return {
     ...record,
@@ -110,6 +116,17 @@ function ensureUrlSettingsProfileIds(value: unknown, currentSettings: Partial<Ap
       if (typeof profile.id === 'string' && profile.id.trim() && !emittedIds.has(profile.id.trim())) {
         emittedIds.add(profile.id.trim())
         return { ...profile, id: profile.id.trim() }
+      }
+      if (typeof profile.id !== 'string' || !profile.id.trim()) {
+        const normalized = normalizeSettings({ customProviders: record.customProviders, profiles: [profile] }).profiles[0]
+        const key = getApiProfileContentKey(normalized)
+        const existing = current.profiles.find((item) =>
+          !explicitIds.has(item.id) && !emittedIds.has(item.id)
+          && getApiProfileContentKey(item) === key)
+        if (existing) {
+          emittedIds.add(existing.id)
+          return { ...profile, id: existing.id }
+        }
       }
       return { ...profile, id: createUrlProfileId(usedIds) }
     }),
@@ -264,9 +281,21 @@ function buildRegularSettingsFromUrlParams(currentSettings: Partial<AppSettings>
   const apiMode: ApiMode | undefined = apiModeParam === 'images' || apiModeParam === 'responses' ? apiModeParam : undefined
 
   const hasLegacyOpenAIParams = apiUrlParam !== null || apiKeyParam !== null || codexCliParam !== null || apiMode !== undefined || modelParam !== null || imageGenerationModelParam !== null || profileNameParam !== null || reasoningEffortParam !== null || streamImagesParam !== null || streamPartialImagesParam !== null
-  const settings = importedSettings == null
-    ? normalizeSettings(currentSettings)
-    : activateFirstImportedProfile(mergeImportedSettings(currentSettings, importedSettings), importedSettings)
+  const current = normalizeSettings(currentSettings)
+  const merged = importedSettings == null ? current : mergeImportedSettings(current, importedSettings)
+  // 复用相同配置时保留本地的默认标记，分享链接不携带该标记。
+  merged.profiles = merged.profiles.map((profile) => {
+    const existing = current.profiles.find((item) => item.id === profile.id)
+    return existing && getApiProfileContentKey(existing) === getApiProfileContentKey(profile)
+      ? existing
+      : profile
+  })
+  // URL 仅导入 API 配置，其他设置沿用本地值。
+  const settings = importedSettings == null ? current : activateFirstImportedProfile(normalizeSettings({
+    ...current,
+    customProviders: merged.customProviders,
+    profiles: merged.profiles,
+  }), importedSettings)
 
   const requestedProfileId = profileIdParam?.trim() ?? ''
   const requestedNonOpenAIProfile = requestedProfileId

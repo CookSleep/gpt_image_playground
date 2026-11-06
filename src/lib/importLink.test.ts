@@ -202,6 +202,7 @@ describe('describeImportLink', () => {
     try {
       const desc = describeImportLink(new URLSearchParams({ profileId: 'preset-a' }), current())
       expect(desc.summary).toBe('链接将恢复已删除的预置配置。')
+      expect(desc.hasConfigChanges).toBe(true)
       expect(desc.notes).toEqual(['将恢复预置配置：预置 A'])
       expect(desc.groups).toEqual([])
     } finally {
@@ -215,6 +216,7 @@ describe('describeImportLink', () => {
     const settings = normalizeSettings({ ...base, profiles: [...base.profiles, profile] })
     const desc = describeImportLink(parseImportLink(settingsLink({ profiles: [profile] }))!, settings)
     expect(desc.summary).toBe('已存在相同的配置，导入后将切换到「P0」。')
+    expect(desc.hasConfigChanges).toBe(false)
     expect(desc.groups).toEqual([])
   })
 
@@ -227,6 +229,7 @@ describe('describeImportLink', () => {
     expect(desc.notes).toEqual(['新增自定义服务商：服务商 X', '导入后将切换到「P0」'])
     expect(desc.groups).toEqual([])
     expect(desc.summary).toBe('链接将新增 1 个自定义服务商。请只导入来源可信的链接。')
+    expect(desc.hasConfigChanges).toBe(true)
   })
 
   it('修改未展示的字段时逐项列出，布尔值和枚举显示为可读文本', () => {

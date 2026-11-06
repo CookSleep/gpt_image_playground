@@ -451,6 +451,7 @@ npm run build
 | `VITE_DEFAULT_API_URL` | `DEFAULT_API_URL` | 预置配置，见下文 |
 | `VITE_LOCK_PRESET_CONFIG_PARAMS=true` | `LOCK_PRESET_CONFIG_PARAMS=true` | 锁定预置配置中除 API Key 外的参数，禁止编辑随预置引入的自定义供应商；当前锁定配置引用的供应商解除引用后才能删除 |
 | `VITE_PREVENT_PRESET_CONFIG_DELETION=true` | `PREVENT_PRESET_CONFIG_DELETION=true` | 禁止删除预置配置及随预置引入的自定义供应商，不锁定参数，普通配置不受影响 |
+| `VITE_SHOW_CONFIG_CHANGE_DIALOG=false` | `SHOW_CONFIG_CHANGE_DIALOG=false` | 关闭链接导入配置时的变更确认弹窗，直接导入；默认开启，已有相同配置始终不弹窗 |
 | `VITE_SHOW_PRESET_CONFIG_ONLY=true` | `SHOW_PRESET_CONFIG_ONLY=true` | 只允许使用当前预置配置，禁止创建、复制、删除、拖动配置，禁止切换供应商和管理自定义供应商；未开启锁定时参数仍可编辑，API Key 始终可编辑 |
 | `VITE_DEFAULT_UI_FONT` | `DEFAULT_UI_FONT` | 默认界面字体：`builtin`（内置，默认）、`system`（系统字体）或本机已安装的字体名称 |
 | `VITE_DEFAULT_MONO_FONT` | `DEFAULT_MONO_FONT` | 默认代码字体，取值规则同 `VITE_DEFAULT_UI_FONT` |

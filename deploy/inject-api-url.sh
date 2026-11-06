@@ -20,6 +20,11 @@ if [ "$ENABLE_API_PROXY" = "true" ] && [ "$LOCK_API_PROXY" = "true" ]; then
 fi
 
 PRESET_CONFIG_ONLY=false
+CONFIG_CHANGE_DIALOG=true
+if [ "$SHOW_CONFIG_CHANGE_DIALOG" = "false" ]; then
+    CONFIG_CHANGE_DIALOG=false
+fi
+
 if [ "$SHOW_PRESET_CONFIG_ONLY" = "true" ] || [ "$SHOW_DEFAULT_CONFIG_ONLY" = "true" ]; then
     PRESET_CONFIG_ONLY=true
 fi
@@ -93,6 +98,7 @@ find /usr/share/nginx/html/assets -type f -name "*.js" -exec sed -i "s|__VITE_AP
 find /usr/share/nginx/html/assets -type f -name "*.js" -exec sed -i "s|__VITE_DOCKER_DEPLOYMENT_PLACEHOLDER__|true|g" {} +
 find /usr/share/nginx/html/assets -type f -name "*.js" -exec sed -i "s|__VITE_DOCKER_LEGACY_API_URL_USED_PLACEHOLDER__|$DOCKER_LEGACY_API_URL_USED|g" {} +
 find /usr/share/nginx/html/assets -type f -name "*.js" -exec sed -i "s|__VITE_SHOW_PRESET_CONFIG_ONLY_PLACEHOLDER__|$PRESET_CONFIG_ONLY|g" {} +
+find /usr/share/nginx/html/assets -type f -name "*.js" -exec sed -i "s|__VITE_SHOW_CONFIG_CHANGE_DIALOG_PLACEHOLDER__|$CONFIG_CHANGE_DIALOG|g" {} +
 find /usr/share/nginx/html/assets -type f -name "*.js" -exec sed -i "s|__VITE_LOCK_PRESET_CONFIG_PARAMS_PLACEHOLDER__|$PRESET_CONFIG_PARAMS_LOCKED|g" {} +
 find /usr/share/nginx/html/assets -type f -name "*.js" -exec sed -i "s|__VITE_PREVENT_PRESET_CONFIG_DELETION_PLACEHOLDER__|$PRESET_CONFIG_DELETION_PREVENTED|g" {} +
 find /usr/share/nginx/html/assets -type f -name "*.js" -exec sed -i "s|__VITE_DEFAULT_UI_FONT_PLACEHOLDER__|$DEFAULT_UI_FONT_ESCAPED|g" {} +

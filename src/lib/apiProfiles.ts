@@ -1002,6 +1002,11 @@ function createPresetProfileId(provider: ApiProvider, record: Record<string, unk
   return id
 }
 
+// 配置内容比较忽略本地身份和默认标记，输入须已规整。
+export function getApiProfileContentKey(profile: ApiProfile): string {
+  return JSON.stringify({ ...profile, id: undefined, isDefault: undefined })
+}
+
 function getApiProfileDedupKey(profile: ApiProfile): string {
   return JSON.stringify([
     profile.provider,
@@ -1231,7 +1236,7 @@ export function mergePresetImportedSettings(
     .filter((profile) => {
       const previous = previousProfilesById.get(profile.id)
       if (!previous || sourceProfileIds.has(profile.id) || usedPresetProfileIds.has(profile.id) || modifiedProviderIds.has(profile.provider)) return false
-      return JSON.stringify({ ...profile, isDefault: undefined }) === JSON.stringify({ ...previous, isDefault: undefined })
+      return getApiProfileContentKey(profile) === getApiProfileContentKey(previous)
     })
     .map((profile) => profile.id))
 

@@ -222,6 +222,8 @@ export function describeImportLink(params: URLSearchParams, settings: AppSetting
             : '链接中的配置不会改变当前设置（已存在相同配置，或受当前部署限制）。'
 
   return {
+    hasConfigChanges: JSON.stringify(next.profiles) !== JSON.stringify(settings.profiles)
+      || JSON.stringify(next.customProviders) !== JSON.stringify(settings.customProviders),
     summary,
     notes: [
       ...(restoredNames.length ? [`将恢复预置配置：${restoredNames.join('、')}`] : []),

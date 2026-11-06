@@ -7,6 +7,7 @@ import { restoreExplicitPresetConfig, useStore } from '../store'
 import { normalizeSettings } from '../lib/apiProfiles'
 import { describeImportLink, handledImportLinks, parseImportLink } from '../lib/importLink'
 import { isTauri } from '../lib/platform'
+import { readRuntimeEnv } from '../lib/runtimeEnv'
 import { buildSettingsFromUrlParams, getExplicitUrlSettingsIds } from '../lib/urlSettings'
 import ImportLinkDiff from '../components/ImportLinkDiff'
 
@@ -44,7 +45,7 @@ function waitIdle() {
 
 /**
  * 提示导入链接中的配置。input 为链接文本，或网页版启动时已从地址栏取出的参数。
- * opened 表示用户主动打开的链接（deep link 或网页链接），每次都提示；剪贴板中的同一条链接本次运行只提示一次
+ * opened 表示用户主动打开的链接（deep link 或网页链接）；剪贴板中的同一条链接本次运行只处理一次
  */
 export function promptImportLink(input: string | URLSearchParams, opened = false) {
   const link = typeof input === 'string' ? input.trim() : ''
@@ -56,7 +57,7 @@ export function promptImportLink(input: string | URLSearchParams, opened = false
   // 对话框只有一个，多个链接同时到达时依次提示，也不覆盖其他正在显示的对话框
   promptQueue = promptQueue.then(async () => {
     // 用户刚打开的链接暂缓时告知原因；剪贴板触发的不提示，避免打扰
-    if (opened && useStore.getState().showSettings) useStore.getState().showToast('关闭设置后将提示导入配置', 'info')
+    if (opened && useStore.getState().showSettings) useStore.getState().showToast('关闭设置后将处理导入配置', 'info')
     await waitIdle()
     const desc = describeImportLink(params, useStore.getState().settings)
     const dialog: NonNullable<ReturnType<typeof useStore.getState>['confirmDialog']> = {
@@ -73,12 +74,16 @@ export function promptImportLink(input: string | URLSearchParams, opened = false
           state.setSettings(await applyUrlSettings(state.settings, params))
           // 以写入后 store 中的实际结果判断，部署策略可能把修改还原
           const changed = JSON.stringify(normalizeSettings(useStore.getState().settings)) !== before
-          state.showToast(changed ? '配置已导入' : '链接中的配置未生效（已存在相同配置或受当前部署限制）', changed ? 'success' : 'info')
+          if (changed) state.showToast('配置已导入', 'success')
         } catch (err) {
           console.error('导入链接中的配置失败：', err)
           useStore.getState().showToast('导入配置失败', 'error')
         }
       },
+    }
+    if (!desc.hasConfigChanges || readRuntimeEnv(import.meta.env.VITE_SHOW_CONFIG_CHANGE_DIALOG) === 'false') {
+      await dialog.action?.()
+      return
     }
     useStore.getState().setConfirmDialog(dialog)
     await new Promise<void>((resolve) => {
