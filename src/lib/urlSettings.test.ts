@@ -32,7 +32,7 @@ async function importPresetConfigOnlyUrlSettings(options: { locked?: boolean, mu
 }
 
 describe('URL settings params', () => {
-  it.each([false, true])('初始 API 配置导入链接时保留其他本地设置，配置变更：%s', (changed) => {
+  it.each([false, true])('keeps other local settings when importing the initial API profile (changed: %s)', (changed) => {
     const current = normalizeSettings({
       ...DEFAULT_SETTINGS,
       colorMode: 'dark',

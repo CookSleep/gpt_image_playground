@@ -20,13 +20,13 @@ if [ "$ENABLE_API_PROXY" = "true" ] && [ "$LOCK_API_PROXY" = "true" ]; then
 fi
 
 PRESET_CONFIG_ONLY=false
+if [ "$SHOW_PRESET_CONFIG_ONLY" = "true" ] || [ "$SHOW_DEFAULT_CONFIG_ONLY" = "true" ]; then
+    PRESET_CONFIG_ONLY=true
+fi
+
 CONFIG_CHANGE_DIALOG=true
 if [ "$SHOW_CONFIG_CHANGE_DIALOG" = "false" ]; then
     CONFIG_CHANGE_DIALOG=false
-fi
-
-if [ "$SHOW_PRESET_CONFIG_ONLY" = "true" ] || [ "$SHOW_DEFAULT_CONFIG_ONLY" = "true" ]; then
-    PRESET_CONFIG_ONLY=true
 fi
 
 PRESET_CONFIG_PARAMS_LOCKED=false

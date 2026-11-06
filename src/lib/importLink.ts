@@ -155,8 +155,17 @@ export function describeImportLink(params: URLSearchParams, settings: AppSetting
     const old = oldById.get(profile.id)
     return old && JSON.stringify(old) !== JSON.stringify(profile)
   })
-  const providerIds = new Set(current.customProviders.map((provider) => provider.id))
-  const providerNames = next.customProviders.filter((provider) => !providerIds.has(provider.id)).map((provider) => name(provider.name))
+  const oldProviderById = new Map(current.customProviders.map((provider) => [provider.id, provider]))
+  const providerNames = next.customProviders.filter((provider) => !oldProviderById.has(provider.id)).map((provider) => name(provider.name))
+  // 同 ID 的服务商定义会被链接覆盖，可能改变请求地址
+  const modifiedProviderNames = next.customProviders.filter((provider) => {
+    const old = oldProviderById.get(provider.id)
+    return old && JSON.stringify(old) !== JSON.stringify(provider)
+  }).map((provider) => name(oldProviderById.get(provider.id)!.name))
+  const providerCounts = [
+    ...(modifiedProviderNames.length ? [`修改 ${modifiedProviderNames.length} 个`] : []),
+    ...(providerNames.length ? [`新增 ${providerNames.length} 个`] : []),
+  ]
 
   // 改了地址的修改项排在最前；所有项全部列出，过多时由确认框内容区滚动
   modified.sort((a, b) => Number(b.baseUrl !== oldById.get(b.id)!.baseUrl) - Number(a.baseUrl !== oldById.get(a.id)!.baseUrl))
@@ -213,8 +222,8 @@ export function describeImportLink(params: URLSearchParams, settings: AppSetting
     ? '请只导入来源可信的链接。'
     : count
       ? `链接将${counts.join('、')}配置${counts.length > 1 ? `，共 ${count} 个` : ''}。请只导入来源可信的链接。`
-      : providerNames.length
-        ? `链接将新增 ${providerNames.length} 个自定义服务商。请只导入来源可信的链接。`
+      : providerCounts.length
+        ? `链接将${providerCounts.join('、')}自定义服务商。请只导入来源可信的链接。`
         : switched
           ? `已存在相同的配置，导入后将切换到「${name(switched.name)}」。`
           : restoredNames.length
@@ -222,14 +231,14 @@ export function describeImportLink(params: URLSearchParams, settings: AppSetting
             : '链接中的配置不会改变当前设置（已存在相同配置，或受当前部署限制）。'
 
   return {
-    hasConfigChanges: JSON.stringify(next.profiles) !== JSON.stringify(settings.profiles)
-      || JSON.stringify(next.customProviders) !== JSON.stringify(settings.customProviders),
+    hasConfigChanges: count + providerCounts.length + restoredNames.length > 0,
     summary,
     notes: [
       ...(restoredNames.length ? [`将恢复预置配置：${restoredNames.join('、')}`] : []),
+      ...(modifiedProviderNames.length ? [`修改自定义服务商：${modifiedProviderNames.join('、')}`] : []),
       ...(providerNames.length ? [`新增自定义服务商：${providerNames.join('、')}`] : []),
-      // 只新增服务商时摘要描述服务商，切换信息放在附注中
-      ...(!count && providerNames.length && switched ? [`导入后将切换到「${name(switched.name)}」`] : []),
+      // 只涉及服务商时摘要描述服务商，切换信息放在附注中
+      ...(!count && providerCounts.length && switched ? [`导入后将切换到「${name(switched.name)}」`] : []),
     ],
     groups,
   }

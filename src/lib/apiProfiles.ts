@@ -1055,7 +1055,7 @@ function createPresetProfileId(provider: ApiProvider, record: Record<string, unk
   return id
 }
 
-// 配置内容比较忽略本地身份和默认标记，输入须已规整。
+/** 配置内容比较忽略本地身份和默认标记，输入须已规整 */
 export function getApiProfileContentKey(profile: ApiProfile): string {
   return JSON.stringify({ ...profile, id: undefined, isDefault: undefined })
 }

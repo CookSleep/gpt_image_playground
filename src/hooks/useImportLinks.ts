@@ -70,11 +70,15 @@ export function promptImportLink(input: string | URLSearchParams, opened = false
       action: async () => {
         try {
           const state = useStore.getState()
-          const before = JSON.stringify(normalizeSettings(state.settings))
+          const before = normalizeSettings(state.settings)
           state.setSettings(await applyUrlSettings(state.settings, params))
           // 以写入后 store 中的实际结果判断，部署策略可能把修改还原
-          const changed = JSON.stringify(normalizeSettings(useStore.getState().settings)) !== before
-          if (changed) state.showToast('配置已导入', 'success')
+          const after = normalizeSettings(useStore.getState().settings)
+          if (JSON.stringify(after) === JSON.stringify(before)) return
+          // 恢复原活动配置时同步还原地址、模型等派生字段，只剩切换时配置内容应一致
+          const switched = after.activeProfileId !== before.activeProfileId
+            && JSON.stringify(normalizeSettings({ ...after, activeProfileId: before.activeProfileId })) === JSON.stringify(before)
+          state.showToast(switched ? `已切换到「${after.profiles.find((profile) => profile.id === after.activeProfileId)?.name}」` : '配置已导入', 'success')
         } catch (err) {
           console.error('导入链接中的配置失败：', err)
           useStore.getState().showToast('导入配置失败', 'error')

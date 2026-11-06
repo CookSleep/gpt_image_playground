@@ -4,8 +4,10 @@ import { createCustomProfileImportUrl } from './profileImportUrl'
 import { buildSettingsFromUrlParams } from './urlSettings'
 import { describeImportLink } from './importLink'
 
+const SHARE_OPTIONS = { includeApiKey: true, useNewApiAddress: false, useNewApiKey: false, useNewApiModel: false }
+
 describe('createCustomProfileImportUrl', () => {
-  it.each([undefined, [], [{ id: 'custom-provider' }]])('缺少有效服务商定义的无 ID 链接不覆盖已有自定义配置：%j', (customProviders) => {
+  it.each([undefined, [], [{ id: 'custom-provider' }]])('keeps the saved custom profile when an ID-less link lacks a valid provider: %j', (customProviders) => {
     const current = normalizeSettings({
       customProviders: [{ id: 'custom-provider', name: 'Custom', submit: { path: 'generate' } }],
       profiles: [createDefaultOpenAIProfile({ id: 'saved', provider: 'custom-provider', apiKey: 'key' })],
@@ -24,7 +26,7 @@ describe('createCustomProfileImportUrl', () => {
     expect(describeImportLink(params, next).hasConfigChanges).toBe(false)
   })
 
-  it('无 ID 配置不占用同一载荷中显式指定的配置 ID', () => {
+  it('does not give ID-less profiles an ID set explicitly in the same payload', () => {
     const profile = createDefaultOpenAIProfile({ id: 'saved', apiKey: 'key' })
     const current = normalizeSettings({ profiles: [profile] })
     const params = new URLSearchParams({ settings: JSON.stringify({ profiles: [
@@ -38,7 +40,7 @@ describe('createCustomProfileImportUrl', () => {
     expect(next.profiles.find((item) => item.id === next.activeProfileId)?.timeout).toBe(profile.timeout)
   })
 
-  it.each([false, true])('相同分享链接复用已有配置并保留默认标记，自定义服务商：%s', (custom) => {
+  it.each([false, true])('reuses an identical saved profile and keeps its default flag (custom provider: %s)', (custom) => {
     const provider = custom ? { id: 'custom-provider', name: 'Custom', submit: { path: 'generate' } } : undefined
     const current = normalizeSettings({
       customProviders: provider ? [provider] : [],
@@ -49,9 +51,7 @@ describe('createCustomProfileImportUrl', () => {
       activeProfileId: 'other',
     })
     const profile = current.profiles[1]
-    const params = new URL(createCustomProfileImportUrl('https://example.com', profile, current.customProviders[0], {
-      includeApiKey: true, useNewApiAddress: false, useNewApiKey: false, useNewApiModel: false,
-    })).searchParams
+    const params = new URL(createCustomProfileImportUrl('https://example.com', profile, current.customProviders[0], SHARE_OPTIONS)).searchParams
     expect(describeImportLink(params, current).hasConfigChanges).toBe(false)
     const next = normalizeSettings({ ...current, ...buildSettingsFromUrlParams(current, params) })
     expect(next.profiles).toEqual(current.profiles)
@@ -60,21 +60,17 @@ describe('createCustomProfileImportUrl', () => {
     expect(buildSettingsFromUrlParams(next, params).profiles).toEqual(current.profiles)
   })
 
-  it.each([{ timeout: 42 }, { apiKey: 'different' }, { apiProxy: true }, { description: 'different' }])('配置字段不同时仍创建新配置：%j', (patch) => {
+  it.each([{ timeout: 42 }, { apiKey: 'different' }, { apiProxy: true }, { description: 'different' }])('creates a new profile when fields differ: %j', (patch) => {
     const profile = createDefaultOpenAIProfile({ id: 'saved', apiKey: 'key' })
     const current = normalizeSettings({ profiles: [profile] })
-    const params = new URL(createCustomProfileImportUrl('https://example.com', { ...profile, ...patch }, undefined, {
-      includeApiKey: true, useNewApiAddress: false, useNewApiKey: false, useNewApiModel: false,
-    })).searchParams
+    const params = new URL(createCustomProfileImportUrl('https://example.com', { ...profile, ...patch }, undefined, SHARE_OPTIONS)).searchParams
     expect(describeImportLink(params, current).hasConfigChanges).toBe(true)
     expect(buildSettingsFromUrlParams(current, params).profiles).toHaveLength(2)
   })
 
   it('omits unused providers from built-in profile links and imports them normally', () => {
     const profile = createDefaultOpenAIProfile({ id: 'built-in', apiKey: 'key' })
-    const url = new URL(createCustomProfileImportUrl('https://playground.example.com', profile, undefined, {
-      includeApiKey: true, useNewApiAddress: false, useNewApiKey: false, useNewApiModel: false,
-    }))
+    const url = new URL(createCustomProfileImportUrl('https://playground.example.com', profile, undefined, SHARE_OPTIONS))
     const json = url.searchParams.get('settings')!
     expect(JSON.parse(json)).not.toHaveProperty('customProviders')
     expect(importCustomProviderSettingsFromJson(json).profiles).toHaveLength(1)
@@ -127,7 +123,7 @@ describe('createCustomProfileImportUrl', () => {
       'https://playground.example.com',
       profile,
       provider,
-      { includeApiKey: true, useNewApiAddress: false, useNewApiKey: false, useNewApiModel: false },
+      SHARE_OPTIONS,
     ))
     const next = normalizeSettings({
       ...DEFAULT_SETTINGS,

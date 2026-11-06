@@ -21,7 +21,7 @@
 
 - 测试使用 Vitest，已有多个 `*.test.ts` 文件。
 - 不要新增 lint/formatter 配置文件，除非明确要求。
-- 测试在本地运行，不添加 push／PR 触发的 CI 测试工作流。
+- 测试在本地运行，不添加 push 或 PR 触发的 CI 测试工作流。
 - 换行遵循 `.gitattributes`：通常使用 LF，PowerShell 脚本使用 CRLF。Rust 使用 `cargo fmt`。
 
 ## 代码风格（强制）

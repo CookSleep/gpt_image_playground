@@ -5,6 +5,7 @@ import { createCustomProfileImportUrl } from './profileImportUrl'
 import { createDefaultOpenAIProfile, DEFAULT_OPENAI_PROFILE_ID, normalizeSettings } from './apiProfiles'
 import { setPresetConfig } from './presetConfig'
 import { buildApiUrl } from './devProxy'
+import { buildSettingsFromUrlParams } from './urlSettings'
 
 const settingsLink = (value: unknown) => `https://example.com/app/?settings=${encodeURIComponent(JSON.stringify(value))}`
 
@@ -229,6 +230,25 @@ describe('describeImportLink', () => {
     expect(desc.notes).toEqual(['新增自定义服务商：服务商 X', '导入后将切换到「P0」'])
     expect(desc.groups).toEqual([])
     expect(desc.summary).toBe('链接将新增 1 个自定义服务商。请只导入来源可信的链接。')
+    expect(desc.hasConfigChanges).toBe(true)
+  })
+
+  it('只修改已有自定义服务商的请求映射时需要确认', () => {
+    const provider = { id: 'cp-1', name: '服务商 X', submit: { path: 'images/generations' } }
+    const profile = { id: 'p0', name: 'P0', provider: 'cp-1', baseUrl: 'https://p0.example.com/v1', model: 'm0' }
+    const base = current()
+    const settings = normalizeSettings({ ...base, customProviders: [provider], profiles: [...base.profiles, profile], activeProfileId: 'p0' })
+    const params = parseImportLink(settingsLink({ customProviders: [{ ...provider, submit: { path: 'images/generate' } }], profiles: [profile] }))!
+    const next = normalizeSettings({ ...settings, ...buildSettingsFromUrlParams(settings, params) })
+    expect(next.profiles).toEqual(settings.profiles)
+    expect(next.customProviders[0]).toEqual({
+      ...settings.customProviders[0],
+      submit: { ...settings.customProviders[0].submit, path: 'images/generate' },
+    })
+    const desc = describeImportLink(params, settings)
+    expect(desc.summary).toBe('链接将修改 1 个自定义服务商。请只导入来源可信的链接。')
+    expect(desc.notes).toEqual(['修改自定义服务商：服务商 X'])
+    expect(desc.groups).toEqual([])
     expect(desc.hasConfigChanges).toBe(true)
   })
 

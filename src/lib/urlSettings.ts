@@ -120,9 +120,9 @@ function ensureUrlSettingsProfileIds(value: unknown, currentSettings: Partial<Ap
       if (typeof profile.id !== 'string' || !profile.id.trim()) {
         const normalized = normalizeSettings({ customProviders: record.customProviders, profiles: [profile] }).profiles[0]
         const key = getApiProfileContentKey(normalized)
-        const existing = current.profiles.find((item) =>
-          !explicitIds.has(item.id) && !emittedIds.has(item.id)
-          && getApiProfileContentKey(item) === key)
+        const existing = current.profiles.find((saved) =>
+          !explicitIds.has(saved.id) && !emittedIds.has(saved.id)
+          && getApiProfileContentKey(saved) === key)
         if (existing) {
           emittedIds.add(existing.id)
           return { ...profile, id: existing.id }
@@ -282,20 +282,18 @@ function buildRegularSettingsFromUrlParams(currentSettings: Partial<AppSettings>
 
   const hasLegacyOpenAIParams = apiUrlParam !== null || apiKeyParam !== null || codexCliParam !== null || apiMode !== undefined || modelParam !== null || imageGenerationModelParam !== null || profileNameParam !== null || reasoningEffortParam !== null || streamImagesParam !== null || streamPartialImagesParam !== null
   const current = normalizeSettings(currentSettings)
-  const merged = importedSettings == null ? current : mergeImportedSettings(current, importedSettings)
-  // 复用相同配置时保留本地的默认标记，分享链接不携带该标记。
-  merged.profiles = merged.profiles.map((profile) => {
-    const existing = current.profiles.find((item) => item.id === profile.id)
-    return existing && getApiProfileContentKey(existing) === getApiProfileContentKey(profile)
-      ? existing
-      : profile
-  })
-  // URL 仅导入 API 配置，其他设置沿用本地值。
-  const settings = importedSettings == null ? current : activateFirstImportedProfile(normalizeSettings({
-    ...current,
-    customProviders: merged.customProviders,
-    profiles: merged.profiles,
-  }), importedSettings)
+  const merged = importedSettings == null ? undefined : mergeImportedSettings(current, importedSettings)
+  // URL 仅导入 API 配置，其他设置沿用本地值；复用相同配置时保留本地的默认标记，分享链接不携带该标记
+  const settings = merged
+    ? activateFirstImportedProfile(normalizeSettings({
+        ...current,
+        customProviders: merged.customProviders,
+        profiles: merged.profiles.map((profile) => {
+          const existing = current.profiles.find((item) => item.id === profile.id)
+          return existing && getApiProfileContentKey(existing) === getApiProfileContentKey(profile) ? existing : profile
+        }),
+      }), importedSettings)
+    : current
 
   const requestedProfileId = profileIdParam?.trim() ?? ''
   const requestedNonOpenAIProfile = requestedProfileId
