@@ -41,7 +41,7 @@ async function mapFalImageSize(size: string): Promise<{ width: number; height: n
 }
 
 function mapFalQuality(quality: TaskParams['quality'], model: string): 'low' | 'medium' | 'high' | 'xhigh' | 'max' {
-  // fal.ai 的 2.6 端点画质只到 high
+  // fal.ai 的 2.6 端点质量只到 high
   if (isGptImage25PlusModel(model) && !isGptImage26PlusModel(model) && (quality === 'xhigh' || quality === 'max')) return quality
   return quality === 'low' || quality === 'medium' ? quality : 'high'
 }

@@ -13,14 +13,15 @@
 
 ## Manifest 格式
 
-每个元素的顶层字段：id、name、submit、editSubmit、poll。
+每个元素的顶层字段：id、name、submit、editSubmit、poll、modelOverrides。
 id 是服务商的唯一标识，用于 profiles 中的 provider 字段引用，建议使用 custom-{英文短名} 格式。
 submit 是文生图提交配置，必填。
 editSubmit 是图生图或局部重绘提交配置，可选。如果文生图和图生图使用同一个 JSON 接口，可以省略 editSubmit，并在 submit.body 中加入 image_urls。
 poll 是异步任务查询配置，可选；同步接口不要写 poll。
+modelOverrides 是可选数组，每项包含 models（模型 ID 数组，支持 * 通配符）、submit、可选 editSubmit 和 poll。按顺序使用首个匹配项的整套提交映射，未提供 poll 时沿用顶层 poll。
 
 submit/editSubmit 字段：
-- path：接口路径，不带开头斜杠，不带 /v1/ 前缀，例如 images/generations 或 tasks/{task_id}。
+- path：接口路径，不带开头斜杠，不带 /v1/ 前缀，支持 {model} 占位符，例如 images/generations 或 generateTask/{model}。任务查询路径如 tasks/{task_id} 配置在 poll.path。
 - method：GET 或 POST，默认 POST。
 - contentType：json 或 multipart。
 - query：提交 query 参数对象，可选，例如 {"async":"true"}。
@@ -30,9 +31,9 @@ submit/editSubmit 字段：
 - result：同步响应图片提取规则。
 
 poll 字段：
-- path：任务查询路径，使用 {task_id} 占位，例如 images/tasks/{task_id} 或 tasks/{task_id}。
+- path：接口路径，不带开头斜杠，不带 /v1/ 前缀，支持 {task_id}、{taskId} 和 {model} 占位符，例如 images/tasks/{task_id}、tasks/{task_id} 或 statusTask/{model}。
 - method：GET 或 POST，默认 GET。
-- query：查询 query 参数对象，可选。
+- query：查询 query 参数对象，可选，值支持 {task_id}、{taskId} 和 {model} 占位符。
 - intervalSeconds：轮询间隔秒数。
 - statusPath：查询响应状态字段路径。
 - successValues：成功状态值数组。
@@ -43,11 +44,19 @@ poll 字段：
 result 字段：
 - imageUrlPaths：图片 URL 路径数组，支持 * 通配数组。例如 data.*.url、data.result.images.*.url.*。
 - b64JsonPaths：base64 图片路径数组，支持 * 通配数组。例如 data.*.b64_json。
+- 路径经过 JSON 字符串时自动解析，例如 data.resultJson.resultUrls.*。
 
 body 模板变量：
 - $profile.model：用户在设置里填写的模型 ID。
 - $prompt：当前提示词。
+- $mode：没有参考图时为 text-to-image，有参考图时为 image-to-image。
+- $params.aspect_ratio、$params.resolution：Gemini（含 Nano Banana）、Grok 图像模型的比例和分辨率；这些模型的 $params.size 也为比例。
+- $params.google_search、$params.image_search：Google Search、Image Search 开关（布尔值）；映射后可在 Gemini 模型的“搜索”参数中切换。
+- $params.thinking_level：Gemini 的思考等级，默认不发送；映射后可在参数栏中选择。
+- $resolution.upper、$resolution.lower：分辨率的大写、小写形式，例如 2K、2k。
+- $params.quality：Grok Imagine Image 2.0 支持 auto、low 或 medium；Gemini 和其余 Grok 图像模型省略此值。
 - $params.size、$params.quality、$params.output_format、$params.output_compression、$params.moderation、$params.n：应用内参数。
+- $params.n：用户选择的生成数量。
 - $params.complexity、$params.frame_count、$params.frame_duration_ms、$params.svg：GPT Image 2.6 参数，只在模型 ID 为 GPT Image 2.6 及以上时可用；复杂度选 auto 时省略 complexity，帧参数只在输出 GIF 时传入，svg 只在输出 SVG 时传入，值为 {"model":"SVG 编写模型 ID"}。
 - $params.background：API 原生透明背景参数；启用时为 `"transparent"`，未启用时自动省略。
 - $inputImages.dataUrls：参考图 data URL 数组；没有参考图时会自动省略该字段。

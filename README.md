@@ -12,7 +12,7 @@
 
 **基于 OpenAI GPT Image API 的图片生成与编辑工具**
 
-提供简洁精美的 Web UI，支持 OpenAI / OpenAI 兼容接口、sub2api（异步）、fal.ai 与可导入的自定义 HTTP 供应商。<br>
+提供简洁精美的 Web UI，支持 OpenAI / OpenAI 兼容接口、Google、xAI、sub2api（异步）、fal.ai 与可导入的自定义 HTTP 供应商。<br>
 支持文本生图、参考图、画板标注与遮罩编辑，数据纯本地化存储，带来流畅的历史记录与参数管理体验。
 
 <br>
@@ -163,7 +163,8 @@
 ### 🔌 多配置与供应商增强
 - **多配置管理**：保存多个 API 配置（供应商、API Key、模型等）并快速切换；可一键复制当前配置到列表底部，配置和供应商列表均可拖拽排序。
 - **多模型切换**：模型 ID 可用逗号分隔填写多个（如 `gpt-image-2.6-sunburst, gpt-image-2`），在首页切换，按配置分别记住；预置配置、URL 传参与导入导出均支持此写法。
-- **多供应商接入**：内置 OpenAI 兼容接口（`Images API` / `Responses API`）、sub2api（异步）、fal.ai（队列），并可通过 JSON 导入自定义 HTTP 供应商（同步/异步任务）。
+- **多供应商接入**：内置 OpenAI 兼容接口（`Images API` / `Responses API`）、Google、xAI、sub2api（异步）、fal.ai（队列），并可通过 JSON 导入自定义 HTTP 供应商（同步/异步任务）。
+- **Gemini / Grok 图像生成**：支持官方接口和 OpenAI 兼容接口（Images API），按模型 ID 切换比例、分辨率和质量参数。多轮编辑可使用 Agent 混合模式。
 - **Agent 模式独立 API 配置**：Agent 可使用原生（Responses API）或混合（Responses API + Images API）的独立配置，适配不支持 `image_generation` 工具的供应商或模型。
 - **API 代理**：OpenAI 兼容接口与 fal.ai 均可配置自定义代理；OpenAI 兼容接口还可走同源 `/api-proxy/`，由 Docker 或本地开发服务器转发，绕开浏览器 CORS 限制。
 - **Codex CLI 兼容模式**：上游为 Codex CLI 时，按其实际支持的参数发送请求，并把多图生成拆成并发单图。
@@ -516,7 +517,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 顶层字段：
 
 - **`profiles`**（数组）：预置的 API 配置列表，每项对应用户配置列表中的一个配置。
-- **`customProviders`**（可选数组）：自定义供应商定义，见下文 [自定义供应商](#custom-provider-config)。只使用内置供应商（OpenAI 兼容、sub2api（异步）、fal.ai）时可省略。
+- **`customProviders`**（可选数组）：自定义供应商定义，见下文 [自定义供应商](#custom-provider-config)。只使用内置供应商（OpenAI 兼容、Google、xAI、sub2api（异步）、fal.ai）时可省略。
 - **`agent`**（可选对象）：Agent 的独立 API 模式及文本、图像配置选择，见下方示例。
 
 `profiles` 中每项的字段：
@@ -526,7 +527,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 | `id` | 定向更新时填写 | 配置标识，见表下说明。 |
 | `name` | 是 | 配置名称。 |
 | `description` | 否 | 配置说明，支持 Markdown，显示在“当前配置”下方的说明卡片中。 |
-| `provider` | 是 | `"openai"`（OpenAI 兼容）、`"sb2api-async"`（sub2api 异步）、`"fal"`（fal.ai），或 `customProviders` 中的供应商 ID。 |
+| `provider` | 是 | `"openai"`（OpenAI 兼容）、`"google"`（Google）、`"xai"`（xAI）、`"sb2api-async"`（sub2api 异步）、`"fal"`（fal.ai），或 `customProviders` 中的供应商 ID。 |
 | `baseUrl` | 是 | API 基础地址，末尾 `/` 的规则见表下说明；fal.ai 可留空。 |
 | `apiKey` | 否 | API Key。建议省略，由用户自行填写。 |
 | `model` | 是 | 模型 ID。多个模型以逗号分隔，默认使用第一个，用户可在首页切换。 |

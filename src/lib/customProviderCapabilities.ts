@@ -1,4 +1,5 @@
 import type { CustomProviderDefinition, CustomProviderSubmitMapping } from '../types'
+import { resolveCustomProviderModel } from './imageProviderMappings'
 
 function hasNativeTransparentBackgroundMapping(value: unknown): boolean {
   if (value === '$params.background') return true
@@ -11,7 +12,9 @@ function customProviderSubmitSupportsNativeTransparentBackground(mapping: Custom
   return hasNativeTransparentBackgroundMapping(mapping.body) || hasNativeTransparentBackgroundMapping(mapping.query)
 }
 
-export function customProviderSupportsNativeTransparentBackground(provider: CustomProviderDefinition): boolean {
-  if (!customProviderSubmitSupportsNativeTransparentBackground(provider.submit)) return false
-  return !provider.editSubmit || customProviderSubmitSupportsNativeTransparentBackground(provider.editSubmit)
+export function customProviderSupportsNativeTransparentBackground(provider: CustomProviderDefinition, model?: string): boolean {
+  // 保存配置时保留任一模型可用的偏好，请求时按实际模型判断。
+  const mappings = model === undefined ? [provider, ...provider.modelOverrides ?? []] : [resolveCustomProviderModel(provider, model)]
+  return mappings.some((mapping) => customProviderSubmitSupportsNativeTransparentBackground(mapping.submit)
+    && (!mapping.editSubmit || customProviderSubmitSupportsNativeTransparentBackground(mapping.editSubmit)))
 }

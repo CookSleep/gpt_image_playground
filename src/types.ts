@@ -15,7 +15,7 @@ export const ZIP_DOWNLOAD_ROUTE_VALUES = [
 ] as const
 export type ZipDownloadRoute = typeof ZIP_DOWNLOAD_ROUTE_VALUES[number]
 export const DEFAULT_ZIP_DOWNLOAD_ROUTES: ZipDownloadRoute[] = ['task-selection', 'favorite-collection-selection']
-export type BuiltInApiProvider = 'openai' | 'sb2api-async' | 'fal'
+export type BuiltInApiProvider = 'openai' | 'google' | 'xai' | 'sb2api-async' | 'fal'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
 export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
@@ -68,6 +68,13 @@ export interface CustomProviderDefinition {
   submit: CustomProviderSubmitMapping
   editSubmit?: CustomProviderSubmitMapping
   poll?: CustomProviderPollMapping
+  /** 按顺序匹配模型 ID，支持 * 通配符；匹配后使用整套接口映射 */
+  modelOverrides?: Array<{
+    models: string[]
+    submit: CustomProviderSubmitMapping
+    editSubmit?: CustomProviderSubmitMapping
+    poll?: CustomProviderPollMapping
+  }>
 }
 
 export interface ApiProfile {
@@ -218,6 +225,11 @@ export interface ParamDisabledReasons {
 
 export interface TaskParams {
   size: string
+  aspect_ratio?: string
+  resolution?: string
+  google_search?: boolean
+  image_search?: boolean
+  thinking_level?: 'auto' | 'minimal' | 'low' | 'medium' | 'high'
   quality: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   /** auto 表示不发送，由模型使用默认值 */
   complexity: typeof IMAGE_COMPLEXITIES[number]
@@ -280,7 +292,13 @@ export interface AgentInputDraft {
 
 export type TaskStatus = 'running' | 'done' | 'error'
 
+export interface ImageSearchGrounding {
+  renderedContent?: string
+  sources: Array<{ uri: string; title: string }>
+}
+
 export interface TaskRecord {
+  searchGrounding?: ImageSearchGrounding[]
   id: string
   prompt: string
   params: TaskParams

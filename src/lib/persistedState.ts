@@ -82,6 +82,11 @@ function normalizeParams(value: unknown, fallback: TaskParams): TaskParams {
   if (!isRecord(value)) return fallback
   return {
     size: typeof value.size === 'string' ? value.size : fallback.size,
+    aspect_ratio: typeof value.aspect_ratio === 'string' ? value.aspect_ratio : fallback.aspect_ratio,
+    resolution: typeof value.resolution === 'string' ? value.resolution : fallback.resolution,
+    google_search: typeof value.google_search === 'boolean' ? value.google_search : fallback.google_search,
+    image_search: typeof value.image_search === 'boolean' ? value.image_search : fallback.image_search,
+    thinking_level: value.thinking_level === 'auto' || value.thinking_level === 'minimal' || value.thinking_level === 'low' || value.thinking_level === 'medium' || value.thinking_level === 'high' ? value.thinking_level : fallback.thinking_level,
     quality: value.quality === 'auto' || value.quality === 'low' || value.quality === 'medium' || value.quality === 'high' || value.quality === 'xhigh' || value.quality === 'max'
       ? value.quality
       : fallback.quality,

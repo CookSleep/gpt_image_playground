@@ -2,6 +2,7 @@ import { DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type 
 import { normalizeBaseUrl } from './api'
 import {
   DEFAULT_FAL_BASE_URL,
+  NATIVE_IMAGE_PROVIDERS,
   DEFAULT_FAL_MODEL,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_RESPONSES_MODEL,
@@ -33,7 +34,7 @@ export function newId(prefix: string) {
 }
 
 export function isAsyncCustomProvider(provider: CustomProviderDefinition | null | undefined) {
-  return Boolean(provider?.poll || provider?.submit.taskIdPath || provider?.editSubmit?.taskIdPath)
+  return Boolean(provider?.poll || provider?.submit.taskIdPath || provider?.editSubmit?.taskIdPath || provider?.modelOverrides?.some((item) => item.poll || item.submit.taskIdPath || item.editSubmit?.taskIdPath))
 }
 
 export function isProfileApiProxyEligible(settings: AppSettings, profile: ApiProfile) {
@@ -53,15 +54,18 @@ export function prepareSettingsForCommit(draft: AppSettings): AppSettings {
   const apiProxyLocked = isApiProxyLocked(proxyConfig)
   const defaultProfileId = getDefaultPresetProfileId() ?? getDefaultApiProfileId(draft)
   const profiles = draft.profiles.map((profile) => {
+    const nativeProvider = profile.provider === 'google' || profile.provider === 'xai' ? NATIVE_IMAGE_PROVIDERS[profile.provider] : null
     const nextApiProxy = isProfileApiProxyEligible(draft, profile) && apiProxyAvailable ? (apiProxyLocked || profile.apiProxy) : false
     const shouldKeepEmptyBaseUrl = profile.provider !== 'fal' && nextApiProxy && !profile.baseUrl.trim()
     const emptyBaseUrlFallback = profile.id === defaultProfileId
       ? getDefaultPresetBaseUrl()
       : DEFAULT_SETTINGS.baseUrl
-    const baseUrl = profile.provider === 'fal'
+    const baseUrl = profile.provider === 'google'
+      ? `${(profile.baseUrl.trim() || NATIVE_IMAGE_PROVIDERS.google.baseUrl).replace(/\/+$/, '')}/`
+      : profile.provider === 'fal'
       ? profile.baseUrl.trim().replace(/\/+$/, '') || (profile.id === defaultProfileId ? '' : DEFAULT_FAL_BASE_URL)
-      : shouldKeepEmptyBaseUrl ? '' : normalizeBaseUrl(profile.baseUrl.trim() || emptyBaseUrlFallback)
-    const defaultModel = profile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(profile.apiMode)
+      : shouldKeepEmptyBaseUrl ? '' : normalizeBaseUrl(profile.baseUrl.trim() || nativeProvider?.baseUrl || emptyBaseUrlFallback)
+    const defaultModel = nativeProvider?.model ?? (profile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(profile.apiMode))
     return {
       ...profile,
       name: profile.name.trim() || (profile.id === defaultProfileId ? '默认' : '新配置'),

@@ -18,6 +18,7 @@ import {
   isDataUrl,
   isHttpUrl,
   mergeActualParams,
+  mergeConcurrentApiResults,
   maybeAppendTransparentBackgroundHint,
   maybeAppendImageToolDroppedHint,
   MIME_MAP,
@@ -25,7 +26,9 @@ import {
   pickActualParams,
   PROMPT_REWRITE_GUARD_PREFIX,
 } from './imageApiShared'
-import { getImageGenerationModel, isVectorOrAnimatedFormat } from './imageModels'
+import { getImageGenerationModel, getImageModelFamily, isVectorOrAnimatedFormat, usesGrokSizeParams } from './imageModels'
+import { getImageModelParams } from './imageModelParams'
+import { OPENAI_IMAGE_TASK_PROVIDER, resolveCustomProviderModel } from './imageProviderMappings'
 import { apiFetch, FetchConnectError } from './platform'
 import { isEventStreamResponse, readJsonServerSentEvents } from './serverSentEvents'
 import { prependCodexCliSizePrompt } from './size'
@@ -65,8 +68,12 @@ function getAllByPath(source: unknown, path: string | undefined): unknown[] {
 
   for (const key of parts) {
     const next: unknown[] = []
-    for (const item of current) {
+    for (let item of current) {
       if (item == null) continue
+      // 部分任务接口把结果对象编码成 JSON 字符串。
+      if (typeof item === 'string' && /^[\[{]/.test(item.trim())) {
+        try { item = JSON.parse(item) } catch { continue }
+      }
       if (key === '*') {
         if (Array.isArray(item)) next.push(...item)
         else if (typeof item === 'object') next.push(...Object.values(item as Record<string, unknown>))
@@ -103,10 +110,6 @@ function isRecordValue(value: unknown): value is Record<string, unknown> {
 function getStringValue(source: Record<string, unknown>, key: string): string | undefined {
   const value = source[key]
   return typeof value === 'string' && value.trim() ? value : undefined
-}
-
-function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
 }
 
 function getNumberValue(source: Record<string, unknown>, key: string): number | undefined {
@@ -439,7 +442,13 @@ async function parseResponsesApiStreamResponse(
 }
 
 export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile: ApiProfile, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
+  const family = getImageModelFamily(profile)
+  if (family) {
+    if (opts.maskDataUrl) throw new Error('此模型不支持遮罩编辑，请使用参考图和提示词描述修改内容')
+    opts = { ...opts, nativeTransparentBackground: false }
+  }
   if (customProvider) {
+    customProvider = resolveCustomProviderModel(customProvider, profile.model)
     const n = opts.params.n > 0 ? opts.params.n : 1
     const submitMapping = opts.inputImageDataUrls.length > 0 && customProvider.editSubmit
       ? customProvider.editSubmit
@@ -450,11 +459,70 @@ export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile
     return callCustomHttpImageApi(opts, profile, customProvider)
   }
 
+  if (family) return callModelImagesApi(opts, profile)
+
   // SVG 和 GIF 不支持流式和中间图
   const requestProfile = isVectorOrAnimatedFormat(opts.params.output_format) ? { ...profile, streamImages: false } : profile
   return requestProfile.apiMode === 'responses'
     ? callResponsesImageApi(opts, requestProfile)
     : callImagesApi(opts, requestProfile)
+}
+
+async function callModelImagesApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
+  const family = getImageModelFamily(profile)
+  const params = getImageModelParams(profile, opts.params)
+  const isEdit = opts.inputImageDataUrls.length > 0
+  const grokSizeParams = usesGrokSizeParams(profile)
+  const body: Record<string, unknown> = { model: profile.model, prompt: opts.prompt, n: opts.params.n > 0 ? opts.params.n : 1 }
+  if (family === 'gemini') {
+    body.size = params.aspect_ratio
+    body.resolution = params.resolution
+    if (isEdit) body.image_urls = opts.inputImageDataUrls
+  } else if (grokSizeParams) {
+    if (params.aspect_ratio !== 'auto') body.size = params.aspect_ratio
+    if (isEdit) {
+      const urls = opts.inputImageUrls?.filter(isHttpUrl) ?? []
+      if (urls.length !== opts.inputImageDataUrls.length) throw new Error('此模型只接受链接参考图，请通过图片链接添加参考图')
+      if (urls.length > 5) throw new Error('此模型每次最多接受 5 张参考图')
+      body.image_urls = urls
+    }
+  } else {
+    if (params.aspect_ratio !== 'auto') body.aspect_ratio = params.aspect_ratio
+    body.resolution = params.resolution?.toLowerCase()
+    if (params.quality !== undefined) body.quality = params.quality
+    const images = opts.inputImageDataUrls.map((url) => ({ type: 'image_url', url }))
+    if (images.length === 1) body.image = images[0]
+    if (images.length > 1) body.images = images
+    if (profile.provider === 'xai' && images.length > 5) throw new Error('xAI 每次最多接受 5 张参考图')
+  }
+  if (profile.responseFormatB64Json) body.response_format = 'b64_json'
+  assertImageInputPayloadSize(opts.inputImageDataUrls.reduce((sum, url) => sum + url.length, 0))
+  const proxyConfig = readClientDevProxyConfig()
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(createRequestTimeoutError(profile.timeout)), profile.timeout * 1000)
+  try {
+    const response = await apiFetch(buildApiUrl(profile.baseUrl, family === 'grok' && !grokSizeParams && isEdit ? 'images/edits' : 'images/generations', proxyConfig, profile.provider === 'openai' && shouldUseApiProxy(profile.apiProxy, proxyConfig)), {
+      method: 'POST',
+      headers: { ...createRequestHeaders(profile), 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(await getApiErrorMessage(response))
+    const payload = await response.json()
+    const taskId = getByPath(payload, 'data.0.task_id') ?? (getByPath(payload, 'data.object') === 'generation.task' ? getByPath(payload, 'data.id') : undefined)
+    if (typeof taskId === 'string' && taskId.trim()) {
+      opts.onCustomTaskEnqueued?.({ taskId })
+      clearTimeout(timeoutId)
+      return await pollCustomTaskResult(profile, OPENAI_IMAGE_TASK_PROVIDER.poll!, taskId, family === 'grok' ? 'image/jpeg' : 'image/png', controller.signal)
+    }
+    return await parseImagesApiResponse(payload, family === 'grok' ? 'image/jpeg' : 'image/png', controller.signal)
+  } catch (err) {
+    console.warn('图像请求失败', err)
+    throw err
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 async function callImagesApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
@@ -722,13 +790,16 @@ function createCustomProviderContext(opts: CallApiOptions, profile: ApiProfile) 
     ...(profile.codexCli ? { size: undefined, quality: undefined } : {}),
     ...(opts.nativeTransparentBackground ? { background: 'transparent' } : {}),
   }
+  const modelParams = getImageModelFamily(profile) ? getImageModelParams(profile, opts.params) : null
 
   const inputImageUrls = opts.inputImageUrls?.filter(isHttpUrl) ?? []
 
   return {
     profile,
     prompt,
-    params,
+    params: { ...params, ...(modelParams ? { ...modelParams, size: modelParams.aspect_ratio } : {}) },
+    mode: opts.inputImageDataUrls.length ? 'image-to-image' : 'text-to-image',
+    resolution: modelParams?.resolution ? { upper: modelParams.resolution, lower: modelParams.resolution.toLowerCase() } : undefined,
     inputImages: {
       dataUrls: opts.inputImageDataUrls.length ? opts.inputImageDataUrls : undefined,
       base64: opts.inputImageDataUrls.length ? opts.inputImageDataUrls.map((url) => url.replace(/^data:[^;]+;base64,/, '')) : undefined,
@@ -841,7 +912,7 @@ async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: C
   }
   const method = mapping.method ?? 'POST'
   const contentType = mapping.contentType ?? 'json'
-  const path = appendQuery(mapping.path, renderQuery(mapping.query, context))
+  const path = appendQuery(mapping.path.replace(/\{model\}/g, encodeURIComponent(profile.model)), renderQuery(mapping.query, context))
   const headers: Record<string, string> = { ...requestHeaders }
   let body: BodyInit | undefined
 
@@ -901,10 +972,11 @@ async function pollCustomTaskResult(
       await new Promise((resolve) => setTimeout(resolve, (poll.intervalSeconds ?? 5) * 1000))
     }
 
-    const taskPath = appendQuery(buildTaskPath(poll.path, taskId), poll.query)
+    const query = poll.query ? Object.fromEntries(Object.entries(poll.query).map(([key, value]) => [key, value.replace(/\{task_id\}|\{taskId\}/g, () => taskId).replace(/\{model\}/g, () => profile.model)])) : undefined
+    const taskPath = appendQuery(buildTaskPath(poll.path.replace(/\{model\}/g, encodeURIComponent(profile.model)), taskId), query)
     let taskPayload: unknown
     try {
-      const taskResponse = await apiFetch(buildApiUrl(profile.baseUrl, taskPath, proxyConfig, false), {
+      const taskResponse = await apiFetch(buildApiUrl(profile.baseUrl, taskPath, proxyConfig, profile.provider === 'openai' && shouldUseApiProxy(profile.apiProxy, proxyConfig)), {
         method: poll.method ?? 'GET',
         headers: requestHeaders,
         cache: 'no-store',
@@ -949,6 +1021,7 @@ export async function getCustomQueuedImageResult(
   taskId: string,
   params: TaskParams,
 ): Promise<CallApiResult> {
+  customProvider = resolveCustomProviderModel(customProvider, profile.model)
   if (!customProvider.poll) throw new Error('自定义异步任务缺少 poll 配置')
   const mime = MIME_MAP[params.output_format] || 'image/png'
   return pollCustomTaskResult(profile, customProvider.poll, taskId, mime)
@@ -989,37 +1062,6 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
     return pollCustomTaskResult(profile, customProvider.poll, taskId, mime, controller.signal)
   } finally {
     if (timeoutId) clearTimeout(timeoutId)
-  }
-}
-
-function mergeConcurrentApiResults(results: PromiseSettledResult<CallApiResult>[]): CallApiResult {
-  const successfulResults = results
-    .filter((result): result is PromiseFulfilledResult<CallApiResult> => result.status === 'fulfilled')
-    .map((result) => result.value)
-  if (!successfulResults.length) {
-    const firstError = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')!
-    throw firstError.reason
-  }
-
-  const images = successfulResults.flatMap((result) => result.images)
-  const actualParamsList = successfulResults.flatMap((result) =>
-    result.actualParamsList?.length ? result.actualParamsList : result.images.map(() => result.actualParams),
-  )
-  const revisedPrompts = successfulResults.flatMap((result) =>
-    result.revisedPrompts?.length ? result.revisedPrompts : result.images.map(() => undefined),
-  )
-  const rawImageUrls = successfulResults.flatMap((result) => result.rawImageUrls ?? [])
-  const failedRequests = results.flatMap((result, requestIndex) =>
-    result.status === 'rejected' ? [{ requestIndex, error: getErrorMessage(result.reason) }] : [],
-  )
-
-  return {
-    images,
-    actualParams: mergeActualParams(successfulResults[0].actualParams ?? {}, { n: images.length }),
-    actualParamsList,
-    revisedPrompts,
-    ...(rawImageUrls.length ? { rawImageUrls } : {}),
-    ...(failedRequests.length ? { failedRequests } : {}),
   }
 }
 
