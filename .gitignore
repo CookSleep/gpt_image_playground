@@ -5,7 +5,6 @@ dev-proxy.config.json
 .env.local
 .env.*.local
 .claude/
-/AGENTS.local.md
 src-tauri/target/
 src-tauri/gen/schemas/
 src-tauri/dev-data/

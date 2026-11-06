@@ -2,8 +2,6 @@
 
 本文件定义 AI 编码助手在此仓库中应遵循的工作方式。
 
-开始工作时，读取本机补充说明 `AGENTS.local.md`（如存在）。
-
 ## 项目概况
 
 - React 19 + Vite + TypeScript 前端应用，使用 Zustand 状态管理、Tailwind CSS 样式。
