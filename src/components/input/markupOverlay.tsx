@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { ensureImageCached, getCachedImage } from '../../lib/imageCache'
 
-/** 叠加在参考图缩略图上的 markup 标注层，与底图使用相同的裁切方式 */
-export default function MarkupOverlay({ imageId }: { imageId: string }) {
+/** 叠加在参考图上的 markup 标注层，与底图使用相同的裁切方式 */
+export default function MarkupOverlay({ imageId, fit = 'cover' }: { imageId: string, fit?: 'cover' | 'contain' }) {
   const [src, setSrc] = useState(() => getCachedImage(imageId))
 
   useEffect(() => {
@@ -17,5 +17,5 @@ export default function MarkupOverlay({ imageId }: { imageId: string }) {
   }, [imageId])
 
   if (!src) return null
-  return <img src={src} alt="" className="pointer-events-none absolute inset-0 h-full w-full object-cover" />
+  return <img src={src} alt="" className={`pointer-events-none absolute inset-0 h-full w-full ${fit === 'contain' ? 'object-contain' : 'object-cover'}`} />
 }

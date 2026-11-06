@@ -426,9 +426,10 @@ interface AppState {
   setDetailTaskId: (id: string | null) => void
   lightboxImageId: string | null
   lightboxImageList: string[]
+  lightboxMarkupIds: Record<string, string | undefined>
   /** 预览参考图时对应的提示词，按图片在列表中的位置取其评论；为空时不显示评论 */
   lightboxCommentPrompt: string | null
-  setLightboxImageId: (id: string | null, list?: string[], commentPrompt?: string | null) => void
+  setLightboxImageId: (id: string | null, list?: string[], commentPrompt?: string | null, markupIds?: Record<string, string | undefined>) => void
   /** 画板；baseImageSrc 为画布底图，replaceImageId 为完成后要替换的参考图 */
   sketchBoard: SketchBoardRequest | null
   setSketchBoard: (board: SketchBoardRequest | null) => void
@@ -1073,12 +1074,14 @@ export const useStore = create<AppState>()(
       lightboxImageId: null,
       lightboxImageList: [],
       lightboxCommentPrompt: null,
-      setLightboxImageId: (lightboxImageId, list, commentPrompt = null) => {
+      lightboxMarkupIds: {},
+      setLightboxImageId: (lightboxImageId, list, commentPrompt = null, markupIds = {}) => {
         if (lightboxImageId) dismissAllTooltips()
         set({
           lightboxImageId,
           lightboxImageList: list ?? (lightboxImageId ? [lightboxImageId] : []),
           lightboxCommentPrompt: lightboxImageId ? commentPrompt : null,
+          lightboxMarkupIds: lightboxImageId ? markupIds : {},
         })
       },
       sketchBoard: null,
@@ -1175,6 +1178,7 @@ export const useStore = create<AppState>()(
           lightboxImageId: null,
           lightboxImageList: [],
           lightboxCommentPrompt: null,
+          lightboxMarkupIds: {},
           sketchBoard: null,
           favoritePickerTaskIds: null,
           isManageCollectionsModalOpen: false,

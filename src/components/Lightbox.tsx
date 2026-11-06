@@ -8,6 +8,7 @@ import { suppressGlobalClicks } from '../lib/clickSuppression'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { getImageComments } from '../lib/promptImageMentions'
 import { CommentPin } from './CommentMarks'
+import MarkupOverlay from './input/markupOverlay'
 import { EditIcon, RefreshIcon } from './icons'
 
 const MIN_SCALE = 1
@@ -30,6 +31,7 @@ export default function Lightbox() {
   const maskDraft = useStore((s) => s.maskDraft)
   const tasks = useStore((s) => s.tasks)
   const inputImages = useStore((s) => s.inputImages)
+  const lightboxMarkupIds = useStore((s) => s.lightboxMarkupIds)
   const lightboxCommentPrompt = useStore((s) => s.lightboxCommentPrompt)
   const replaceInputImage = useStore((s) => s.replaceInputImage)
   const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
@@ -140,8 +142,8 @@ export default function Lightbox() {
   const goTo = useCallback((idx: number) => {
     if (lightboxImageList.length === 0) return
     const wrapped = ((idx % lightboxImageList.length) + lightboxImageList.length) % lightboxImageList.length
-    setLightboxImageId(lightboxImageList[wrapped], lightboxImageList, lightboxCommentPrompt)
-  }, [lightboxCommentPrompt, lightboxImageList, setLightboxImageId])
+    setLightboxImageId(lightboxImageList[wrapped], lightboxImageList, lightboxCommentPrompt, lightboxMarkupIds)
+  }, [lightboxCommentPrompt, lightboxImageList, lightboxMarkupIds, setLightboxImageId])
 
   const goPrev = useCallback(() => { if (showNav) goTo(currentIndex - 1) }, [showNav, currentIndex, goTo])
   const goNext = useCallback(() => { if (showNav) goTo(currentIndex + 1) }, [showNav, currentIndex, goTo])
@@ -186,12 +188,12 @@ export default function Lightbox() {
 
       replaceInputImage(targetIdx, image)
       const nextList = lightboxImageList.map((id) => id === targetId ? image.id : id)
-      setLightboxImageId(image.id, nextList, lightboxCommentPrompt)
+      setLightboxImageId(image.id, nextList, lightboxCommentPrompt, lightboxMarkupIds)
       showToast('参考图已替换', 'success')
     } catch (err) {
       showToast(`参考图替换失败：${err instanceof Error ? err.message : String(err)}`, 'error')
     }
-  }, [lightboxCommentPrompt, lightboxImageList, replaceInputImage, setLightboxImageId, showToast])
+  }, [lightboxCommentPrompt, lightboxImageList, lightboxMarkupIds, replaceInputImage, setLightboxImageId, showToast])
 
   const editInputImage = useCallback(() => {
     if (!lightboxImageId || !isInputImage || !src) return
@@ -276,6 +278,7 @@ export default function Lightbox() {
       <LightboxInner
         src={src}
         comments={comments}
+        markupImageId={lightboxMarkupIds[lightboxImageId]}
         imageId={lightboxImageId}
         maskPreviewSrc={maskPreviewSrc}
         onClose={close}
@@ -303,6 +306,7 @@ interface LightboxInnerProps {
   src: string
   comments: ImageComment[]
   imageId: string
+  markupImageId?: string
   maskPreviewSrc?: string
   onClose: () => void
   showNav: boolean
@@ -316,7 +320,7 @@ interface LightboxInnerProps {
 }
 
 /** 内部组件：保证挂载时 DOM 已经存在，所有 ref / effect 都可靠 */
-function LightboxInner({ src, comments, imageId, maskPreviewSrc, onClose, showNav, currentIndex, total, onPrev, onNext, showInputActions, onReplace, onEdit }: LightboxInnerProps) {
+function LightboxInner({ src, comments, imageId, markupImageId, maskPreviewSrc, onClose, showNav, currentIndex, total, onPrev, onNext, showInputActions, onReplace, onEdit }: LightboxInnerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const openedAtRef = useRef(Date.now())
 
@@ -793,6 +797,7 @@ function LightboxInner({ src, comments, imageId, maskPreviewSrc, onClose, showNa
               alt=""
             />
           )}
+          {markupImageId && <MarkupOverlay key={markupImageId} imageId={markupImageId} fit="contain" />}
           {comments.map((comment, idx) => (
             // 气泡尖角落在评论位置，并抵消外层缩放，保持屏幕上的大小不变；靠右的评论文字放到气泡左侧，避免伸出图片
             <div

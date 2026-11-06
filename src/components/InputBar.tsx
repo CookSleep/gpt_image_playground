@@ -1508,7 +1508,7 @@ export default function InputBar() {
           }`}
           onClick={() => {
             if (suppressImageClickRef.current) return
-            setLightboxImageId(img.id, inputImages.map((i) => i.id), prompt)
+            setLightboxImageId(img.id, inputImages.map((i) => i.id), prompt, Object.fromEntries(inputImages.map((i) => [i.id, i.markupImageId])))
           }}
         >
           {displaySrc && (
@@ -1520,7 +1520,7 @@ export default function InputBar() {
               />
             </div>
           )}
-          {img.markupImageId && !isMaskTarget && <MarkupOverlay imageId={img.markupImageId} />}
+          {img.markupImageId && <MarkupOverlay key={img.markupImageId} imageId={img.markupImageId} />}
           {isMaskTarget && (
             <span className="absolute left-1 top-1 rounded bg-blue-500/90 px-1.5 py-0.5 text-[8px] leading-none text-white font-bold tracking-wider backdrop-blur-sm z-10 pointer-events-none">
               MASK
@@ -1534,7 +1534,7 @@ export default function InputBar() {
             className="absolute inset-0 w-full h-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus:outline-none border-none"
             onClick={(e) => {
               e.stopPropagation()
-              setLightboxImageId(img.id, inputImages.map((i) => i.id), prompt)
+              setLightboxImageId(img.id, inputImages.map((i) => i.id), prompt, Object.fromEntries(inputImages.map((i) => [i.id, i.markupImageId])))
             }}
             title="查看"
             aria-label="查看参考图"

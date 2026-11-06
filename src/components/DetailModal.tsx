@@ -18,6 +18,7 @@ import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashI
 
 import ViewportTooltip from './ViewportTooltip'
 import { CommentBadge } from './CommentMarks'
+import MarkupOverlay from './input/markupOverlay'
 
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
@@ -925,15 +926,16 @@ export default function DetailModal() {
                   <div className="flex gap-2 flex-wrap">
                     {allInputImageIds.map((imgId, idx) => {
                       const isMaskTarget = imgId === maskTargetId
+                      const markupImageId = idx === 0 ? task.markupImageId : null
                       const commentCount = getImageComments(task.prompt, idx).length
                       const displaySrc = (isMaskTarget && maskPreviewSrc) ? maskPreviewSrc : (imageSrcs[imgId] || '')
                       return (
                         <div key={imgId} className="relative group inline-block">
                           <div
                             className={`relative w-16 h-16 rounded-lg overflow-hidden border cursor-pointer hover:opacity-80 transition ${
-                              isMaskTarget || commentCount > 0 ? 'border-blue-500 border-2 shadow-sm' : 'border-gray-200 dark:border-white/[0.08]'
+                              isMaskTarget || commentCount > 0 || markupImageId ? 'border-blue-500 border-2 shadow-sm' : 'border-gray-200 dark:border-white/[0.08]'
                             }`}
-                            onClick={() => setLightboxImageId(imgId, allInputImageIds, task.prompt)}
+                            onClick={() => setLightboxImageId(imgId, allInputImageIds, task.prompt, { [allInputImageIds[0]]: task.markupImageId ?? undefined })}
                           >
                             {displaySrc && (
                               <img
@@ -943,6 +945,7 @@ export default function DetailModal() {
                                 alt=""
                               />
                             )}
+                            {markupImageId && <MarkupOverlay key={markupImageId} imageId={markupImageId} />}
                             {isMaskTarget && (
                               <span className="absolute left-1 top-1 rounded bg-blue-500/90 px-1.5 py-0.5 text-[8px] leading-none text-white font-bold tracking-wider backdrop-blur-sm z-10 pointer-events-none">
                                 MASK
@@ -1068,7 +1071,7 @@ export default function DetailModal() {
             </div>
 
             {/* 时间 */}
-            <div className="text-xs text-gray-400 dark:text-gray-500 mb-4">
+            <div className={`text-xs text-gray-400 dark:text-gray-500 ${isTauri ? 'mb-2' : 'mb-4'}`}>
               <span>创建于 {formatTime(task.createdAt)}</span>
               {task.startedAt != null && task.startedAt > task.createdAt && (
                 <span className="relative ml-1 inline-flex align-middle">
@@ -1092,10 +1095,10 @@ export default function DetailModal() {
 
             {/* 仅客户端：任务 ID 和图片 ID，可复制给使用命令行的 AI 工具，让它直接引用图片而不必重新上传 */}
             {isTauri && (
-              <div className="mb-4 space-y-1 text-xs text-gray-400 dark:text-gray-500">
+              <div className="mb-2 space-y-0.5 text-xs leading-5 text-gray-400 dark:text-gray-500">
                 {[['任务 ID', task.id], ['图片 ID', currentOutputImageId]].filter(([, id]) => id).map(([label, id]) => (
-                  <div key={label} className="flex min-w-0 items-center gap-2">
-                    <span className="shrink-0">{label}</span>
+                  <div key={label} className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)_1.5rem] items-center gap-2">
+                    <span>{label}</span>
                     <span data-selectable-text className="min-w-0 truncate font-mono">{id}</span>
                     <button
                       type="button"
@@ -1105,9 +1108,10 @@ export default function DetailModal() {
                           (err) => showToast(getClipboardFailureMessage(`复制${label}失败`, err), 'error'),
                         )
                       }}
-                      className="shrink-0 text-blue-500 hover:underline"
+                      aria-label={`复制${label}`}
+                      className="flex h-5 w-6 items-center justify-center rounded hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-white/[0.06] dark:hover:text-gray-300 transition-colors"
                     >
-                      复制
+                      <CopyIcon className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ))}
