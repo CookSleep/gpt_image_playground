@@ -14,7 +14,8 @@ export function getImageModelOptions(profile: ApiProfile) {
   const flash31 = /gemini-3\.1-.*image|nano[-_]?banana-2(?:$|[^.])/.test(model)
   return {
     ratios: firstGeneration || flashLite || /gemini-3-pro/.test(model) ? ratios : [...ratios, '1:4', '4:1', '1:8', '8:1'],
-    resolutions: firstGeneration || flashLite ? ['1K'] : flash31 && profile.provider === 'google' ? ['512', '1K', '2K', '4K'] : ['1K', '2K', '4K'],
+    resolutions: profile.provider === 'google' && /gemini-2\.5-/.test(model) ? []
+      : firstGeneration || flashLite ? ['1K'] : flash31 && profile.provider === 'google' ? ['512', '1K', '2K', '4K'] : ['1K', '2K', '4K'],
   }
 }
 

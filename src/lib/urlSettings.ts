@@ -219,7 +219,7 @@ function buildPresetConfigOnlySettingsFromUrlParams(currentSettings: Partial<App
   if (apiKeyParam !== null) patch.apiKey = apiKeyParam.trim()
   if (!apiKeyOnly) {
     if (profileNameParam?.trim()) patch.name = profileNameParam.trim()
-    if (apiUrlParam !== null) patch.baseUrl = normalizeBaseUrl(apiUrlParam.trim())
+    if (apiUrlParam !== null) patch.baseUrl = normalizeBaseUrl(apiUrlParam.trim(), targetProfile.provider === 'google' ? 'v1beta' : 'v1')
     if (modelParam?.trim()) patch.model = modelParam.trim()
     if (imageGenerationModelParam !== null) patch.imageGenerationModel = imageGenerationModelParam.trim()
     if (transparentBackgroundMethodParam === 'api' || transparentBackgroundMethodParam === 'local') {

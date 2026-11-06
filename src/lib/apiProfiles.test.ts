@@ -1723,6 +1723,12 @@ describe('custom providers', () => {
     expect(normalizeSettings({ allowPromptRewrite: true }).allowPromptRewrite).toBe(true)
   })
 
+  it('defaults imagePromptHints to true and preserves explicit false', () => {
+    expect(DEFAULT_SETTINGS.imagePromptHints).toBe(true)
+    expect(normalizeSettings({}).imagePromptHints).toBe(true)
+    expect(normalizeSettings({ imagePromptHints: false }).imagePromptHints).toBe(false)
+  })
+
   it('restores OpenAI-compatible URL after switching through fal.ai', () => {
     const openaiProfile = createDefaultOpenAIProfile({
       baseUrl: 'https://api.compat.example.com/v1',

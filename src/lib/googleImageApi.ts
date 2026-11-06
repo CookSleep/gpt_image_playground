@@ -34,12 +34,10 @@ export async function callGoogleImageApi(opts: CallApiOptions, profile: ApiProfi
   assertImageInputPayloadSize(opts.inputImageDataUrls.reduce((sum, url) => sum + url.length, 0))
   const imageConfig = {
     ...(params.aspect_ratio === 'auto' ? {} : { aspectRatio: params.aspect_ratio }),
-    ...(/gemini-2\.5-/.test(profile.model) ? {} : { imageSize: params.resolution }),
+    ...(params.resolution ? { imageSize: params.resolution } : {}),
   }
   const model = profile.model.replace(/^models\//, '')
-  const baseUrl = profile.baseUrl.trim().replace(/\/+$/, '')
-  // Google 使用 v1beta，不经过 OpenAI 的 /v1 自动补齐规则。
-  const url = buildApiUrl(`${baseUrl}/`, `models/${encodeURIComponent(model)}:generateContent`, readClientDevProxyConfig(), false)
+  const url = buildApiUrl(profile.baseUrl, `models/${encodeURIComponent(model)}:generateContent`, readClientDevProxyConfig(), false, 'v1beta')
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(createRequestTimeoutError(profile.timeout)), profile.timeout * 1000)
   try {
@@ -47,7 +45,7 @@ export async function callGoogleImageApi(opts: CallApiOptions, profile: ApiProfi
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': profile.apiKey },
       cache: 'no-store',
-      body: JSON.stringify({ contents: [{ role: 'user', parts }], tools, generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig, thinkingConfig } }),
+      body: JSON.stringify({ contents: [{ role: 'user', parts }], tools, generationConfig: { responseModalities: ['IMAGE'], imageConfig, thinkingConfig } }),
       signal: controller.signal,
     })
     if (!response.ok) throw new Error(await getApiErrorMessage(response))
@@ -56,6 +54,7 @@ export async function callGoogleImageApi(opts: CallApiOptions, profile: ApiProfi
     const actualParamsList: NonNullable<CallApiResult['actualParamsList']> = []
     const searchGrounding: NonNullable<CallApiResult['searchGrounding']> = []
     for (const candidate of Array.isArray(payload?.candidates) ? payload.candidates : []) {
+      // 启用 Image Search 后仍可能只返回 web 来源或缺少 groundingMetadata，按实际响应展示，不能据此判定未执行图片搜索
       const grounding = parseImageSearchGrounding(candidate?.groundingMetadata)
       if (grounding) searchGrounding.push(grounding)
       for (const part of Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []) {
@@ -64,7 +63,7 @@ export async function callGoogleImageApi(opts: CallApiOptions, profile: ApiProfi
         const mime = data?.mimeType ?? data?.mime_type
         if (typeof data?.data !== 'string' || !data.data || typeof mime !== 'string' || !mime.startsWith('image/')) continue
         images.push(`data:${mime};base64,${data.data}`)
-        actualParamsList.push({ aspect_ratio: params.aspect_ratio, resolution: params.resolution, ...(mime === 'image/jpeg' ? { output_format: 'jpeg' } : mime === 'image/png' ? { output_format: 'png' } : {}) })
+        actualParamsList.push({ aspect_ratio: params.aspect_ratio, ...(params.resolution ? { resolution: params.resolution } : {}), ...(mime === 'image/jpeg' ? { output_format: 'jpeg' } : mime === 'image/png' ? { output_format: 'png' } : {}) })
       }
     }
     if (!images.length) {

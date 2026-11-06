@@ -10,6 +10,14 @@ export const DEFAULT_FAL_IMAGE_SIZE = '1360x1024'
 export const MAX_FAL_OUTPUT_IMAGES = 4
 export const MAX_OPENAI_OUTPUT_IMAGES = 10
 
+export function getTaskParamSupport(settings: AppSettings, profile: ApiProfile) {
+  const provider = getCustomProviderDefinition(settings, profile.provider)
+  return {
+    thinking: getImageThinkingSupport(profile, provider).levels.length > 0,
+    complexity: !getImageModelFamily(profile) && supportsGptImage26Params(profile),
+  }
+}
+
 export function getOutputImageLimitForSettings(settings: AppSettings) {
   const profile = getActiveApiProfile(settings)
   return profile.provider === 'fal' ? MAX_FAL_OUTPUT_IMAGES : MAX_OPENAI_OUTPUT_IMAGES

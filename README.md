@@ -164,14 +164,15 @@
 - **多配置管理**：保存多个 API 配置（供应商、API Key、模型等）并快速切换；可一键复制当前配置到列表底部，配置和供应商列表均可拖拽排序。
 - **多模型切换**：模型 ID 可用逗号分隔填写多个（如 `gpt-image-2.6-sunburst, gpt-image-2`），在首页切换，按配置分别记住；预置配置、URL 传参与导入导出均支持此写法。
 - **多供应商接入**：内置 OpenAI 兼容接口（`Images API` / `Responses API`）、Google、xAI、sub2api（异步）、fal.ai（队列），并可通过 JSON 导入自定义 HTTP 供应商（同步/异步任务）。
-- **Gemini / Grok 图像生成**：支持官方接口和 OpenAI 兼容接口（Images API），按模型 ID 切换比例、分辨率和质量参数。多轮编辑可使用 Agent 混合模式。
+- **Gemini / Grok 图像生成**：支持官方接口和 OpenAI Images 兼容接口。
+- **Google Search / Image Search**：部分 Gemini 模型支持网页和图片搜索，详情展示来源与搜索建议。
 - **Agent 模式独立 API 配置**：Agent 可使用原生（Responses API）或混合（Responses API + Images API）的独立配置，适配不支持 `image_generation` 工具的供应商或模型。
 - **API 代理**：OpenAI 兼容接口与 fal.ai 均可配置自定义代理；OpenAI 兼容接口还可走同源 `/api-proxy/`，由 Docker 或本地开发服务器转发，绕开浏览器 CORS 限制。
 - **Codex CLI 兼容模式**：上游为 Codex CLI 时，按其实际支持的参数发送请求，并把多图生成拆成并发单图。
 - **提示词防改写**：Responses API 始终在请求前加入防改写指令；开启 Codex CLI 模式后，Images API 也会加入。
 - **智能诊断提示**：检测到接口异常改写或缺少常规参数时，提示开启相应的兼容模式。
 - **外观配置**：颜色模式（跟随系统、浅色、深色）、界面字体与代码字体。
-- **习惯配置**：提交后清空输入、重启后保留输入、临时复用历史任务的 API 配置、重试方式、关闭提示词防改写、系统通知、自动检查更新、隐私模式快捷键等。
+- **习惯配置**：提交后清空输入、重启后保留输入、临时复用历史任务的 API 配置、重试方式、关闭提示词防改写、附加图像生成提示词、系统通知、自动检查更新、隐私模式快捷键等。
 - **版本更新**：启动时检查新版本并展示更新说明；客户端可直接下载并安装更新。
 - **CLI 与 Skill**：Claude Code、Codex 等本机 AI 工具可通过客户端的 CLI 生图、读取历史和修改设置，见 [Windows 桌面客户端](#desktop-client)。
 
@@ -517,7 +518,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 顶层字段：
 
 - **`profiles`**（数组）：预置的 API 配置列表，每项对应用户配置列表中的一个配置。
-- **`customProviders`**（可选数组）：自定义供应商定义，见下文 [自定义供应商](#custom-provider-config)。只使用内置供应商（OpenAI 兼容、Google、xAI、sub2api（异步）、fal.ai）时可省略。
+- **`customProviders`**（可选数组）：自定义供应商定义，见下文 [自定义供应商](#custom-provider-config)。只使用内置供应商时可省略。
 - **`agent`**（可选对象）：Agent 的独立 API 模式及文本、图像配置选择，见下方示例。
 
 `profiles` 中每项的字段：
@@ -542,7 +543,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 补充说明：
 
 - **`id`**：之后的链接（查询参数 `profileId`、`settings` 链接）或预置 JSON 携带相同 ID 时，直接更新该配置而非新建。应用内普通分享链接会省略此字段。
-- **`baseUrl`**：未以 `/` 结尾时按 OpenAI 规则补齐 `/v1`；以 `/` 结尾时直接基于该地址请求。
+- **`baseUrl`**：未以 `/` 结尾时按 OpenAI 规则补齐 `/v1`（Google 补齐 `/v1beta`）；以 `/` 结尾时直接基于该地址请求。
 - **`transparentBackgroundMethod` 默认值**：OpenAI 兼容和 fal.ai 为 `"api"`；自定义供应商的生成和编辑请求都映射了 `$params.background` 时为 `"api"`，否则为 `"local"`。
 
 ### 示例：仅 OpenAI 兼容
@@ -644,6 +645,8 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 API 不是标准 OpenAI 格式时，在预置 JSON 的 `customProviders` 中定义请求和响应结构。每个供应商需有唯一的 `id`，由 `profiles` 中的 `provider` 字段引用。
 
 接口不在 `/v1` 路径下时，将 `baseUrl` 设为以 `/` 结尾。例如 `baseUrl` 为 `https://api.example.com/`、`submit.path` 为 `api/image-tasks` 时，实际请求地址为 `https://api.example.com/api/image-tasks`。
+
+`modelOverrides` 可按模型 ID（支持 `*` 通配符）配置不同接口，路径支持 `{model}` 占位符。完整字段见 [自定义供应商 LLM 提示词](docs/custom-provider-llm-prompt.md)。
 
 **获取供应商定义**
 

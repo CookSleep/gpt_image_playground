@@ -110,14 +110,14 @@ export function describeImportLink(params: URLSearchParams, settings: AppSetting
   const empty = { text: '（空）', hint: true }
   const name = (value: string) => clip(value) || '（空）'
   const literal = (value: string) => value ? { text: value } : empty
-  const formatUrl = (value: string) => {
+  const formatUrl = (profile: ApiProfile) => {
     try {
       // 输入和流程与 buildApiUrl 发请求时完全一致，不能先折叠空白：URL 解析会删除中间的 Tab 和换行，折叠成空格会让预览与实际主机不符
-      const url = new URL(normalizeBaseUrl(value.trim()))
+      const url = new URL(normalizeBaseUrl(profile.baseUrl.trim(), profile.provider === 'google' ? 'v1beta' : 'v1'))
       return `${url.protocol}//${url.host}${clip(`${url.pathname}${url.search}`.replace(/^\/$/, ''), 40)}`
     } catch {
       // 无法解析时不截断，避免藏起真实地址
-      return text(value)
+      return text(profile.baseUrl)
     }
   }
 
@@ -176,7 +176,7 @@ export function describeImportLink(params: URLSearchParams, settings: AppSetting
       const keyKept = old.apiKey === profile.apiKey && Boolean(profile.apiKey)
       const rows: ImportLinkDiffRow[] = []
       if (old.name !== profile.name) rows.push({ label: '名称', before: literal(clip(old.name)), after: literal(clip(profile.name)) })
-      if (urlChanged) rows.push({ label: 'API 地址', before: literal(formatUrl(old.baseUrl)), after: literal(formatUrl(profile.baseUrl)) })
+      if (urlChanged) rows.push({ label: 'API 地址', before: literal(formatUrl(old)), after: literal(formatUrl(profile)) })
       if (old.model !== profile.model) rows.push({ label: '模型', before: literal(clip(old.model)), after: literal(clip(profile.model)) })
       rows.push(...fieldRows(old, profile, true))
       // 只描述 Key 的来源，不显示原文
@@ -199,7 +199,7 @@ export function describeImportLink(params: URLSearchParams, settings: AppSetting
       return {
         title: `新增配置「${name(profile.name)}」`,
         rows: [
-          { label: 'API 地址', after: literal(formatUrl(profile.baseUrl)) },
+          { label: 'API 地址', after: literal(formatUrl(profile)) },
           { label: '模型', after: literal(clip(profile.model)) },
           ...fieldRows(base, profile, false),
           profile.apiKey ? { label: 'API Key', after: { text: '链接中的 Key', hint: true } } : { label: 'API Key', note: '链接中未包含 API Key' },

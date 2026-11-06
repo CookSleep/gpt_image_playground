@@ -3,6 +3,7 @@ import { composeMarkupDataUrl, toApiInputImageDataUrl } from './canvasImage'
 import { callFalAiImageApi } from './falAiImageApi'
 import { callGoogleImageApi } from './googleImageApi'
 import { supportsImageMarkup } from './imageModels'
+import { getImageSearchSupport } from './imageSearch'
 import { callOpenAICompatibleImageApi } from './openaiCompatibleImageApi'
 import type { CallApiOptions, CallApiResult } from './imageApiShared'
 
@@ -20,9 +21,18 @@ export async function callImageApi(opts: CallApiOptions): Promise<CallApiResult>
     if (inputImageUrls) inputImageUrls[0] = null
     markupDataUrl = undefined
   }
-  const requestOpts = { ...opts, inputImageDataUrls, inputImageUrls, markupDataUrl }
+  const customProvider = getCustomProviderDefinition(opts.settings, profile.provider)
+  const search = getImageSearchSupport(profile, customProvider)
+  const prefix = opts.settings.imagePromptHints && profile.provider === 'google' ? '生成图像：' : ''
+  const suffix = opts.settings.imagePromptHints ? [
+    !search.googleSearch && opts.params.google_search ? '请使用 google:search 搜索相关信息。' : '',
+    !search.imageSearch && opts.params.image_search ? '请使用 google:image_search 搜索图片，作为生成图像的参考。' : '',
+  ].filter(Boolean).join('\n') : ''
+  opts.onPromptHintsPrepared?.(prefix || suffix ? { prefix, suffix } : undefined)
+  const prompt = `${prefix ? `${prefix}\n` : ''}${opts.prompt}${suffix ? `\n${suffix}` : ''}`
+  const requestOpts = { ...opts, prompt, inputImageDataUrls, inputImageUrls, markupDataUrl }
   if (profile.provider === 'fal') return callFalAiImageApi(requestOpts, profile)
   if (profile.provider === 'google') return callGoogleImageApi(requestOpts, profile)
 
-  return callOpenAICompatibleImageApi(requestOpts, profile, getCustomProviderDefinition(opts.settings, profile.provider))
+  return callOpenAICompatibleImageApi(requestOpts, profile, customProvider)
 }

@@ -73,4 +73,19 @@ describe('buildApiUrl', () => {
       'https://api.example.com/responses',
     )
   })
+
+  it('completes a custom API version such as v1beta', () => {
+    expect(buildApiUrl('https://api.example.com', 'models/m:generateContent', null, false, 'v1beta')).toBe(
+      'https://api.example.com/v1beta/models/m:generateContent',
+    )
+    expect(buildApiUrl('https://api.example.com/proxy', 'models/m:generateContent', null, false, 'v1beta')).toBe(
+      'https://api.example.com/proxy/v1beta/models/m:generateContent',
+    )
+    expect(buildApiUrl('https://api.example.com/v1beta', 'models/m:generateContent', null, false, 'v1beta')).toBe(
+      'https://api.example.com/v1beta/models/m:generateContent',
+    )
+    expect(buildApiUrl('https://api.example.com/proxy/', 'models/m:generateContent', null, false, 'v1beta')).toBe(
+      'https://api.example.com/proxy/models/m:generateContent',
+    )
+  })
 })

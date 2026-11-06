@@ -41,7 +41,7 @@ export const DEFAULT_RESPONSES_MODEL = 'gpt-6.1-sol'
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
 export const NATIVE_IMAGE_PROVIDERS = {
-  google: { name: 'Google', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/', model: 'gemini-3.1-flash-image' },
+  google: { name: 'Google', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-nano-banana-2.1' },
   xai: { name: 'xAI', baseUrl: 'https://api.x.ai/v1', model: 'grok-imagine-image-2.0' },
 }
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
@@ -772,6 +772,7 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     saveTasksToActiveFavoriteCollection: typeof record.saveTasksToActiveFavoriteCollection === 'boolean' ? record.saveTasksToActiveFavoriteCollection : true,
     retryMode: normalizeRetryMode(record.retryMode, record.alwaysShowRetryButton === true),
     allowPromptRewrite: typeof record.allowPromptRewrite === 'boolean' ? record.allowPromptRewrite : false,
+    imagePromptHints: typeof record.imagePromptHints === 'boolean' ? record.imagePromptHints : true,
     taskCompletionNotification: typeof record.taskCompletionNotification === 'boolean' ? record.taskCompletionNotification : false,
     autoCheckUpdate: typeof record.autoCheckUpdate === 'boolean' ? record.autoCheckUpdate : true,
     writeLogFile: typeof record.writeLogFile === 'boolean' ? record.writeLogFile : true,
@@ -1392,6 +1393,7 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   saveTasksToActiveFavoriteCollection: true,
   retryMode: 'new',
   allowPromptRewrite: false,
+  imagePromptHints: true,
   taskCompletionNotification: false,
   autoCheckUpdate: true,
   writeLogFile: true,

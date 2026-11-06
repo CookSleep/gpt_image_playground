@@ -7,6 +7,7 @@ import {
   normalizeSettings,
 } from './apiProfiles'
 import { buildSettingsFromUrlParams, clearUrlSettingParams, getExplicitUrlSettingsIds, hasUrlSettingParams } from './urlSettings'
+import { buildApiUrl } from './devProxy'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -888,6 +889,29 @@ describe('URL settings params', () => {
     })
 
     expect(next.profiles[0].transparentBackgroundMethod).toBe('local')
+  })
+
+  it.each([
+    ['google', 'https://example.com', 'https://example.com', 'https://example.com/v1beta/models/example:generateContent'],
+    ['google', 'https://example.com/proxy', 'https://example.com/proxy/v1beta', 'https://example.com/proxy/v1beta/models/example:generateContent'],
+    ['google', 'https://example.com/v1beta', 'https://example.com/v1beta', 'https://example.com/v1beta/models/example:generateContent'],
+    ['google', 'https://example.com/proxy/', 'https://example.com/proxy/', 'https://example.com/proxy/models/example:generateContent'],
+    ['openai', 'https://example.com/proxy', 'https://example.com/proxy/v1', 'https://example.com/proxy/v1/images/generations'],
+  ] as const)('uses the target provider API version for preset-only URL imports: %s %s', async (provider, baseUrl, expectedBaseUrl, expectedRequestUrl) => {
+    const { buildSettingsFromUrlParams } = await importPresetConfigOnlyUrlSettings()
+    const presetConfig = await import('./presetConfig')
+    const profile = createDefaultOpenAIProfile({ id: 'preset-target', provider })
+    presetConfig.setPresetConfig({ customProviders: [], profiles: [profile] })
+    const current = normalizeSettings({ profiles: [profile], activeProfileId: profile.id })
+    const next = normalizeSettings({
+      ...current,
+      ...buildSettingsFromUrlParams(current, new URLSearchParams({ profileId: profile.id, apiUrl: baseUrl })),
+    })
+
+    expect(next.profiles).toHaveLength(1)
+    expect(next.activeProfileId).toBe(profile.id)
+    expect(next.profiles[0]).toMatchObject({ provider, baseUrl: expectedBaseUrl })
+    expect(buildApiUrl(next.profiles[0].baseUrl, provider === 'google' ? 'models/example:generateContent' : 'images/generations', null, false, provider === 'google' ? 'v1beta' : 'v1')).toBe(expectedRequestUrl)
   })
 
   it('preserves a trailing slash when overriding a custom preset API URL', async () => {

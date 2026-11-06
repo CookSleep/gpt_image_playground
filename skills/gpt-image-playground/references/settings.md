@@ -38,6 +38,7 @@
 | `alwaysShowRetryButton` | 成功的任务也显示重试按钮 |
 | `retryMode` | 重试时 `new` 新建任务、`overwriteFailed` 覆盖失败的任务、`overwriteAll` 覆盖任何任务（需开启 `alwaysShowRetryButton`） |
 | `allowPromptRewrite` | 允许模型改写优化提示词 |
+| `imagePromptHints` | 附加图像生成提示词：为 Google 图像请求添加“生成图像：”前缀，启用 Google Search 或 Image Search 时附加搜索提示词；关闭后仍保留搜索工具 |
 | `referenceImageEditAction` | 参考图预览中“编辑图片”的默认行为：`ask` 每次询问、`sketch` 画板、`mask` 遮罩 |
 | `taskCompletionNotification` | 任务完成或失败时发送系统通知 |
 | `autoCheckUpdate` | 启动时检查新版本 |

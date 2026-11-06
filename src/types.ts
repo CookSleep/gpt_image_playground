@@ -168,6 +168,7 @@ export interface AppSettings {
   saveTasksToActiveFavoriteCollection: boolean
   retryMode: RetryMode
   allowPromptRewrite: boolean
+  imagePromptHints: boolean
   taskCompletionNotification: boolean
   /** 启动时检查 GitHub 上的新版本 */
   autoCheckUpdate: boolean
@@ -299,9 +300,13 @@ export interface ImageSearchGrounding {
 
 export interface TaskRecord {
   searchGrounding?: ImageSearchGrounding[]
+  /** 请求中附加的图像生成和搜索提示词 */
+  promptHints?: { prefix: string; suffix: string }
   id: string
   prompt: string
   params: TaskParams
+  /** 请求配置支持的可选参数，用于展示默认值 */
+  paramSupport?: { thinking: boolean; complexity: boolean }
   /** 生成时使用的 Provider 类型 */
   apiProvider?: ApiProvider
   /** 生成时使用的 API 配置 ID */

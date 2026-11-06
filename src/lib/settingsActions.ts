@@ -60,11 +60,9 @@ export function prepareSettingsForCommit(draft: AppSettings): AppSettings {
     const emptyBaseUrlFallback = profile.id === defaultProfileId
       ? getDefaultPresetBaseUrl()
       : DEFAULT_SETTINGS.baseUrl
-    const baseUrl = profile.provider === 'google'
-      ? `${(profile.baseUrl.trim() || NATIVE_IMAGE_PROVIDERS.google.baseUrl).replace(/\/+$/, '')}/`
-      : profile.provider === 'fal'
+    const baseUrl = profile.provider === 'fal'
       ? profile.baseUrl.trim().replace(/\/+$/, '') || (profile.id === defaultProfileId ? '' : DEFAULT_FAL_BASE_URL)
-      : shouldKeepEmptyBaseUrl ? '' : normalizeBaseUrl(profile.baseUrl.trim() || nativeProvider?.baseUrl || emptyBaseUrlFallback)
+      : shouldKeepEmptyBaseUrl ? '' : normalizeBaseUrl(profile.baseUrl.trim() || nativeProvider?.baseUrl || emptyBaseUrlFallback, profile.provider === 'google' ? 'v1beta' : 'v1')
     const defaultModel = nativeProvider?.model ?? (profile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(profile.apiMode))
     return {
       ...profile,

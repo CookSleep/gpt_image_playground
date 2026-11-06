@@ -260,6 +260,24 @@ export default function GeneralSettingsTab({
         </div>
         <div className="block">
           <div className="mb-1 flex items-center justify-between">
+            <span className="block text-sm text-gray-600 dark:text-gray-300">附加图像生成提示词</span>
+            <button
+              type="button"
+              onClick={() => commitSettings({ ...draft, imagePromptHints: !draft.imagePromptHints })}
+              className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${draft.imagePromptHints ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+              role="switch"
+              aria-checked={draft.imagePromptHints}
+              aria-label="附加图像生成提示词"
+            >
+              <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${draft.imagePromptHints ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+            </button>
+          </div>
+          <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+            为 Google 图像请求添加“生成图像：”前缀，并在启用 Google Search 或 Image Search 时附加搜索提示词。关闭后仍保留搜索工具。
+          </div>
+        </div>
+        <div className="block">
+          <div className="mb-1 flex items-center justify-between">
             <span className="block text-sm text-gray-600 dark:text-gray-300">允许模型改写优化提示词</span>
             <button
               type="button"

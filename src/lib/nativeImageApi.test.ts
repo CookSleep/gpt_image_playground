@@ -135,9 +135,14 @@ describe('图像模型配置和参数', () => {
     expect(restored.profiles[0]).toMatchObject({ provider, model: profile.model, baseUrl: profile.baseUrl, transparentBackgroundMethod: 'local', apiMode: 'images' })
   })
 
-  it('Google 地址省略末尾斜杠时不追加 v1', () => {
-    const config = prepareSettingsForCommit(settings({ provider: 'google', baseUrl: 'https://example.com/v1beta', model: 'gemini-3.1-flash-image' }))
-    expect(config.baseUrl).toBe('https://example.com/v1beta/')
+  it.each([
+    ['https://example.com/v1beta', 'https://example.com/v1beta'],
+    ['https://example.com/v1beta/models', 'https://example.com/v1beta'],
+    ['https://example.com/proxy', 'https://example.com/proxy/v1beta'],
+    ['https://example.com/proxy/', 'https://example.com/proxy/'],
+  ])('Google 地址按 v1beta 补齐前缀：%s', (baseUrl, expected) => {
+    const config = prepareSettingsForCommit(settings({ provider: 'google', baseUrl, model: 'gemini-3.1-flash-image' }))
+    expect(config.baseUrl).toBe(expected)
   })
 
   it.each(['gemini-example-image', 'grok-imagine-image-2.0'])('混合模型配置中的 %s 忽略 Codex CLI 开关，切回 GPT 时保留', (model) => {
@@ -183,16 +188,17 @@ describe('Google 单次生成', () => {
     expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent')
     expect(init?.headers).toEqual({ 'Content-Type': 'application/json', 'x-goog-api-key': 'test-key' })
     expect(JSON.parse(String(init?.body))).toEqual({
-      contents: [{ role: 'user', parts: [{ text: '修改背景' }, { inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } }] }],
-      generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: '16:9', imageSize: '2K' } },
+      contents: [{ role: 'user', parts: [{ text: '生成图像：\n修改背景' }, { inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } }] }],
+      generationConfig: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio: '16:9', imageSize: '2K' } },
     })
     expect(result.images).toEqual(['data:image/jpeg;base64,aW1hZ2U='])
   })
 
   it('Gemini 2.5 不发送 imageSize，自动比例不传 aspectRatio', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ candidates: [{ content: { parts: [{ inline_data: { mime_type: 'image/png', data: 'aW1hZ2U=' } }] } }] }))
-    await callImageApi({ settings: settings({ provider: 'google', model: 'gemini-2.5-flash-image' }), prompt: '猫', params: DEFAULT_PARAMS, inputImageDataUrls: [] })
+    const result = await callImageApi({ settings: settings({ provider: 'google', model: 'gemini-2.5-flash-image' }), prompt: '猫', params: { ...DEFAULT_PARAMS, resolution: '1K' }, inputImageDataUrls: [] })
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).generationConfig.imageConfig).toEqual({})
+    expect(result.actualParamsList?.[0]).not.toHaveProperty('resolution')
   })
 
   it('没有图片时保留拦截原因和原始响应', async () => {
@@ -212,7 +218,7 @@ describe('Google 单次生成', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
     for (const [, init] of fetchMock.mock.calls) {
       const body = JSON.parse(String(init?.body))
-      expect(body.contents).toEqual([{ role: 'user', parts: [{ text: '猫' }] }])
+      expect(body.contents).toEqual([{ role: 'user', parts: [{ text: '生成图像：\n猫' }] }])
       expect(body).not.toHaveProperty('n')
       expect(body.generationConfig).not.toHaveProperty('candidateCount')
     }

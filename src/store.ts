@@ -59,7 +59,7 @@ import { OPENAI_IMAGE_TASK_PROVIDER, resolveCustomProviderModel } from './lib/im
 import { toApiInputImageDataUrl, validateMaskMatchesImage } from './lib/canvasImage'
 import { persistTaskInputImages, toReferenceImage } from './lib/inputImages'
 import { orderInputImagesForMask } from './lib/mask'
-import { getChangedParams, normalizeParamsForSettings, supportsTransparentOutput } from './lib/paramCompatibility'
+import { getChangedParams, getTaskParamSupport, normalizeParamsForSettings, supportsTransparentOutput } from './lib/paramCompatibility'
 import { getImageModelFamily, isVectorOrAnimatedFormat } from './lib/imageModels'
 import { runWithConcurrency, splitBatchPrompts } from './lib/batchPrompts'
 import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
@@ -1962,6 +1962,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
       id: genId(),
       prompt: taskPrompt,
       params: taskParams,
+      paramSupport: getTaskParamSupport(requestSettings, activeProfile),
       apiProvider: activeProfile.provider,
       apiProfileId: activeProfile.id,
       apiProfileName: activeProfile.name,
@@ -2978,6 +2979,7 @@ async function executeAgentRound(
         id: genId(),
         prompt: taskPrompt,
         params: options.taskParams ?? { ...imageParams, n: 1 },
+        paramSupport: getTaskParamSupport(imageRequestSettings, imageProfile),
         apiProvider: imageProfile.provider,
         apiProfileId: imageProfile.id,
         apiProfileName: imageProfile.name,
@@ -3202,6 +3204,7 @@ async function executeAgentRound(
         inputImageDataUrls: opts.referenceImageDataUrls,
         inputImageUrls: opts.referenceImageSourceUrls,
         skipCodexCliSizePrompt: true,
+        onPromptHintsPrepared: (promptHints) => updateTaskInStore(opts.taskId, { promptHints }),
         onPartialImage: opts.onPartialImage
           ? (partial) => {
               void opts.onPartialImage?.({ image: partial.image, partialImageIndex: partial.partialImageIndex ?? partial.requestIndex })
@@ -3574,6 +3577,7 @@ async function executeAgentRound(
           id: genId(),
           prompt: image.revisedPrompt ?? round?.prompt ?? userMessage.content,
           params: imageParams,
+          paramSupport: getTaskParamSupport(imageRequestSettings, imageProfile),
           apiProvider: imageProfile.provider,
           apiProfileId: imageProfile.id,
           apiProfileName: imageProfile.name,
@@ -3929,6 +3933,10 @@ async function executeTask(taskId: string) {
       maskDataUrl,
       markupDataUrl,
       skipCodexCliSizePrompt: task.sourceMode === 'agent',
+      onPromptHintsPrepared: (promptHints) => {
+        if (taskExecutions.get(taskId) !== execution) return
+        updateTaskInStore(taskId, { promptHints })
+      },
       onFalRequestEnqueued: (request) => {
         if (taskExecutions.get(taskId) !== execution) return
         falRequestInfo = request
@@ -4220,6 +4228,7 @@ export async function retryTask(task: TaskRecord) {
     id: taskId,
     prompt: source.prompt,
     params: taskParams,
+    paramSupport: getTaskParamSupport(settings, activeProfile),
     apiProvider: activeProfile.provider,
     apiProfileId: activeProfile.id,
     apiProfileName: activeProfile.name,
@@ -4239,6 +4248,7 @@ export async function retryTask(task: TaskRecord) {
     revisedPromptByImage: undefined,
     rawImageUrls: undefined,
     searchGrounding: undefined,
+    promptHints: undefined,
     rawResponsePayload: undefined,
     streamPartialImageIds: undefined,
     falRequestId: undefined,

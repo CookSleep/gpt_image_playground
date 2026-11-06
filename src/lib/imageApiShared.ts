@@ -1,4 +1,4 @@
-import { OUTPUT_FORMATS, type ApiProfile, type AppSettings, type ImageSearchGrounding, type ResponsesOutputItem, type TaskParams } from '../types'
+import { OUTPUT_FORMATS, type ApiProfile, type AppSettings, type ImageSearchGrounding, type ResponsesOutputItem, type TaskParams, type TaskRecord } from '../types'
 import { blobToDataUrl } from './dataUrl'
 import { DEFAULT_SVG_MODEL } from './imageModels'
 import { apiFetch, isTauri } from './platform'
@@ -40,6 +40,7 @@ export interface CallApiOptions {
   /** 第一张输入图上的透明标注层，仅 Images API 编辑接口原生支持 */
   markupDataUrl?: string
   skipCodexCliSizePrompt?: boolean
+  onPromptHintsPrepared?: (hints: TaskRecord['promptHints']) => void
   onFalRequestEnqueued?: (request: { requestId: string; endpoint: string }) => void
   onCustomTaskEnqueued?: (task: { taskId: string }) => void
   onPartialImage?: (partial: { image: string; partialImageIndex?: number; requestIndex?: number }) => void

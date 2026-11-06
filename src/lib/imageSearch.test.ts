@@ -64,6 +64,29 @@ describe('图像搜索', () => {
     await callImageApi({ settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id }), prompt: 'example', params: { ...DEFAULT_PARAMS, google_search, image_search }, inputImageDataUrls: [] })
     const body = JSON.parse(fetch.mock.calls[0][1]?.body as string)
     expect(body.tools).toEqual(search === undefined ? undefined : [{ googleSearch: search }])
+    expect(body.generationConfig.responseModalities).toEqual(['IMAGE'])
+    expect(body.contents[0].parts[0].text).toBe([
+      '生成图像：\nexample',
+      search && google_search ? '请使用 google:search 搜索相关信息。' : '',
+      model === 'gemini-3.1-flash-image' && image_search ? '请使用 google:image_search 搜索图片，作为生成图像的参考。' : '',
+    ].filter(Boolean).join('\n'))
+  })
+
+  it.each(['google', 'custom-example'])('关闭附加提示词后保留搜索工具和用户原文：%s', async (providerId) => {
+    const profile = createDefaultOpenAIProfile({ provider: providerId, model: 'gemini-3.1-flash-image', apiKey: 'example-key', baseUrl: 'https://example.com/v1beta/' })
+    const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id, customProviders: [provider], imagePromptHints: false })
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } }] } }], data: [{ b64_json: 'aW1hZ2U=' }] })))
+    const onPromptHintsPrepared = vi.fn()
+    await callImageApi({ settings, prompt: 'example\n原文', params: { ...DEFAULT_PARAMS, google_search: true, image_search: true }, inputImageDataUrls: [], onPromptHintsPrepared })
+    const body = JSON.parse(fetch.mock.calls[0][1]?.body as string)
+    if (providerId === 'google') {
+      expect(body.contents[0].parts[0].text).toBe('example\n原文')
+      expect(body.tools).toEqual([{ googleSearch: { searchTypes: { webSearch: {}, imageSearch: {} } } }])
+    } else {
+      expect(body.prompt).toBe('example\n原文')
+      expect(body).toMatchObject({ search: true, image_search: true })
+    }
+    expect(onPromptHintsPrepared).toHaveBeenCalledExactlyOnceWith(undefined)
   })
 
   it('多图请求保留每次响应的搜索来源与搜索建议', async () => {
@@ -72,7 +95,12 @@ describe('图像搜索', () => {
       content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } }] },
       groundingMetadata: { searchEntryPoint: { renderedContent: '<div>Google Search</div>' }, groundingChunks: [{ image: { sourceUri: 'https://example.com/source', imageUri: 'https://example.com/image.png', title: 'Example source' } }] },
     }] })))
-    const result = await callImageApi({ settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id }), prompt: 'example', params: { ...DEFAULT_PARAMS, n: 2, google_search: true, image_search: true }, inputImageDataUrls: [] })
+    const onPromptHintsPrepared = vi.fn()
+    const result = await callImageApi({ settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id }), prompt: 'example', params: { ...DEFAULT_PARAMS, n: 2, google_search: true, image_search: true }, inputImageDataUrls: [], onPromptHintsPrepared })
+    expect(onPromptHintsPrepared).toHaveBeenCalledExactlyOnceWith({ prefix: '生成图像：', suffix: '请使用 google:search 搜索相关信息。\n请使用 google:image_search 搜索图片，作为生成图像的参考。' })
+    for (const [, init] of vi.mocked(globalThis.fetch).mock.calls) {
+      expect(JSON.parse(init!.body as string).contents[0].parts[0].text).toBe('生成图像：\nexample\n请使用 google:search 搜索相关信息。\n请使用 google:image_search 搜索图片，作为生成图像的参考。')
+    }
     expect(result.images).toHaveLength(2)
     expect(result.searchGrounding).toHaveLength(2)
     expect(result.searchGrounding?.[0]).toEqual({ renderedContent: '<div>Google Search</div>', sources: [{ uri: 'https://example.com/source', title: 'Example source', imageUri: 'https://example.com/image.png' }] })
@@ -90,12 +118,17 @@ describe('图像搜索', () => {
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, google_search: true, image_search: true }, settings)).toMatchObject({ google_search: undefined, image_search: undefined })
   })
 
-  it('自定义服务商发送映射后的布尔搜索参数', async () => {
+  it.each([[true, false], [false, true], [true, true], [false, false]])('自定义服务商发送搜索参数和对应提示词：%s，%s', async (google_search, image_search) => {
     const profile = createDefaultOpenAIProfile({ provider: provider.id, model: 'gemini-3.1-flash-image', apiKey: 'example-key', baseUrl: 'https://example.com/v1' })
     const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id, customProviders: [provider] })
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: 'aW1hZ2U=' }] })))
-    await callImageApi({ settings, prompt: 'example', params: normalizeParamsForSettings({ ...DEFAULT_PARAMS, google_search: true, image_search: false }, settings), inputImageDataUrls: [] })
+    await callImageApi({ settings, prompt: 'example', params: normalizeParamsForSettings({ ...DEFAULT_PARAMS, google_search, image_search }, settings), inputImageDataUrls: [] })
     const body = JSON.parse(fetch.mock.calls[0][1]?.body as string)
-    expect(body).toMatchObject({ search: true, image_search: false })
+    expect(body).toMatchObject({ search: google_search, image_search })
+    expect(body.prompt).toBe([
+      'example',
+      google_search ? '请使用 google:search 搜索相关信息。' : '',
+      image_search ? '请使用 google:image_search 搜索图片，作为生成图像的参考。' : '',
+    ].filter(Boolean).join('\n'))
   })
 })

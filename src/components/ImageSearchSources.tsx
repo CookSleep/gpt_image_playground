@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { ImageSearchGrounding } from '../types'
 import { useTooltip } from '../hooks/useTooltip'
 import { openExternal } from '../lib/platform'
@@ -78,6 +78,44 @@ html.dark .logo-dark{display:block!important}
 html.dark .chip{border-color:rgba(255,255,255,0.08)!important;background-color:rgba(255,255,255,0.04)!important;color:#d1d5db!important}
 html.dark .chip:hover{background-color:rgba(255,255,255,0.08)!important;color:#f3f4f6!important}`
 
+function SearchEntry({ content, index }: { content: string; index: number }) {
+  const ref = useRef<HTMLIFrameElement>(null)
+
+  useLayoutEffect(() => {
+    const iframe = ref.current
+    const doc = iframe?.contentDocument
+    if (!iframe || !doc) return
+    // 同步填充隔离文档，在首次绘制前设置主题并测量高度，避免默认浅色和 150px 高度闪现
+    doc.open()
+    doc.write(`<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https:"><base target="_blank"></head><body>${content}<style>${SEARCH_ENTRY_STYLE}</style></body></html>`)
+    doc.close()
+    doc.body.style.fontFamily = getComputedStyle(document.body).fontFamily
+    const syncTheme = () => doc.documentElement.classList.toggle('dark', document.documentElement.classList.contains('dark'))
+    syncTheme()
+    const fit = () => { iframe.style.height = `${Math.ceil(doc.body.getBoundingClientRect().height)}px` }
+    fit()
+    const resizeObserver = new ResizeObserver(fit)
+    resizeObserver.observe(doc.body)
+    resizeObserver.observe(iframe)
+    const themeObserver = new MutationObserver(syncTheme)
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    const onClick = (event: MouseEvent) => {
+      const link = (event.target as Element | null)?.closest?.('a')
+      if (!link) return
+      event.preventDefault()
+      if (/^https?:\/\//i.test(link.href)) void openExternal(link.href)
+    }
+    doc.addEventListener('click', onClick)
+    return () => {
+      resizeObserver.disconnect()
+      themeObserver.disconnect()
+      doc.removeEventListener('click', onClick)
+    }
+  }, [content])
+
+  return <iframe ref={ref} title={`Google 搜索建议 ${index + 1}`} sandbox="allow-same-origin" referrerPolicy="no-referrer" className="mt-1 block w-full border-0 bg-transparent" />
+}
+
 export default function ImageSearchSources({ grounding }: { grounding?: ImageSearchGrounding[] }) {
   const items = (grounding ?? [])
     .map((item) => ({ renderedContent: item.renderedContent, sources: item.sources.filter((source) => /^https?:\/\//i.test(source.uri)) }))
@@ -94,30 +132,7 @@ export default function ImageSearchSources({ grounding }: { grounding?: ImageSea
             {item.renderedContent && (
               <div className="min-w-0 overflow-hidden rounded-lg bg-gray-50 px-3 py-2 dark:bg-white/[0.03]">
                 <span className="text-gray-400 dark:text-gray-500">搜索建议</span>
-                <iframe
-                  title={`Google 搜索建议 ${index + 1}`}
-                  sandbox="allow-same-origin"
-                  referrerPolicy="no-referrer"
-                  srcDoc={`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https:"><base target="_blank">${item.renderedContent}<style>${SEARCH_ENTRY_STYLE}</style>`}
-                  onLoad={(event) => {
-                    const iframe = event.currentTarget
-                    const doc = iframe.contentDocument
-                    if (!doc) return
-                    doc.documentElement.classList.toggle('dark', document.documentElement.classList.contains('dark'))
-                    doc.body.style.fontFamily = getComputedStyle(document.body).fontFamily
-                    // 容器宽度变化会让建议换行，需随内容高度同步调整
-                    const fit = () => { iframe.style.height = `${Math.ceil(doc.body.getBoundingClientRect().height)}px` }
-                    fit()
-                    new ResizeObserver(fit).observe(iframe)
-                    doc.addEventListener('click', (e) => {
-                      const link = (e.target as Element | null)?.closest?.('a')
-                      if (!link) return
-                      e.preventDefault()
-                      if (/^https?:\/\//i.test(link.href)) void openExternal(link.href)
-                    })
-                  }}
-                  className="mt-1 block w-full border-0 bg-transparent"
-                />
+                <SearchEntry content={item.renderedContent} index={index} />
               </div>
             )}
             {item.sources.length > 0 && (
