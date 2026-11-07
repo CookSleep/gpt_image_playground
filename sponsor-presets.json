@@ -71,7 +71,7 @@
       "description": "[JuCodex](https://jucodex.com/register?aff=3JDW) 为企业级用户打造的高可用、低延迟、极致性价比的中转站，提供 Codex、Claude Code、Grok 等主流大模型中转服务，新用户注册送 3 元（QQ 邮箱），永久承诺 0 水 0 替、模型 100% 保真。[生图工作台](https://image.jucodex.com)",
       "provider": "openai",
       "baseUrl": "https://api.sz-link.com/v1",
-      "model": "gpt-image-2.5-sunburst",
+      "model": "gpt-image-2.6-sunburst, gpt-image-2.6-flare",
       "apiMode": "images"
     },
     {
