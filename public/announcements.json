@@ -1,5 +1,12 @@
 [
   {
+    "id": "2026-11-gemini-grok",
+    "title": "支持 Gemini 和 Grok 图像模型",
+    "content": "新增 Google 和 xAI 供应商，可使用 Gemini（Nano Banana）和 Grok Imagine 生成和编辑图片。",
+    "note": "在「设置 → API 配置 → 供应商类型」中选择 Google 或 xAI\nOpenAI 兼容接口填写对应模型 ID 也可使用",
+    "media": { "type": "html", "src": "announcements/models-intro.html", "aspectRatio": "2/1" }
+  },
+  {
     "id": "2026-10-desktop-client",
     "title": "推荐使用全新的客户端",
     "content": "Windows 桌面客户端现已推出。",

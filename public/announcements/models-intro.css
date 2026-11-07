@@ -1,0 +1,48 @@
+/* 配色与圆角跟随应用：zinc 灰阶文字；背景透明，由公告卡片的媒体区提供底色 */
+:root {
+  --text: #27272a; --sub: #71717a;
+  --tile: #fff; --ring: rgba(0, 0, 0, .06); --shadow: 0 .5em 1.4em rgba(15, 23, 42, .08);
+  --glow-gemini: rgba(49, 134, 255, .22); --glow-grok: rgba(15, 23, 42, .1);
+}
+/* 颜色模式由应用通过 ?theme= 传入，未传入时跟随系统 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme=light]) { --text: #f4f4f5; --sub: #a1a1aa; --tile: #27272a; --ring: rgba(255, 255, 255, .08); --shadow: 0 .5em 1.4em rgba(0, 0, 0, .35); --glow-gemini: rgba(49, 134, 255, .28); --glow-grok: rgba(255, 255, 255, .1); }
+}
+:root[data-theme=dark] { --text: #f4f4f5; --sub: #a1a1aa; --tile: #27272a; --ring: rgba(255, 255, 255, .08); --shadow: 0 .5em 1.4em rgba(0, 0, 0, .35); --glow-gemini: rgba(49, 134, 255, .28); --glow-grok: rgba(255, 255, 255, .1); }
+
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; overflow: hidden; background: transparent; }
+body {
+  /* 按宽度缩放，卡片在手机上变窄时文字同步缩小 */
+  font: clamp(11px, 3.4vw, 15px)/1.45 'HarmonyOS Sans SC', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  color: var(--text);
+  display: grid; place-items: center;
+  -webkit-font-smoothing: antialiased;
+}
+
+.models { display: flex; gap: 3.2em; }
+.model { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; }
+/* 图标背后的柔光 */
+.model::before { content: ''; position: absolute; top: -1.2em; left: 50%; width: 8em; height: 8em; border-radius: 50%; transform: translateX(-50%); filter: blur(1.6em); z-index: -1; }
+.model:first-child::before { background: radial-gradient(circle, var(--glow-gemini), transparent 70%); }
+.model:last-child::before { background: radial-gradient(circle, var(--glow-grok), transparent 70%); }
+
+.tile {
+  display: grid; place-items: center;
+  width: 5.2em; height: 5.2em; padding: 1.15em; margin-bottom: .75em;
+  border-radius: 1.4em; background: var(--tile); color: var(--text);
+  box-shadow: var(--shadow), 0 0 0 1px var(--ring);
+  animation: float 4s ease-in-out infinite;
+}
+.grok { animation-delay: -2s; }
+svg { display: block; width: 100%; height: 100%; }
+h2 { font-size: 1.15em; font-weight: 700; line-height: 1.3; }
+p { margin-top: .1em; font-size: .85em; color: var(--sub); }
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-.3em); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile { animation: none; }
+}
