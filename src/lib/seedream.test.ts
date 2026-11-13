@@ -69,11 +69,17 @@ describe('Seedream 5.5', () => {
     expect(body).not.toHaveProperty('resolution')
   })
 
-  it.each(['doubao-seedream-5-5-261028', 'seedream-5.5', 'bytedance/seedream-5.5', 'seedream-5-5'])('recognizes %s through compatible and custom providers', (model) => {
+  it.each(['doubao-seedream-5-5-261028', 'seedream-5.5', 'bytedance/seedream-5.5', 'seedream-5-5', 'seedream-v5.5', 'seedream_v5_5', 'seedreamv5.5', 'seedream5.5', ' Seedream 5.5 ', 'bytedance/seedream-v5.5', 'doubao-seedream-v5.5-261028'])('recognizes %s through compatible and custom providers', (model) => {
     for (const provider of ['openai', 'custom-json']) {
       expect(getImageModelFamily({ provider, apiMode: 'images', model })).toBe('seedream')
     }
     expect(getImageModelFamily({ provider: 'openai', apiMode: 'responses', model })).toBeNull()
+  })
+
+  it.each(['seedream-v5.50', 'seedream-v5.0', 'seedream-v4.5', 'seedream-v15.5', 'seedream-v5.5foo', 'notseedream-v5.5'])('does not recognize %s as Seedream 5.5', (model) => {
+    for (const provider of ['openai', 'custom-json']) {
+      expect(getImageModelFamily({ provider, apiMode: 'images', model })).toBeNull()
+    }
   })
 
   it('preserves the native provider, API path and transparency after saving', () => {

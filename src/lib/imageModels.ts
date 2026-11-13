@@ -10,7 +10,7 @@ export function getImageModelFamily(profile: Pick<ApiProfile, 'provider' | 'apiM
   if (profile.provider === 'xai') return 'grok'
   if (profile.provider === 'bytedance') return 'seedream'
   const model = profile.model.trim().toLowerCase()
-  if (/(?:^|\/)(?:doubao-)?seedream[-_]5[._-]5(?:$|[-_/])/.test(model)) return 'seedream'
+  if (/(?:^|\/)(?:doubao-)?seedream[-_ ]*v?5[._-]5(?:$|[-_/ ])/.test(model)) return 'seedream'
   if (/(?:^|\/)gemini-[^/]*image|(?:^|\/)(?:gemini-)?nano[-_]?banana/.test(model)) return 'gemini'
   if (/(?:^|\/)grok-[^/]*image|(?:^|\/)grok-imagine-\d/.test(model)) return 'grok'
   return null
