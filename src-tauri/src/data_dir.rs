@@ -432,7 +432,7 @@ fn cancelled() -> io::Error {
 }
 
 /// 提示中去掉规范化带来的 \\?\ 前缀，便于用户查找
-fn shown(path: &Path) -> String {
+pub(crate) fn shown(path: &Path) -> String {
     let raw = path.display().to_string();
     match raw.strip_prefix(r"\\?\UNC\") {
         Some(rest) => format!(r"\\{rest}"),

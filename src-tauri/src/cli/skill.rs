@@ -180,7 +180,7 @@ fn skill_status(target: SkillTarget, src: &Path) -> SkillStatus {
     let Some(dst) = skill_path(target) else {
         return SkillStatus { id: target, path: String::new(), state: State::NotFound };
     };
-    SkillStatus { id: target, path: dst.to_string_lossy().into_owned(), state: dir_state(src, &dst) }
+    SkillStatus { id: target, path: crate::data_dir::shown(&dst), state: dir_state(src, &dst) }
 }
 
 fn dir_state(src: &Path, dst: &Path) -> State {
@@ -235,7 +235,7 @@ async fn run(app: AppHandle, edit: impl FnOnce(&Path) -> Result<(), String> + Se
         edit(&src)?;
         Ok(Info {
             skills: [SkillTarget::Claude, SkillTarget::Agents].iter().map(|&t| skill_status(t, &src)).collect(),
-            skill_dir: src.to_string_lossy().into_owned(),
+            skill_dir: crate::data_dir::shown(&src),
         })
     })
     .await
