@@ -43,7 +43,7 @@
       "name": "默认",
       "provider": "openai",
       "baseUrl": "https://api.openai.com/v1",
-      "model": "gpt-image-2.5-sunburst",
+      "model": "gpt-image-2.6-sunburst",
       "apiMode": "images",
       "isDefault": true
     },
