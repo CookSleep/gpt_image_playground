@@ -142,8 +142,10 @@ describe('callFalAiImageApi', () => {
     expect(input).not.toHaveProperty('provider_options')
   })
 
-  // fal.ai 的 SVG 暂不开放，恢复 falAiImageApi 中的 provider_options 后改回 it
-  it.skip('passes the SVG authoring model through provider_options', async () => {
+  it.each([
+    { name: 'explicit model', svgModel: 'gpt-6-luna' },
+    { name: 'default model', svgModel: undefined },
+  ])('uses the SVG $name without SVG reasoning settings', async ({ svgModel }) => {
     falMock.subscribe.mockResolvedValue({
       requestId: 'req-1',
       data: { images: [{ url: 'data:image/svg+xml;base64,PHN2Zy8+' }] },
@@ -152,13 +154,18 @@ describe('callFalAiImageApi', () => {
     await callFalAiImageApi({
       settings: DEFAULT_SETTINGS,
       prompt: 'prompt',
-      params: { ...DEFAULT_PARAMS, output_format: 'svg' },
+      params: { ...DEFAULT_PARAMS, output_format: 'svg', n: 4, complexity: 'low' },
+      nativeTransparentBackground: true,
       inputImageDataUrls: [],
-    }, createDefaultFalProfile({ model: 'openai/gpt-image-2.6/sunburst', apiKey: 'fal-key', svgModel: 'gpt-6-luna' }))
+    }, createDefaultFalProfile({ model: 'openai/gpt-image-2.6/sunburst', apiKey: 'fal-key', svgModel, svgReasoningEffort: 'high' }))
 
     const input = falMock.subscribe.mock.calls[0][1].input
-    expect(input).toMatchObject({ output_format: 'svg', provider_options: { svg: { model: 'gpt-6-luna' } } })
-    expect(input).not.toHaveProperty('reasoning_effort')
+    expect(input).toMatchObject({ output_format: 'svg', num_images: 1, reasoning_effort: 'low', background: 'transparent' })
+    if (svgModel) expect(input.svg_model).toBe(svgModel)
+    else expect(input).not.toHaveProperty('svg_model')
+    expect(input).not.toHaveProperty('provider_options')
+    expect(input).not.toHaveProperty('svg')
+    expect(input).not.toHaveProperty('svg_reasoning_effort')
     expect(input).not.toHaveProperty('frame_count')
   })
 

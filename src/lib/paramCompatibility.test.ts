@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
 import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
-import { getOutputImageLimitForSettings, getTaskParamSupport, normalizeParamsForSettings } from './paramCompatibility'
+import { getOutputImageLimitForSettings, getParamDisabledReasons, getTaskParamSupport, normalizeParamsForSettings } from './paramCompatibility'
 
 describe('parameter compatibility', () => {
   it.each([
@@ -40,6 +40,18 @@ describe('parameter compatibility', () => {
 
     expect(getOutputImageLimitForSettings(settings)).toBe(4)
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, n: 8 }, settings).n).toBe(4)
+  })
+
+  it('limits fal.ai SVG generation to one image and falls back to PNG for reference edits', () => {
+    const profile = createDefaultFalProfile({ model: 'openai/gpt-image-2.6/sunburst' })
+    const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id })
+
+    expect(getParamDisabledReasons(profile).svg).toBeUndefined()
+    expect(getParamDisabledReasons(profile, { hasInputImages: true }).svg).toBe('fal.ai 的参考图编辑不支持 SVG')
+    expect(getOutputImageLimitForSettings(settings, 'svg')).toBe(1)
+    expect(getOutputImageLimitForSettings(settings, 'png')).toBe(4)
+    expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, output_format: 'svg', n: 4 }, settings)).toMatchObject({ output_format: 'svg', n: 1 })
+    expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, output_format: 'svg', n: 4 }, settings, { hasInputImages: true })).toMatchObject({ output_format: 'png', n: 4 })
   })
 
   it('keeps OpenAI streaming output count so the request can disable streaming', () => {

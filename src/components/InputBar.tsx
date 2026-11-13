@@ -541,13 +541,15 @@ export default function InputBar() {
   const compressionDisabled = panelParams.output_format === 'png' || isVectorOrAnimatedFormat(panelParams.output_format) || isFalProvider
   // 不可用的参数和格式仍然显示，置灰并说明原因
   const disabledReasons = getParamDisabledReasons(activeProfile, { hasInputImages: inputImages.length > 0, agent: appMode === 'agent' })
-  const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
+  const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings, panelParams.output_format)
   const nDraftValue = Number(nInput)
   const effectiveNValue = Number.isNaN(nDraftValue) ? params.n : nDraftValue
   const streamConcurrentByN = activeProfile.provider === 'openai' && !getImageModelFamily(activeProfile) && activeProfile.streamImages === true && !agentAutoImageCount && effectiveNValue > 1
   const nLimitHintText = agentAutoImageCount
     ? 'Agent 模式下数量由模型根据提示词自动决定'
-    : `最大请求数量为 ${outputImageLimit}`
+    : isFalProvider && panelParams.output_format === 'svg'
+      ? 'fal.ai 的 SVG 格式最多生成 1 张图片'
+      : `最大请求数量为 ${outputImageLimit}`
   const sizeFamily = getImageModelFamily(activeProfile)
   const displaySize = sizeFamily === 'seedream'
     ? getSeedreamSize(activeProfile, params)

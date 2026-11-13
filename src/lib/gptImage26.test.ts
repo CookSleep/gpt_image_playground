@@ -77,10 +77,10 @@ describe('GPT Image 2.6 parameter compatibility', () => {
     expect(next).toMatchObject({ complexity: 'low', output_format: 'png' })
   })
 
-  it('keeps 2.6 params on fal.ai but caps quality at high and drops SVG', () => {
+  it('keeps 2.6 params on fal.ai and limits SVG output to one image', () => {
     const fal = createDefaultFalProfile({ apiKey: 'fal-key', model: 'openai/gpt-image-2.6/sunburst' })
     const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [fal], activeProfileId: fal.id })
-    expect(normalizeParamsForSettings({ ...params, n: 3 }, settings)).toMatchObject({ quality: 'high', complexity: 'low', output_format: 'png', n: 3 })
+    expect(normalizeParamsForSettings({ ...params, n: 3 }, settings)).toMatchObject({ quality: 'high', complexity: 'low', output_format: 'svg', n: 1 })
     expect(normalizeParamsForSettings({ ...params, output_format: 'gif' }, settings).output_format).toBe('gif')
 
     const fal25 = createDefaultFalProfile({ apiKey: 'fal-key', model: 'openai/gpt-image-2.5/sunburst' })

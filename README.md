@@ -124,8 +124,8 @@
 - **评论标注**：在画板中用评论工具点击图片添加评论，以“@图N 评论”插入提示词，发送时附上评论在图中的位置（如 `(X=52%, Y=41%)`），复用任务时可恢复。
 - **复杂度**：`auto`、`low`、`medium`、`high`，仅 GPT Image 2.6 及以上支持，在「更多」中设置；当前模型或模式不支持时选项置灰并说明原因。
 - **GIF 动图**：仅画廊模式，可设置帧数（2–16，默认 9）和每帧时长（20–2000 ms，默认 200），带参考图时也可用，但不能使用遮罩。
-- **SVG**：仅画廊模式，支持文生图和参考图编辑，由文本模型编写，可在 **「设置 → API 配置」** 中指定 SVG 编写模型和推理强度。
-- **供应商支持**：OpenAI 兼容接口（含 Codex CLI 模式）全部支持；fal.ai 支持复杂度和 GIF，暂不支持 SVG；自定义供应商需在模板中映射对应的 `$params` 变量。
+- **SVG**：仅画廊模式，由文本模型编写，支持透明背景。OpenAI 支持文生图和参考图编辑；fal.ai 仅支持文生图，每次生成一张。可在 **「设置 → API 配置」** 中指定 SVG 编写模型，fal.ai 不提供 SVG 编写模型的推理强度设置。
+- **供应商支持**：OpenAI 兼容接口（含 Codex CLI 模式）支持上述功能，具体能力取决于所用接口；fal.ai 支持复杂度、GIF 和文生图 SVG；自定义供应商需在模板中映射对应的 `$params` 变量。
 - **批量与迭代**：支持单次多图生成；一键将满意结果转为参考图，无缝开启下一轮修改。
 - **多提示词批量提交**：在习惯配置中开启后，可一次粘贴多条提示词（以两个空行分隔），共用参考图和参数；支持排队或并发（默认上限 10），可随时查看进度或停止。
 - **流式生成预览**：`Images API` 与 `Responses API` 均可流式接收中间步骤图像，缓解连接超时问题。
@@ -515,8 +515,8 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 | `model` | 是 | 模型 ID。多个模型以逗号分隔，默认使用第一个，用户可在首页切换。 |
 | `imageGenerationModel` | 否 | Responses API 的 `image_generation` 工具模型，可填任意该接口支持的图像模型，如 `gpt-image-2.6-sunburst`、`gpt-image-2.6-flare`；留空时不发送，使用 API 默认值。 |
 | `apiMode` | 否 | `"images"` 或 `"responses"`，默认 `"images"`。 |
-| `svgModel` | 否 | SVG 编写模型。Images API 留空使用 `gpt-6.1-sol`；Responses API 留空不指定，由接口使用外层 Responses 模型或默认编写模型。 |
-| `svgReasoningEffort` | 否 | SVG 编写模型的推理强度：`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。省略时使用编写模型自身默认值。 |
+| `svgModel` | 否 | SVG 编写模型。OpenAI 兼容 Images API 留空使用 `gpt-6.1-sol`；Responses API 留空不指定，由接口使用外层 Responses 模型或默认编写模型；fal.ai 留空使用接口默认模型。 |
+| `svgReasoningEffort` | 否 | SVG 编写模型的推理强度：`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。省略时使用编写模型自身默认值，fal.ai 不适用。 |
 | `isDefault` | 否 | 有多个配置时为默认项设置 `true`（只能有一个），首次使用时自动选中；只有一个配置时不填。 |
 | `timeout` | 否 | 请求超时秒数，默认 600。 |
 | `apiProxy` | 否 | 是否走部署端 API 代理，默认 `false`。 |
@@ -705,7 +705,7 @@ API 不是标准 OpenAI 格式时，在预置 JSON 的 `customProviders` 中定�
 | `profileName` | 配置名称，默认“URL 参数配置” | `?profileName=我的配置` |
 | `reasoningEffort` | Responses API 推理强度 | `?reasoningEffort=high` |
 | `svgModel` | SVG 编写模型；留空行为见上方配置字段说明 | `?svgModel=gpt-6.1-sol` |
-| `svgReasoningEffort` | SVG 编写模型的独立推理强度 | `?svgReasoningEffort=high` |
+| `svgReasoningEffort` | SVG 编写模型的独立推理强度，fal.ai 不适用 | `?svgReasoningEffort=high` |
 | `timeout` | 请求超时秒数 | `?timeout=600` |
 | `responseFormatB64Json` | 是否要求返回 Base64 图片数据，留空按默认值 | `?responseFormatB64Json=false` |
 | `codexCli` | Codex CLI 兼容模式 | `?codexCli=true` |

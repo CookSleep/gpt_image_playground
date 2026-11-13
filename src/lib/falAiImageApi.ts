@@ -1,7 +1,6 @@
 import { fal } from '@fal-ai/client'
 import type { ApiProfile, FalApiResponse, TaskParams } from '../types'
 import { DEFAULT_FAL_BASE_URL } from './apiProfiles'
-// import { DEFAULT_SVG_MODEL } from './imageModels'
 import { isGptImage25PlusModel, isGptImage26PlusModel } from './imageModels'
 import { apiFetch } from './platform'
 import {
@@ -60,11 +59,12 @@ function configureFal(profile: ApiProfile) {
 
 async function createFalRequestInput(opts: CallApiOptions, profile: ApiProfile): Promise<Record<string, unknown>> {
   const isEdit = opts.inputImageDataUrls.length > 0
+  const isSvg = opts.params.output_format === 'svg'
   const input: Record<string, unknown> = {
     prompt: opts.prompt,
     image_size: isEdit && opts.params.size === 'auto' ? 'auto' : await mapFalImageSize(opts.params.size),
     quality: mapFalQuality(opts.params.quality, profile.model),
-    num_images: Math.min(4, Math.max(1, opts.params.n || 1)),
+    num_images: isSvg ? 1 : Math.min(4, Math.max(1, opts.params.n || 1)),
     output_format: opts.params.output_format,
   }
 
@@ -76,11 +76,7 @@ async function createFalRequestInput(opts: CallApiOptions, profile: ApiProfile):
     input.frame_count = opts.params.frame_count
     input.frame_duration_ms = opts.params.frame_duration_ms
   }
-  // fal.ai 的 SVG 暂不开放：按文档请求会返回 Invalid request，能成功的写法依赖未公开的 provider_options，
-  // 可能是意外暴露的内部参数，编写模型的计费也无法确认。fal.ai 按文档可用后恢复以下代码和 paramCompatibility 中的处理。
-  // if (opts.params.output_format === 'svg') {
-  //   input.provider_options = { svg: { model: profile.svgModel?.trim() || DEFAULT_SVG_MODEL } }
-  // }
+  if (isSvg && profile.svgModel?.trim()) input.svg_model = profile.svgModel.trim()
 
   if (isEdit) {
     input.image_urls = opts.inputImageDataUrls

@@ -263,8 +263,7 @@ export default function SettingsModal() {
   const activeCustomProviderAsync = isAsyncCustomProvider(activeCustomProvider)
   const isResponsesProfile = activeProfile.provider === 'openai' && (activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses'
   // 只有 GPT Image 2.6 及以上能输出 SVG，才需要填写编写 SVG 的文本模型
-  // fal.ai 的 SVG 暂不开放，原因见 falAiImageApi 中的说明；恢复时把 fal 加回判断
-  const showSvgModel = activeProfile.provider !== 'fal' && !activeProfile.codexCli && (isResponsesProfile
+  const showSvgModel = !activeProfile.codexCli && (isResponsesProfile
     ? isGptImage26PlusModel(getEffectiveImageGenerationModel(activeProfile))
     : splitModelList(activeProfile.model).some(isGptImage26PlusModel))
   const apiProxyChecked = activeProfileApiProxyEligible && (apiProxyLocked || activeProfile.apiProxy)
@@ -1661,35 +1660,39 @@ export default function SettingsModal() {
                       onBlur={(e) => commitActiveProfilePatch({ svgModel: e.target.value.trim() || undefined })}
                       type="text"
                       disabled={activeProfileLocked}
-                      placeholder={isResponsesProfile ? '留空使用 Responses 模型' : DEFAULT_SVG_MODEL}
+                      placeholder={activeProfile.provider === 'fal' ? '留空使用接口默认模型' : isResponsesProfile ? '留空使用 Responses 模型' : DEFAULT_SVG_MODEL}
                       className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
                     />
                     <div data-selectable-text className="mt-1.5 text-xs leading-6 text-gray-500 dark:text-gray-500">
-                      输出 SVG 时，图像模型先生成参考图，再由该文本模型编写 SVG，其 token 用量另行计费。{isResponsesProfile
-                        ? '留空时不指定 SVG 编写模型，由接口使用 Responses 模型或默认编写模型。'
-                        : <>留空时使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_SVG_MODEL}</code>。</>}
+                      {activeProfile.provider === 'fal'
+                        ? '输出 SVG 时，图像模型先生成位图，再由文本模型转换为矢量图。'
+                        : <>输出 SVG 时，图像模型先生成位图，再由该文本模型编写 SVG，其 token 用量另行计费。{isResponsesProfile
+                          ? '留空时不指定 SVG 编写模型，由接口使用 Responses 模型或默认编写模型。'
+                          : <>留空时使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_SVG_MODEL}</code>。</>}</>}
                     </div>
                   </label>
-                  <div className="block">
-                    <div className="mb-1.5 flex items-center justify-between gap-3">
-                      <span className="block text-sm text-gray-600 dark:text-gray-300">SVG 推理强度</span>
-                      <div className="w-28 shrink-0">
-                        <Select
-                          value={activeProfile.svgReasoningEffort ?? ''}
-                          onChange={(value) => updateActiveProfile({ svgReasoningEffort: value ? value as ReasoningEffort : undefined }, true)}
-                          options={[
-                            { label: '默认', value: '' },
-                            ...REASONING_EFFORT_VALUES.map((value) => ({ label: value, value })),
-                          ]}
-                          disabled={activeProfileLocked}
-                          className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-1.5 text-xs text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
-                        />
+                  {activeProfile.provider !== 'fal' && (
+                    <div className="block">
+                      <div className="mb-1.5 flex items-center justify-between gap-3">
+                        <span className="block text-sm text-gray-600 dark:text-gray-300">SVG 推理强度</span>
+                        <div className="w-28 shrink-0">
+                          <Select
+                            value={activeProfile.svgReasoningEffort ?? ''}
+                            onChange={(value) => updateActiveProfile({ svgReasoningEffort: value ? value as ReasoningEffort : undefined }, true)}
+                            options={[
+                              { label: '默认', value: '' },
+                              ...REASONING_EFFORT_VALUES.map((value) => ({ label: value, value })),
+                            ]}
+                            disabled={activeProfileLocked}
+                            className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-1.5 text-xs text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
+                          />
+                        </div>
+                      </div>
+                      <div data-selectable-text className="text-xs leading-6 text-gray-500 dark:text-gray-500">
+                        SVG 编写模型的思考深度，档位越高耗时越长，有助于完成复杂任务。并非所有模型都支持全部档位，默认使用模型自身设置。
                       </div>
                     </div>
-                    <div data-selectable-text className="text-xs leading-6 text-gray-500 dark:text-gray-500">
-                      SVG 编写模型的思考深度，档位越高耗时越长，有助于完成复杂任务。并非所有模型都支持全部档位，默认使用模型自身设置。
-                    </div>
-                  </div>
+                  )}
                 </div>
               )}
 
