@@ -5,9 +5,11 @@ import { isTauri } from '../../lib/platform'
 import { getImageModelFamily, supportsGrokQuality } from '../../lib/imageModels'
 import { getImageModelOptions, getImageModelParams } from '../../lib/imageModelParams'
 import { getImageSearchSupport, getImageThinkingSupport } from '../../lib/imageSearch'
+import type { ApiProfileModelGroup } from '../../lib/apiProfiles'
 import { useHintTooltip } from '../../hooks/useHintTooltip'
 import { dismissAllTooltips } from '../../lib/tooltipDismiss'
 import Select, { type SelectOption } from '../Select'
+import ModelPicker from './ModelPicker'
 import ButtonTooltip from './buttonTooltip'
 import ParamPopoverChip, { CHIP_BASE_CLASS, CHIP_IDLE_CLASS } from './paramPopoverChip'
 
@@ -172,8 +174,11 @@ export default function InputParamsPanel({
   activeProfile,
   searchSupport,
   thinkingSupport,
-  modelOptions,
+  modelGroups,
+  activeProfileId,
+  canSwitchProfile,
   onModelChange,
+  onOpenSettings,
   isFalProvider,
   displaySize,
   qualityOptions,
@@ -226,8 +231,11 @@ export default function InputParamsPanel({
   activeProfile: ApiProfile
   searchSupport: ReturnType<typeof getImageSearchSupport>
   thinkingSupport: ReturnType<typeof getImageThinkingSupport>
-  modelOptions: Array<{ label: string; value: string }>
-  onModelChange: (model: string) => void
+  modelGroups: ApiProfileModelGroup[]
+  activeProfileId: string
+  canSwitchProfile: boolean
+  onModelChange: (profileId: string, model: string) => void
+  onOpenSettings: () => void
   isFalProvider: boolean
   displaySize: string
   qualityOptions: SelectOption[]
@@ -311,13 +319,13 @@ export default function InputParamsPanel({
   return (
     <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0 text-xs">
       <div className="min-w-0 max-w-full max-sm:flex-auto">
-        <Select
+        <ModelPicker
           value={activeProfile.model}
-          onChange={(val) => onModelChange(String(val))}
-          options={modelOptions}
-          showValueTooltips
-          menuClassName="min-w-max"
-          className={CHIP_CLASS}
+          groups={modelGroups}
+          activeProfileId={activeProfileId}
+          canSwitchProfile={canSwitchProfile}
+          onChange={onModelChange}
+          onOpenSettings={onOpenSettings}
         />
       </div>
       {family && family !== 'seedream' && (

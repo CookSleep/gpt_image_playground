@@ -9,8 +9,11 @@ import {
   DEFAULT_SETTINGS,
   createDefaultOpenAIProfile,
   createDefaultFalProfile,
+  getApiProfileContentKey,
+  getApiProfileModelGroups,
   getApiProviderLabel,
   getActiveApiProfile,
+  getAgentImageApiProfile,
   getCustomProviderDefinition,
   findEquivalentApiProfile,
   importCustomProviderDefinitionFromJson,
@@ -1763,6 +1766,68 @@ describe('model list', () => {
   it('returns the selected model for the active profile', () => {
     const profile = normalizeApiProfile({ id: 'p1', model: 'a,b', selectedModel: 'b' })
     expect(getActiveApiProfile({ profiles: [profile], activeProfileId: 'p1' }).model).toBe('b')
+  })
+})
+
+describe('homepage model groups', () => {
+  const profile = (id: string, model: string, extra: Record<string, unknown> = {}) => normalizeApiProfile({ id, name: id, model, apiKey: `${id}-key`, ...extra })
+
+  it('lists the active profile and the profiles with quick switch enabled', () => {
+    const groups = getApiProfileModelGroups({
+      profiles: [profile('a', 'm1,m2'), profile('b', 'm3'), profile('c', 'm4', { showInModelList: true })],
+      activeProfileId: 'b',
+    })
+
+    expect(groups.map((group) => group.profileId)).toEqual(['b', 'c'])
+    expect(groups[0]).toMatchObject({ name: 'b', models: ['m3'], providerLabel: 'OpenAI' })
+    expect(groups[1].models).toEqual(['m4'])
+  })
+
+  it('keeps the active profile first and keeps configuration order for the rest', () => {
+    const groups = getApiProfileModelGroups({
+      profiles: [profile('a', 'm1', { showInModelList: true }), profile('b', 'm2'), profile('c', 'm3', { showInModelList: true })],
+      activeProfileId: 'b',
+    })
+
+    expect(groups.map((group) => group.profileId)).toEqual(['b', 'a', 'c'])
+  })
+
+  it('only stores showInModelList when enabled and keeps it out of the content key', () => {
+    expect(normalizeApiProfile({ id: 'a', showInModelList: false }).showInModelList).toBeUndefined()
+    expect(normalizeApiProfile({ id: 'a' }).showInModelList).toBeUndefined()
+    expect(normalizeApiProfile({ id: 'a', showInModelList: true }).showInModelList).toBe(true)
+
+    const base = normalizeApiProfile({ id: 'a', model: 'm1' })
+    expect(getApiProfileContentKey({ ...base, showInModelList: true })).toBe(getApiProfileContentKey(base))
+  })
+
+  it.each(['native', 'hybrid'] as const)('keeps every model of an unlisted Agent profile in %s mode', (mode) => {
+    const settings = normalizeSettings({
+      profiles: [profile('a', 'm1', { showInModelList: true }), profile('b', 'm2,m3', { selectedModel: 'm3', apiMode: 'responses' })],
+      activeProfileId: 'a',
+      agentApiConfigMode: mode,
+      agentTextProfileId: 'b',
+      agentImageProfileId: 'b',
+    })
+    const active = getAgentImageApiProfile(settings)!
+
+    expect(active.model).toBe('m3')
+    expect(getApiProfileModelGroups(settings, active.id, false)).toEqual([
+      { profileId: 'b', name: 'b', providerLabel: 'OpenAI', models: ['m2', 'm3'] },
+    ])
+  })
+
+  it('keeps every model of a temporarily reused profile regardless of homepage visibility', () => {
+    const settings = normalizeSettings({
+      profiles: [profile('a', 'm1', { showInModelList: true }), profile('b', 'm2,m3')],
+      activeProfileId: 'a',
+    })
+    const active = resolveApiProfileModel(settings.profiles[1], 'm3')
+
+    expect(active.model).toBe('m3')
+    expect(getApiProfileModelGroups(settings, active.id, false)).toEqual([
+      { profileId: 'b', name: 'b', providerLabel: 'OpenAI', models: ['m2', 'm3'] },
+    ])
   })
 })
 

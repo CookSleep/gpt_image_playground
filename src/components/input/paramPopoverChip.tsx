@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { dismissAllTooltips } from '../../lib/tooltipDismiss'
+import { usePopoverDismiss } from '../../hooks/usePopoverDismiss'
 import { ChevronDownIcon } from '../icons'
 
 export const CHIP_BASE_CLASS = 'h-8 px-3.5 rounded-full text-xs transition-colors duration-200 focus:outline-none'
@@ -26,27 +27,7 @@ export default function ParamPopoverChip({
   const buttonRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!open) return
-    // 弹层内的提示随弹层一起关闭
-    const close = () => {
-      dismissAllTooltips()
-      setOpen(false)
-    }
-    const handlePointerDown = (e: PointerEvent) => {
-      const target = e.target as Node
-      if (!panelRef.current?.contains(target) && !buttonRef.current?.contains(target)) close()
-    }
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close()
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open])
+  usePopoverDismiss(open, [panelRef, buttonRef], () => setOpen(false))
 
   return (
     <div className={`relative min-w-0 max-sm:flex-auto ${className}`}>

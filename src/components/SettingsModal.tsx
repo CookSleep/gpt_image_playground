@@ -1437,6 +1437,26 @@ export default function SettingsModal() {
                       <MarkdownRenderer content={activePresetDescription} className="min-w-0 flex-1" />
                     </div>
                   )}
+                  {!presetConfigOnly && !activeProfileLocked && (
+                    <div className="mt-4 block">
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="block text-sm text-gray-600 dark:text-gray-300">在输入框模型列表中展示</span>
+                        <button
+                          type="button"
+                          onClick={() => commitActiveProfilePatch({ showInModelList: !activeProfile.showInModelList || undefined })}
+                          className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${activeProfile.showInModelList ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                          role="switch"
+                          aria-checked={Boolean(activeProfile.showInModelList)}
+                          aria-label="在输入框模型列表中展示"
+                        >
+                          <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${activeProfile.showInModelList ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+                        </button>
+                      </div>
+                      <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+                        开启后，此配置及其模型会出现在首页输入框的模型列表中，可直接切换模型和配置。
+                      </div>
+                    </div>
+                  )}
                 </div>
 
               {/* 1. 配置名称 */}

@@ -91,6 +91,8 @@ export interface ApiProfile {
   model: string
   /** 首页选中的模型；不在列表中时回退到第一个 */
   selectedModel?: string
+  /** 在首页输入框的模型列表中展示此配置 */
+  showInModelList?: boolean
   imageGenerationModel?: string
   timeout: number
   apiMode: ApiMode

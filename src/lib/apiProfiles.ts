@@ -615,6 +615,7 @@ export function normalizeApiProfile(
     apiKey: typeof record.apiKey === 'string' ? record.apiKey : defaults.apiKey,
     model: (typeof record.model === 'string' && normalizeModelList(record.model)) || defaults.model,
     selectedModel: typeof record.selectedModel === 'string' && record.selectedModel.trim() ? record.selectedModel.trim() : undefined,
+    showInModelList: record.showInModelList === true ? true : undefined,
     imageGenerationModel: typeof record.imageGenerationModel === 'string'
       ? record.imageGenerationModel.trim()
       : '',
@@ -999,6 +1000,40 @@ export function createSettingsForApiProfile(settings: AppSettings, profile: ApiP
   })
 }
 
+export interface ApiProfileModelGroup {
+  profileId: string
+  name: string
+  providerLabel: string
+  models: string[]
+}
+
+/**
+ * 实际使用的配置排在最前；允许跨配置选择时，追加开启展示的配置并保持原有顺序。
+ * 模型列表从保存的配置读取，解析后的运行时配置只包含当前选中的模型。
+ */
+export function getApiProfileModelGroups(
+  settings: Partial<AppSettings> | unknown,
+  activeProfileId?: string,
+  canSwitchProfile = true,
+): ApiProfileModelGroup[] {
+  const normalized = normalizeSettings(settings)
+  const currentId = activeProfileId ?? normalized.activeProfileId
+  const groups = normalized.profiles
+    .filter((profile) => profile.id === currentId || (canSwitchProfile && profile.showInModelList))
+    .map((profile) => ({
+      profileId: profile.id,
+      name: profile.name,
+      providerLabel: getApiProviderLabel(normalized, profile.provider),
+      models: splitModelList(profile.model),
+    }))
+    .filter((group) => group.models.length > 0)
+  const activeIndex = groups.findIndex((group) => group.profileId === currentId)
+  if (activeIndex <= 0) return groups
+  const [active] = groups.splice(activeIndex, 1)
+  groups.unshift(active)
+  return groups
+}
+
 export function validateApiProfile(profile: ApiProfile): string | null {
   if (!profile.name.trim()) return '缺少名称'
   if (profile.provider !== 'fal' && !profile.baseUrl.trim() && !shouldUseApiProxy(profile.apiProxy)) return '缺少 API URL'
@@ -1062,7 +1097,7 @@ function createPresetProfileId(provider: ApiProvider, record: Record<string, unk
 
 /** 配置内容比较忽略本地身份和默认标记，输入须已规整 */
 export function getApiProfileContentKey(profile: ApiProfile): string {
-  return JSON.stringify({ ...profile, id: undefined, isDefault: undefined })
+  return JSON.stringify({ ...profile, id: undefined, isDefault: undefined, showInModelList: undefined })
 }
 
 function getApiProfileDedupKey(profile: ApiProfile): string {

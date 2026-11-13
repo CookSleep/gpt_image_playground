@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { deleteFavoriteCollection, useStore, submitTask, submitAgentMessage, stopAgentResponse, stopBatchPrompts, addImageFromFile, removeMultipleTasks, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { DEFAULT_PARAMS, MAX_INPUT_IMAGES, type TaskRecord } from '../types'
 import { getActiveAgentRounds } from '../lib/agentConversationState'
-import { createSettingsForApiProfile, getCustomProviderDefinition, getActiveApiProfile, getAgentImageApiProfile, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
+import { createSettingsForApiProfile, getCustomProviderDefinition, getActiveApiProfile, getAgentImageApiProfile, getApiProfileModelGroups, resolveApiProfileModel } from '../lib/apiProfiles'
 import { getImageModelFamily, isVectorOrAnimatedFormat } from '../lib/imageModels'
 import { getImageSearchSupport, getImageThinkingSupport } from '../lib/imageSearch'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
@@ -451,10 +451,11 @@ export default function InputBar() {
     return reusedProfile ? resolveApiProfileModel(reusedProfile, reusedTaskApiModel ?? undefined, getCustomProviderDefinition(settings, reusedProfile.provider)) : currentActiveProfile
   }, [appMode, currentActiveProfile, reusedTaskApiModel, reusedTaskApiProfileId, settings])
   const isTemporarilyReusedProfile = activeProfile.id !== currentActiveProfile.id
-  const modelOptions = useMemo(() => (
-    splitModelList(settings.profiles.find((profile) => profile.id === activeProfile.id)?.model ?? activeProfile.model)
-      .map((model) => ({ label: model, value: model }))
-  ), [activeProfile.id, activeProfile.model, settings.profiles])
+  // 首页可选择其他勾选了展示在输入框模型列表中的配置；Agent 和临时复用其他配置时只列出当前配置
+  const canSwitchProfile = appMode === 'gallery' && !isTemporarilyReusedProfile
+  const visibleModelGroups = useMemo(() => (
+    getApiProfileModelGroups(settings, activeProfile.id, canSwitchProfile)
+  ), [settings, activeProfile.id, canSwitchProfile])
   const handleModelChange = useCallback((model: string) => {
     // 临时复用其他配置时只切换本次复用的模型，不改动该配置记住的选择
     if (isTemporarilyReusedProfile) {
@@ -465,6 +466,20 @@ export default function InputBar() {
       profiles: settings.profiles.map((profile) => profile.id === activeProfile.id ? { ...profile, selectedModel: model } : profile),
     })
   }, [activeProfile.id, isTemporarilyReusedProfile, setReusedTaskApiModel, setSettings, settings.profiles])
+  const handleModelPick = useCallback((profileId: string, model: string) => {
+    if (!canSwitchProfile || profileId === activeProfile.id) {
+      handleModelChange(model)
+      return
+    }
+    // 切换配置时一并记住该配置选中的模型
+    setSettings({
+      activeProfileId: profileId,
+      profiles: settings.profiles.map((profile) => profile.id === profileId ? { ...profile, selectedModel: model } : profile),
+    })
+  }, [activeProfile.id, canSwitchProfile, handleModelChange, setSettings, settings.profiles])
+  const openApiSettings = useCallback(() => {
+    setShowSettings(true, 'api')
+  }, [setShowSettings])
   const activeAgentConversation = appMode === 'agent'
     ? agentConversations.find((conversation) => conversation.id === activeAgentConversationId) ?? null
     : null
@@ -1697,8 +1712,11 @@ export default function InputBar() {
       activeProfile={activeProfile}
       searchSupport={getImageSearchSupport(activeProfile, getCustomProviderDefinition(settings, activeProfile.provider))}
       thinkingSupport={getImageThinkingSupport(activeProfile, getCustomProviderDefinition(settings, activeProfile.provider))}
-      modelOptions={modelOptions}
-      onModelChange={handleModelChange}
+      modelGroups={visibleModelGroups}
+      activeProfileId={activeProfile.id}
+      canSwitchProfile={canSwitchProfile}
+      onModelChange={handleModelPick}
+      onOpenSettings={openApiSettings}
       isFalProvider={isFalProvider}
       displaySize={displaySize}
       qualityOptions={qualityOptions}
