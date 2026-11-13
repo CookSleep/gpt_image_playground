@@ -1871,9 +1871,8 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   }
 
   const normalizedParams = normalizeParamsForSettings(params, requestSettings, { hasInputImages: inputImages.length > 0 })
-  // 编辑接口不接受 SVG 参数；GIF 实测在编辑时也能正常生成
-  if (inputImages.length > 0 && normalizedParams.output_format === 'svg') {
-    showToast('SVG 只能用于文生图，请移除参考图或切换输出格式', 'error')
+  if (maskDraft && normalizedParams.output_format === 'gif') {
+    showToast('GIF 不支持遮罩，请移除遮罩或切换输出格式', 'error')
     return []
   }
 

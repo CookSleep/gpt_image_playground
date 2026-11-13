@@ -58,7 +58,7 @@ body 模板变量：
 - $params.quality：Grok Imagine Image 2.0 支持 auto、low 或 medium；Gemini 和其余 Grok 图像模型省略此值。
 - $params.size、$params.quality、$params.output_format、$params.output_compression、$params.moderation、$params.n：应用内参数。
 - $params.n：用户选择的生成数量。
-- $params.complexity、$params.frame_count、$params.frame_duration_ms、$params.svg：GPT Image 2.6 参数，只在模型 ID 为 GPT Image 2.6 及以上时可用；复杂度选 auto 时省略 complexity，帧参数只在输出 GIF 时传入，svg 只在输出 SVG 时传入，值为 {"model":"SVG 编写模型 ID"}。
+- $params.complexity、$params.frame_count、$params.frame_duration_ms、$params.svg：GPT Image 2.6 参数，只在模型 ID 为 GPT Image 2.6 及以上时可用；复杂度选 auto 时省略 complexity，帧参数只在输出 GIF 时传入，svg 只在输出 SVG 时传入，值为 {"model":"SVG 编写模型 ID"}；配置了 SVG 推理强度时另含 "reasoning":{"effort":"推理强度"}。
 - $params.background：Seedream 5.5 为 auto（默认）、transparent 或 opaque；选择本地后处理且开启透明背景时为 opaque。其他模型仅在启用 API 原生透明背景时为 transparent，否则省略。
 - $inputImages.dataUrls：参考图 data URL 数组；没有参考图时会自动省略该字段。
 - $inputImages.base64：参考图 base64 数组，不含 `data:image/png;base64,` 前缀；没有参考图时会自动省略该字段。

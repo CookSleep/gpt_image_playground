@@ -93,12 +93,12 @@ describe('GPT Image 2.6 parameter compatibility', () => {
     expect(next).toMatchObject({ quality: 'auto', complexity: 'low', output_format: 'svg' })
   })
 
-  it('points Responses users to the image model when 2.6 params are unavailable', () => {
+  it('uses default image capabilities when the Responses image model is omitted', () => {
     const profile = getActiveApiProfile(createSettings({ apiMode: 'responses', model: 'gpt-image-2.6-sunburst', imageGenerationModel: '' }))
     expect(getParamDisabledReasons(profile)).toMatchObject({
-      complexity: '当前图像模型不支持复杂度参数',
-      gif: '当前图像模型不支持此格式',
-      svg: '当前图像模型不支持此格式',
+      complexity: undefined,
+      gif: undefined,
+      svg: undefined,
     })
   })
 })
@@ -240,7 +240,7 @@ describe('GPT Image 2.6 requests', () => {
     })
 
     const body = getJsonBodies(fetchMock)[0]
-    expect(body).not.toHaveProperty('stream')
+    expect(body.stream).toBe(true)
     expect(body.tools[0]).toMatchObject({ complexity: 'high', output_format: 'gif', frame_count: 3 })
     expect(body.tools[0]).not.toHaveProperty('partial_images')
   })
@@ -328,5 +328,72 @@ describe('moderation details', () => {
   it('keeps the message when details are missing or unknown', () => {
     expect(appendModerationDetails('blocked', undefined)).toBe('blocked')
     expect(appendModerationDetails('blocked', { moderation_stage: 'unknown', categories: [] })).toBe('blocked')
+  })
+})
+
+describe('SVG editing and GIF masks', () => {
+  it('sends SVG author reasoning in multipart edits', async () => {
+    const fetchMock = mockImageResponse()
+    await callImageApi({
+      settings: createSettings({ model: 'gpt-image-2.6-flare', svgReasoningEffort: 'high' }),
+      prompt: 'vector', params: { ...DEFAULT_PARAMS, output_format: 'svg' },
+      inputImageDataUrls: ['data:image/png;base64,aW1hZ2U='],
+    })
+    const body = getFormBody(fetchMock)
+    expect(body.get('svg[model]')).toBe(DEFAULT_SVG_MODEL)
+    expect(body.get('svg[reasoning][effort]')).toBe('high')
+    expect(body.has('svg')).toBe(false)
+  })
+
+  it('sends SVG author reasoning in generation requests', async () => {
+    const fetchMock = mockImageResponse()
+    await callImageApi({
+      settings: createSettings({ model: 'gpt-image-2.6-flare', svgReasoningEffort: 'high' }),
+      prompt: 'vector', params: { ...DEFAULT_PARAMS, output_format: 'svg' }, inputImageDataUrls: [],
+    })
+    expect(getJsonBodies(fetchMock)[0].svg).toEqual({ model: DEFAULT_SVG_MODEL, reasoning: { effort: 'high' } })
+  })
+
+  it('rejects GIF masks before sending a request', async () => {
+    const fetchMock = mockImageResponse()
+    await expect(callImageApi({
+      settings: createSettings({ model: 'gpt-image-2.6-flare' }),
+      prompt: 'animate', params: { ...DEFAULT_PARAMS, output_format: 'gif' },
+      inputImageDataUrls: [], maskDataUrl: 'data:image/png;base64,aW1hZ2U=',
+    })).rejects.toThrow('GIF 不支持遮罩')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('Responses SVG defaults and GIF lifecycle streaming', () => {
+  it.each([
+    [{}, undefined],
+    [{ svgReasoningEffort: 'high' }, { reasoning: { effort: 'high' } }],
+    [{ svgModel: 'gpt-6-luna', svgReasoningEffort: 'low' }, { model: 'gpt-6-luna', reasoning: { effort: 'low' } }],
+  ])('preserves optional SVG author settings: %j', async (patch, expected) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      output: [{ type: 'image_generation_call', result: 'aW1hZ2U=' }],
+    }), { headers: { 'Content-Type': 'application/json' } }))
+    await callImageApi({
+      settings: createSettings({ apiMode: 'responses', model: 'gpt-6.1-sol', imageGenerationModel: 'gpt-image-2.6-flare', ...patch } as Partial<ApiProfile>),
+      prompt: 'vector', params: { ...DEFAULT_PARAMS, output_format: 'svg' }, inputImageDataUrls: [],
+    })
+    expect(getJsonBodies(fetchMock)[0].tools[0].svg).toEqual(expected)
+  })
+
+  it('reads the final GIF from lifecycle events without requesting partial images', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+      'data: ' + JSON.stringify({ type: 'response.created', response: { output: [] } }) + '\n\n' +
+      'data: ' + JSON.stringify({ type: 'response.completed', response: { output: [{ type: 'image_generation_call', result: 'aW1hZ2U=' }] } }) + '\n\n',
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    ))
+    const result = await callImageApi({
+      settings: createSettings({ apiMode: 'responses', model: 'gpt-6.1-sol', imageGenerationModel: 'gpt-image-2.6-flare', streamImages: true, streamPartialImages: 3 }),
+      prompt: 'animate', params: { ...DEFAULT_PARAMS, output_format: 'gif' }, inputImageDataUrls: [],
+    })
+    const body = getJsonBodies(fetchMock)[0]
+    expect(body.stream).toBe(true)
+    expect(body.tools[0]).not.toHaveProperty('partial_images')
+    expect(result.images).toEqual(['data:image/gif;base64,aW1hZ2U='])
   })
 })

@@ -105,6 +105,7 @@ export interface ApiProfile {
   transparentBackgroundMethod: 'api' | 'local'
   /** 生成 SVG 时负责编写 SVG 的文本模型，留空使用默认值 */
   svgModel?: string
+  svgReasoningEffort?: ReasoningEffort
   providerDrafts?: Partial<Record<ApiProvider, Partial<Pick<ApiProfile, 'baseUrl' | 'model' | 'imageGenerationModel' | 'apiMode' | 'reasoningEffort' | 'codexCli' | 'apiProxy' | 'responseFormatB64Json' | 'streamImages' | 'streamPartialImages' | 'transparentBackgroundMethod'>>>>
 }
 

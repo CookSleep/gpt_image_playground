@@ -675,11 +675,6 @@ export default function InputParamsPanel({
                   />
                 </div>
               </div>
-              {hasInputImages && params.output_format === 'svg' && (
-                <p className="text-[11px] leading-snug text-amber-600 dark:text-amber-400">
-                  SVG 只能用于文生图，有参考图时无法提交
-                </p>
-              )}
               {isGif && (
                 <>
                   <label className={ROW_CLASS}>

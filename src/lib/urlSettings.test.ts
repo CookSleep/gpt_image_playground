@@ -1048,3 +1048,45 @@ describe('URL settings params', () => {
     ))).toEqual({})
   })
 })
+
+describe('additional profile URL parameters', () => {
+  const query = 'svgModel=svg-author&svgReasoningEffort=high&responseFormatB64Json=false&timeout=120'
+  const expected = { svgModel: 'svg-author', svgReasoningEffort: 'high', responseFormatB64Json: false, timeout: 120 }
+
+  it('imports and reuses equivalent profiles without discarding parameter differences', () => {
+    const first = normalizeSettings(buildSettingsFromUrlParams(DEFAULT_SETTINGS, new URLSearchParams(query)))
+    expect(first.profiles.find((p) => p.id === first.activeProfileId)).toMatchObject(expected)
+    const second = normalizeSettings(buildSettingsFromUrlParams(first, new URLSearchParams(query)))
+    expect(second.activeProfileId).toBe(first.activeProfileId)
+    expect(second.profiles).toHaveLength(first.profiles.length)
+    const changed = normalizeSettings(buildSettingsFromUrlParams(second, new URLSearchParams(query.replace('high', 'low'))))
+    expect(changed.activeProfileId).not.toBe(second.activeProfileId)
+    expect(changed.profiles.find((p) => p.id === changed.activeProfileId)?.svgReasoningEffort).toBe('low')
+  })
+
+  it('patches selected profiles and ignores malformed values', () => {
+    const profile = createDefaultOpenAIProfile({ id: 'selected', ...expected, svgReasoningEffort: 'high' })
+    const current = normalizeSettings({ profiles: [profile] })
+    const params = new URLSearchParams('profileId=selected&svgModel=&svgReasoningEffort=&responseFormatB64Json=oops&timeout=NaN')
+    const result = normalizeSettings(buildSettingsFromUrlParams(current, params))
+    expect(result.profiles[0]).toMatchObject({ responseFormatB64Json: false, timeout: 120 })
+    expect(result.profiles[0].svgModel).toBeUndefined()
+    expect(result.profiles[0].svgReasoningEffort).toBeUndefined()
+  })
+
+  it.each([false, true])('respects preset parameter locking: %s', async (locked) => {
+    const mod = await importPresetConfigOnlyUrlSettings({ locked })
+    const profiles = await import('./apiProfiles')
+    const current = profiles.normalizeSettings({ profiles: [profiles.createDefaultOpenAIProfile()] })
+    const result = profiles.normalizeSettings({ ...current, ...mod.buildSettingsFromUrlParams(current, new URLSearchParams(query)) })
+    if (locked) expect(result.profiles[0]).toEqual(current.profiles[0])
+    else expect(result.profiles[0]).toMatchObject(expected)
+  })
+
+  it('recognizes and removes all additional URL keys', () => {
+    const params = new URLSearchParams(query + '&keep=1')
+    expect(hasUrlSettingParams(params)).toBe(true)
+    clearUrlSettingParams(params)
+    expect(params.toString()).toBe('keep=1')
+  })
+})

@@ -134,6 +134,7 @@ export function describeImportLink(params: URLSearchParams, settings: AppSetting
     ['推理强度', (p) => p.reasoningEffort ? literal(clip(p.reasoningEffort)) : fixed('默认')],
     ['图像模型 ID', (p) => literal(clip(p.imageGenerationModel ?? ''))],
     ['SVG 编写模型 ID', (p) => literal(clip(p.svgModel ?? ''))],
+    ['SVG 推理强度', (p) => p.svgReasoningEffort ? literal(clip(p.svgReasoningEffort)) : fixed('默认')],
     ['流式传输', (p) => onOff(p.streamImages)],
     ['请求中间步骤图像数', (p) => literal(String(p.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES))],
     ['透明背景实现方式', (p) => p.transparentBackgroundMethod === 'local' ? fixed('本地后处理') : p.transparentBackgroundMethod === 'api' ? fixed('API 原生') : literal(clip(String(p.transparentBackgroundMethod)))],
@@ -143,7 +144,7 @@ export function describeImportLink(params: URLSearchParams, settings: AppSetting
     ['配置说明', (p) => literal(clip(p.description ?? ''))],
   ]
   // 上面已逐项展示的字段；其余字段（如其他服务商的草稿，可能含地址）有变化时统一提示
-  const shownKeys = new Set(['name', 'baseUrl', 'model', 'apiKey', 'provider', 'apiProxy', 'apiMode', 'selectedModel', 'imageGenerationModel', 'svgModel', 'reasoningEffort', 'streamImages', 'streamPartialImages', 'transparentBackgroundMethod', 'responseFormatB64Json', 'codexCli', 'timeout', 'description'])
+  const shownKeys = new Set(['name', 'baseUrl', 'model', 'apiKey', 'provider', 'apiProxy', 'apiMode', 'selectedModel', 'imageGenerationModel', 'svgModel', 'svgReasoningEffort', 'reasoningEffort', 'streamImages', 'streamPartialImages', 'transparentBackgroundMethod', 'responseFormatB64Json', 'codexCli', 'timeout', 'description'])
   const hidden = (profile: ApiProfile) => JSON.stringify(Object.entries(profile).filter(([key]) => !shownKeys.has(key)))
   // 新增配置只有 + 行，值为空的字段没有意义，不列出
   const fieldRows = (before: ApiProfile, after: ApiProfile, showBefore: boolean): ImportLinkDiffRow[] => fields

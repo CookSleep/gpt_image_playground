@@ -22,6 +22,7 @@ import { customProviderSupportsNativeTransparentBackground } from './customProvi
 import { shouldUseApiProxy } from './devProxy'
 import { normalizeReasoningEffort, normalizeStreamPartialImages, parseDefaultApiUrl } from './defaultApiUrl'
 import { readRuntimeEnv } from './runtimeEnv'
+import { isTauri } from './platform'
 import { isImportableConfigUrl } from './importableConfigUrl'
 import { DEFAULT_IMAGES_MODEL, getImageModelFamily } from './imageModels'
 import { DEFAULT_BATCH_PROMPT_CONCURRENCY, normalizeBatchPromptConcurrency } from './batchPrompts'
@@ -394,7 +395,10 @@ export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}):
     apiKey: DEFAULT_API_URL_PATCH?.apiKey ?? '',
     model: DEFAULT_API_URL_PATCH?.model ?? (apiMode === 'responses' ? DEFAULT_RESPONSES_MODEL : DEFAULT_IMAGES_MODEL),
     imageGenerationModel: DEFAULT_API_URL_PATCH?.imageGenerationModel ?? DEFAULT_IMAGES_MODEL,
-    timeout: DEFAULT_API_TIMEOUT,
+    timeout: DEFAULT_API_URL_PATCH?.timeout ?? DEFAULT_API_TIMEOUT,
+    svgModel: DEFAULT_API_URL_PATCH?.svgModel,
+    svgReasoningEffort: DEFAULT_API_URL_PATCH?.svgReasoningEffort,
+    responseFormatB64Json: DEFAULT_API_URL_PATCH?.responseFormatB64Json,
     reasoningEffort: DEFAULT_API_URL_PATCH?.reasoningEffort,
     codexCli: DEFAULT_API_URL_PATCH?.codexCli ?? false,
     apiProxy: DEFAULT_OPENAI_API_PROXY,
@@ -621,7 +625,7 @@ export function normalizeApiProfile(
       : '',
     timeout: typeof record.timeout === 'number' && Number.isFinite(record.timeout) ? record.timeout : defaults.timeout,
     apiMode,
-    reasoningEffort: normalizeReasoningEffort(record.reasoningEffort, defaults.reasoningEffort),
+    reasoningEffort: normalizeReasoningEffort(record.reasoningEffort),
     codexCli: !nativeProvider && Boolean(record.codexCli),
     apiProxy: provider === 'sb2api-async' ? false : typeof record.apiProxy === 'boolean' ? record.apiProxy : defaults.apiProxy,
     responseFormatB64Json: typeof record.responseFormatB64Json === 'boolean' ? record.responseFormatB64Json : undefined,
@@ -630,6 +634,7 @@ export function normalizeApiProfile(
     transparentBackgroundMethod: !nativeTransparentBackgroundUnavailable && (record.transparentBackgroundMethod === 'api' || record.transparentBackgroundMethod === 'local')
       ? record.transparentBackgroundMethod
       : defaults.transparentBackgroundMethod,
+    svgReasoningEffort: normalizeReasoningEffort(record.svgReasoningEffort),
     svgModel: typeof record.svgModel === 'string' && record.svgModel.trim() ? record.svgModel.trim() : undefined,
     providerDrafts: normalizeProviderDrafts(record.providerDrafts, customProviderIds, nativeTransparentProviderIds),
   }
@@ -1109,6 +1114,11 @@ function getApiProfileDedupKey(profile: ApiProfile): string {
     profile.imageGenerationModel?.trim(),
     profile.apiMode,
     profile.reasoningEffort,
+    profile.svgModel?.trim(),
+    profile.svgReasoningEffort,
+    profile.responseFormatB64Json,
+    profile.apiProxy,
+    profile.timeout,
   ])
 }
 
@@ -1120,6 +1130,11 @@ function getApiProfileConnectionKey(profile: ApiProfile): string {
     profile.imageGenerationModel?.trim(),
     profile.apiMode,
     profile.reasoningEffort,
+    profile.svgModel?.trim(),
+    profile.svgReasoningEffort,
+    profile.responseFormatB64Json,
+    profile.apiProxy,
+    profile.timeout,
   ])
 }
 
@@ -1258,6 +1273,7 @@ const PRESET_PROFILE_DEPLOYMENT_KEYS = [
   'streamPartialImages',
   'transparentBackgroundMethod',
   'svgModel',
+  'svgReasoningEffort',
   'providerDrafts',
 ] as const
 
@@ -1457,6 +1473,7 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
 
 export function shouldReturnBase64(profile: Pick<ApiProfile, 'baseUrl' | 'responseFormatB64Json'>) {
   if (profile.responseFormatB64Json !== undefined) return profile.responseFormatB64Json
+  if (isTauri) return false
   try {
     const host = new URL(profile.baseUrl).hostname
     return ['x.ai', 'volces.com', 'bytepluses.com'].some((domain) => host === domain || host.endsWith(`.${domain}`))

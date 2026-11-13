@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createDefaultOpenAIProfile, DEFAULT_SETTINGS, importCustomProviderSettingsFromJson, normalizeSettings } from './apiProfiles'
-import { createCustomProfileImportUrl } from './profileImportUrl'
+import { createCustomProfileImportUrl, createOpenAIProfileImportUrl } from './profileImportUrl'
 import { buildSettingsFromUrlParams } from './urlSettings'
 import { describeImportLink } from './importLink'
 
@@ -140,5 +140,42 @@ describe('createCustomProfileImportUrl', () => {
       apiKey: 'secret-key',
       model: 'custom-model',
     })
+  })
+})
+
+describe('OpenAI share defaults', () => {
+  it('explicitly restores defaults and disabled values in an existing profile', () => {
+    const source = createDefaultOpenAIProfile({ apiMode: 'responses', streamImages: false, imageGenerationModel: '' })
+    const params = new URL(createOpenAIProfileImportUrl('https://example.com', source, SHARE_OPTIONS)).searchParams
+    for (const key of ['reasoningEffort', 'svgModel', 'svgReasoningEffort', 'responseFormatB64Json', 'imageGenerationModel']) expect(params.get(key)).toBe('')
+    expect(params.get('codexCli')).toBe('false')
+    expect(params.get('streamImages')).toBe('false')
+    expect(params.has('apiProxy')).toBe(false)
+    const current = normalizeSettings({ profiles: [createDefaultOpenAIProfile({
+      id: 'target', apiMode: 'responses', reasoningEffort: 'high', svgModel: 'author', svgReasoningEffort: 'high', responseFormatB64Json: true,
+      codexCli: true, streamImages: true, streamPartialImages: 3, transparentBackgroundMethod: 'local',
+    })] })
+    params.set('profileId', 'target')
+    const next = normalizeSettings(buildSettingsFromUrlParams(current, params)).profiles[0]
+    for (const key of ['reasoningEffort', 'svgModel', 'svgReasoningEffort', 'responseFormatB64Json', 'codexCli', 'streamImages', 'streamPartialImages', 'transparentBackgroundMethod', 'imageGenerationModel'] as const) expect(next[key]).toEqual(source[key])
+    const omitted = normalizeSettings(buildSettingsFromUrlParams(current, new URLSearchParams('profileId=target&timeout=120'))).profiles[0]
+    expect(omitted).toMatchObject({ reasoningEffort: 'high', svgModel: 'author', svgReasoningEffort: 'high', responseFormatB64Json: true, codexCli: true })
+  })
+
+  it('does not inherit deployment defaults when the shared values are explicitly empty', async () => {
+    const source = createDefaultOpenAIProfile({ apiMode: 'responses', imageGenerationModel: '', streamImages: false })
+    const params = new URL(createOpenAIProfileImportUrl('https://example.com', source, SHARE_OPTIONS)).searchParams
+    vi.resetModules()
+    vi.stubEnv('VITE_DEFAULT_API_URL', 'https://api.example.com?reasoningEffort=high&svgModel=author&svgReasoningEffort=high&responseFormatB64Json=true&codexCli=true&streamImages=true&streamPartialImages=3&transparentBackgroundMethod=local')
+    try {
+      const api = await import('./apiProfiles')
+      const urls = await import('./urlSettings')
+      const result = api.normalizeSettings(urls.buildSettingsFromUrlParams(api.DEFAULT_SETTINGS, params))
+      const next = result.profiles.find((p) => p.id === result.activeProfileId)!
+      expect(next).toMatchObject({ reasoningEffort: undefined, svgModel: undefined, svgReasoningEffort: undefined, responseFormatB64Json: undefined, codexCli: false, streamImages: false, transparentBackgroundMethod: 'api' })
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
   })
 })

@@ -16,8 +16,27 @@ export function normalizeReasoningEffort(value: unknown, fallback?: ReasoningEff
     : fallback
 }
 
+export function parseOptionalProfileParams(params: URLSearchParams): Partial<Pick<ApiProfile, 'svgModel' | 'svgReasoningEffort' | 'responseFormatB64Json' | 'timeout'>> {
+  const patch: Partial<Pick<ApiProfile, 'svgModel' | 'svgReasoningEffort' | 'responseFormatB64Json' | 'timeout'>> = {}
+  const svgModel = params.get('svgModel')
+  if (svgModel !== null) patch.svgModel = svgModel.trim() || undefined
+  const effort = params.get('svgReasoningEffort')
+  const normalizedEffort = normalizeReasoningEffort(effort)
+  if (effort === '' || normalizedEffort) patch.svgReasoningEffort = normalizedEffort
+  const base64 = params.get('responseFormatB64Json')?.trim().toLowerCase()
+  if (base64 === '') patch.responseFormatB64Json = undefined
+  else if (base64 === 'true' || base64 === 'false') patch.responseFormatB64Json = base64 === 'true'
+  const timeout = params.get('timeout')
+  if (timeout?.trim() && Number.isFinite(Number(timeout)) && Number(timeout) > 0) patch.timeout = Number(timeout)
+  return patch
+}
+
 export interface DefaultApiUrlPatch {
   baseUrl: string
+  svgModel?: string
+  svgReasoningEffort?: ReasoningEffort
+  responseFormatB64Json?: boolean
+  timeout?: number
   apiKey?: string
   apiMode?: ApiMode
   model?: string
@@ -40,6 +59,7 @@ export function parseDefaultApiUrl(rawUrl: string): DefaultApiUrlPatch {
     const baseUrl = queryIndex >= 0 ? url.slice(0, queryIndex) : url
     const patch: DefaultApiUrlPatch = {
       baseUrl: normalizeBaseUrl(baseUrl),
+      ...parseOptionalProfileParams(parsed.searchParams),
     }
 
     const apiUrlParam = parsed.searchParams.get('apiUrl')

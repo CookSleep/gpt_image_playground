@@ -11,6 +11,9 @@ export type { CallApiOptions, CallApiResult } from './imageApiShared'
 export { normalizeBaseUrl } from './devProxy'
 
 export async function callImageApi(opts: CallApiOptions): Promise<CallApiResult> {
+  if (opts.params.output_format === 'gif' && opts.maskDataUrl) {
+    throw new Error('GIF 不支持遮罩，请移除遮罩或切换输出格式')
+  }
   const profile = getActiveApiProfile(opts.settings)
   const inputImageDataUrls = await Promise.all(opts.inputImageDataUrls.map(toApiInputImageDataUrl))
   const inputImageUrls = opts.inputImageUrls ? [...opts.inputImageUrls] : undefined

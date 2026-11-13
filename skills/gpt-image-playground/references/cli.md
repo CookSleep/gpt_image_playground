@@ -22,7 +22,7 @@ gpt-image-playground generate <提示词> [--prompt <提示词>]… [--image <�
 | `--quality` | `auto`、`low`、`medium`、`high`、`xhigh`、`max`；`xhigh`、`max` 只有部分模型支持，其余按 `high` |
 | `--complexity` | 模型渲染前的规划程度，只有 GPT Image 2.6 支持，其他模型按 `auto`（不发送）处理 |
 | `-n` | 每个任务的张数 |
-| `--format`、`--compression` | 输出格式；`jpeg`、`webp` 的压缩质量 0–100。`svg`、`gif` 只有 GPT Image 2.6 支持，`svg` 只能文生图，`gif` 也可用于参考图编辑 |
+| `--format`、`--compression` | 输出格式；`jpeg`、`webp` 的压缩质量 0–100。`svg`、`gif` 只有 GPT Image 2.6 支持，均可用于文生图和参考图编辑，`gif` 不能使用遮罩 |
 | `--frames`、`--frame-duration` | GIF 的帧数和每帧毫秒数，默认 9 帧、200 ms |
 | `--moderation` | `auto` 或 `low` |
 | `--transparent` | 透明背景，不支持 `jpeg`；自定义供应商未映射 `$params.background` 时 `svg`、`gif` 也不支持 |

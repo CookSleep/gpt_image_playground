@@ -15,7 +15,13 @@ export const MIME_MAP: Record<string, string> = {
 export function applyGptImage26Params(target: Record<string, unknown>, params: TaskParams, profile: ApiProfile) {
   if (params.complexity !== 'auto') target.complexity = params.complexity
   if (params.output_format === 'svg') {
-    target.svg = { model: profile.svgModel?.trim() || DEFAULT_SVG_MODEL }
+    const model = profile.svgModel?.trim() || (target.type === 'image_generation' ? undefined : DEFAULT_SVG_MODEL)
+    if (model || profile.svgReasoningEffort) {
+      target.svg = {
+        ...(model ? { model } : {}),
+        ...(profile.svgReasoningEffort ? { reasoning: { effort: profile.svgReasoningEffort } } : {}),
+      }
+    }
   }
   if (params.output_format === 'gif') {
     target.frame_count = params.frame_count

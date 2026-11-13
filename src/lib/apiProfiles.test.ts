@@ -30,8 +30,12 @@ import {
 } from './apiProfiles'
 import { CUSTOM_PROVIDER_LLM_PROMPT, DEFAULT_CUSTOM_PROVIDER_JSON } from './settingsCustomProvider'
 
+const platform = vi.hoisted(() => ({ isTauri: false }))
+vi.mock('./platform', () => platform)
+
 afterEach(() => {
   vi.unstubAllEnvs()
+  platform.isTauri = false
 })
 
 describe('validateApiProfile', () => {
@@ -1831,7 +1835,6 @@ describe('homepage model groups', () => {
   })
 })
 
-
 describe('native provider Base64 defaults', () => {
   it.each(['xai', 'bytedance'] as const)('enables Base64 for a new %s configuration without leaking into other providers', (provider) => {
     const profile = switchApiProfileProvider(createDefaultOpenAIProfile(), provider)
@@ -1869,5 +1872,36 @@ it('keeps automatic defaults and explicit choices distinct across repeated URL c
       expect(profile.responseFormatB64Json).toBe(choice)
       expect(shouldReturnBase64(profile)).toBe(choice ?? automatic)
     }
+  }
+})
+
+it('keeps streaming independent of Base64 domain defaults', () => {
+  for (const apiMode of ['images', 'responses'] as const) {
+    for (const streamImages of [undefined, true, false]) {
+      let profile = createDefaultOpenAIProfile({ apiMode, streamImages })
+      for (const baseUrl of ['https://api.x.ai/v1', 'https://ark.cn-beijing.volces.com/api/v3', 'https://ark.ap-southeast.bytepluses.com/api/v3', 'https://example.com/v1']) {
+        profile = normalizeApiProfile(JSON.parse(JSON.stringify({ ...profile, baseUrl })))
+        expect(profile.streamImages).toBe(streamImages ?? (apiMode === 'responses'))
+        expect(shouldReturnBase64(profile)).toBe(!baseUrl.includes('example.com'))
+      }
+    }
+  }
+})
+
+it('does not default to Base64 on desktop but preserves explicit choices', () => {
+  platform.isTauri = true
+  for (const baseUrl of ['https://api.x.ai/v1', 'https://ark.cn-beijing.volces.com/api/v3', 'https://ark.ap-southeast.bytepluses.com/api/v3']) {
+    expect(shouldReturnBase64({ baseUrl })).toBe(false)
+    expect(shouldReturnBase64({ baseUrl, responseFormatB64Json: true })).toBe(true)
+    expect(shouldReturnBase64({ baseUrl, responseFormatB64Json: false })).toBe(false)
+  }
+})
+
+it('initializes additional default URL configuration fields', async () => {
+  vi.resetModules()
+  vi.stubEnv('VITE_DEFAULT_API_URL', 'https://example.com?svgModel=svg-author&svgReasoningEffort=high&responseFormatB64Json=false&timeout=120')
+  const mod = await import('./apiProfiles')
+  for (const profile of [mod.createDefaultOpenAIProfile(), mod.DEFAULT_SETTINGS.profiles[0]]) {
+    expect(profile).toMatchObject({ svgModel: 'svg-author', svgReasoningEffort: 'high', responseFormatB64Json: false, timeout: 120 })
   }
 })

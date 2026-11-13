@@ -58,7 +58,7 @@ const SETTING_KEYS = [
 
 const PROFILE_FIELDS = new Set([
   'name', 'provider', 'baseUrl', 'apiKey', 'model', 'selectedModel', 'imageGenerationModel', 'timeout', 'apiMode',
-  'reasoningEffort', 'codexCli', 'apiProxy', 'responseFormatB64Json', 'streamImages', 'streamPartialImages', 'transparentBackgroundMethod', 'svgModel',
+  'reasoningEffort', 'codexCli', 'apiProxy', 'responseFormatB64Json', 'streamImages', 'streamPartialImages', 'transparentBackgroundMethod', 'svgModel', 'svgReasoningEffort',
 ])
 
 const QUALITIES = ['auto', 'low', 'medium', 'high', 'xhigh', 'max']
@@ -195,7 +195,6 @@ async function generateImage(requestId: number, args: Record<string, unknown>): 
   // 与 submitTask 相同：按提交时的配置规范化后再检查，不支持 SVG 的模型会自动改用 PNG
   const settings = getSettings()
   const finalParams = normalizeParamsForSettings({ ...useStore.getState().params, ...params }, settings, { hasInputImages: references.length > 0 })
-  if (references.length && finalParams.output_format === 'svg') throw new Error('SVG 只能用于文生图，请去掉参考图或换用其他格式')
   if (finalParams.transparent_output && !supportsTransparentOutput(settings, getActiveApiProfile(settings), finalParams.output_format)) {
     throw new Error('当前自定义服务商未映射 $params.background，SVG 和 GIF 无法使用透明背景，请关闭透明背景或换用 PNG、WebP')
   }

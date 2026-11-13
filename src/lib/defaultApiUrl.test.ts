@@ -28,3 +28,14 @@ describe('parseDefaultApiUrl', () => {
     expect(buildApiUrl(parsed.baseUrl, 'responses')).toBe('https://api.example.com/responses')
   })
 })
+
+it('parses SVG, Base64 and timeout defaults without accepting invalid values', () => {
+  expect(parseDefaultApiUrl('https://example.com?svgModel=svg-author&svgReasoningEffort=high&responseFormatB64Json=false&timeout=120')).toMatchObject({
+    svgModel: 'svg-author', svgReasoningEffort: 'high', responseFormatB64Json: false, timeout: 120,
+  })
+  expect(parseDefaultApiUrl('https://example.com?svgReasoningEffort=invalid&responseFormatB64Json=1&apiProxy=yes&timeout=-1')).toEqual({ baseUrl: 'https://example.com' })
+})
+
+it('ignores the apiProxy query parameter', () => {
+  expect(parseDefaultApiUrl('https://example.com?apiProxy=true')).toEqual({ baseUrl: 'https://example.com' })
+})

@@ -296,11 +296,12 @@ describe('describeImportLink', () => {
   })
 
   it('新增配置列出链接中设置了的其他字段', () => {
-    const desc = describeImportLink(parseImportLink(settingsLink({ profiles: [{ name: 'X', provider: 'openai', baseUrl: 'https://x.example.com/v1', codexCli: true, timeout: 300, reasoningEffort: 'high' }] }))!, current())
+    const desc = describeImportLink(parseImportLink(settingsLink({ profiles: [{ name: 'X', provider: 'openai', baseUrl: 'https://x.example.com/v1', codexCli: true, timeout: 300, reasoningEffort: 'high', svgReasoningEffort: 'low' }] }))!, current())
     const rows = desc.groups[0].rows
     expect(rows).toContainEqual({ label: 'Codex CLI 兼容模式', after: { text: '开启', fixed: true } })
     expect(rows).toContainEqual({ label: '请求超时 (秒)', after: { text: '300' } })
     expect(rows).toContainEqual({ label: '推理强度', after: { text: 'high' } })
+    expect(rows).toContainEqual({ label: 'SVG 推理强度', after: { text: 'low' } })
     expect(rows.map((item) => item.label)).not.toContain('流式传输')
     expect(rows.map((item) => item.label)).not.toContain('服务商类型')
   })
