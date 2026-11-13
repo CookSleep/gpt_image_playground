@@ -7,9 +7,11 @@ import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { suppressGlobalClicks } from '../lib/clickSuppression'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { getImageComments } from '../lib/promptImageMentions'
+import { getInputImageProfile } from '../lib/inputImageLimits'
+import { getMaskDisabledReason } from '../lib/paramCompatibility'
 import { CommentPin } from './CommentMarks'
 import MarkupOverlay from './input/markupOverlay'
-import { EditIcon, RefreshIcon } from './icons'
+import { CloseIcon, EditIcon, RefreshIcon } from './icons'
 
 const MIN_SCALE = 1
 const MAX_SCALE = 10
@@ -29,7 +31,9 @@ export default function Lightbox() {
   const lightboxImageList = useStore((s) => s.lightboxImageList)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const maskDraft = useStore((s) => s.maskDraft)
-  const tasks = useStore((s) => s.tasks)
+  const clearMaskDraft = useStore((s) => s.clearMaskDraft)
+  const maskDisabledReason = useStore((s) => getMaskDisabledReason(getInputImageProfile(s), s.params.output_format))
+  const lightboxContext = useStore((s) => s.lightboxContext)
   const inputImages = useStore((s) => s.inputImages)
   const lightboxMarkupIds = useStore((s) => s.lightboxMarkupIds)
   const lightboxCommentPrompt = useStore((s) => s.lightboxCommentPrompt)
@@ -86,16 +90,15 @@ export default function Lightbox() {
       return
     }
 
-    if (maskDraft?.targetImageId === lightboxImageId) {
-      setMaskImageSrc(maskDraft.maskDataUrl)
+    if (lightboxContext?.type === 'input') {
+      setMaskImageSrc(maskDraft?.targetImageId === lightboxImageId ? maskDraft.maskDataUrl : '')
       return
     }
 
     setMaskImageSrc('')
 
-    const taskWithMask = tasks.find((t) => t.maskTargetImageId === lightboxImageId && t.maskImageId)
-    if (taskWithMask?.maskImageId) {
-      const maskImageId = taskWithMask.maskImageId
+    if (lightboxContext?.type === 'history' && lightboxContext.maskTargetImageId === lightboxImageId && lightboxContext.maskImageId) {
+      const maskImageId = lightboxContext.maskImageId
       const cached = getCachedImage(maskImageId)
       if (cached) {
         setMaskImageSrc(cached)
@@ -111,7 +114,7 @@ export default function Lightbox() {
     return () => {
       cancelled = true
     }
-  }, [lightboxImageId, maskDraft?.targetImageId, maskDraft?.maskDataUrl, tasks])
+  }, [lightboxImageId, maskDraft?.targetImageId, maskDraft?.maskDataUrl, lightboxContext])
 
   // 生成遮罩预览
   useEffect(() => {
@@ -142,13 +145,13 @@ export default function Lightbox() {
   const goTo = useCallback((idx: number) => {
     if (lightboxImageList.length === 0) return
     const wrapped = ((idx % lightboxImageList.length) + lightboxImageList.length) % lightboxImageList.length
-    setLightboxImageId(lightboxImageList[wrapped], lightboxImageList, lightboxCommentPrompt, lightboxMarkupIds)
-  }, [lightboxCommentPrompt, lightboxImageList, lightboxMarkupIds, setLightboxImageId])
+    setLightboxImageId(lightboxImageList[wrapped], lightboxImageList, lightboxCommentPrompt, lightboxMarkupIds, lightboxContext)
+  }, [lightboxCommentPrompt, lightboxImageList, lightboxMarkupIds, lightboxContext, setLightboxImageId])
 
   const goPrev = useCallback(() => { if (showNav) goTo(currentIndex - 1) }, [showNav, currentIndex, goTo])
   const goNext = useCallback(() => { if (showNav) goTo(currentIndex + 1) }, [showNav, currentIndex, goTo])
 
-  const isInputImage = Boolean(lightboxImageId && inputImages.some((image) => image.id === lightboxImageId))
+  const isInputImage = lightboxContext?.type === 'input' && Boolean(lightboxImageId && inputImages.some((image) => image.id === lightboxImageId))
 
   const openReplaceFilePicker = useCallback(() => {
     if (!lightboxImageId || !isInputImage) return
@@ -188,12 +191,12 @@ export default function Lightbox() {
 
       replaceInputImage(targetIdx, image)
       const nextList = lightboxImageList.map((id) => id === targetId ? image.id : id)
-      setLightboxImageId(image.id, nextList, lightboxCommentPrompt, lightboxMarkupIds)
+      setLightboxImageId(image.id, nextList, lightboxCommentPrompt, lightboxMarkupIds, lightboxContext)
       showToast('参考图已替换', 'success')
     } catch (err) {
       showToast(`参考图替换失败：${err instanceof Error ? err.message : String(err)}`, 'error')
     }
-  }, [lightboxCommentPrompt, lightboxImageList, lightboxMarkupIds, replaceInputImage, setLightboxImageId, showToast])
+  }, [lightboxCommentPrompt, lightboxImageList, lightboxMarkupIds, lightboxContext, replaceInputImage, setLightboxImageId, showToast])
 
   const editInputImage = useCallback(() => {
     if (!lightboxImageId || !isInputImage || !src) return
@@ -201,7 +204,7 @@ export default function Lightbox() {
     const baseImageSrc = src
 
     // 已是遮罩主图时继续编辑遮罩
-    if (maskDraft?.targetImageId === imageId) {
+    if (maskDraft?.targetImageId === imageId && !maskDisabledReason) {
       close()
       setMaskEditorImageId(imageId)
       return
@@ -212,6 +215,7 @@ export default function Lightbox() {
       setSketchBoard({ baseImageSrc, replaceImageId: imageId })
     }
     const openMask = () => {
+      if (maskDisabledReason) return
       if (maskDraft) {
         showToast('只能有一张遮罩图，请先移除现有遮罩', 'info')
         return
@@ -223,11 +227,11 @@ export default function Lightbox() {
       if (checked) setSettings({ referenceImageEditAction: choice })
     }
 
-    if (settings.referenceImageEditAction === 'sketch') {
+    if (maskDisabledReason || settings.referenceImageEditAction === 'sketch') {
       openSketch()
       return
     }
-    if (settings.referenceImageEditAction === 'mask') {
+    if (settings.referenceImageEditAction === 'mask' && !maskDisabledReason) {
       openMask()
       return
     }
@@ -255,7 +259,7 @@ export default function Lightbox() {
         },
       ],
     })
-  }, [close, isInputImage, lightboxImageId, maskDraft, setConfirmDialog, setMaskEditorImageId, setSettings, setSketchBoard, settings.referenceImageEditAction, showToast, src])
+  }, [close, isInputImage, lightboxImageId, maskDraft, maskDisabledReason, setConfirmDialog, setMaskEditorImageId, setSettings, setSketchBoard, settings.referenceImageEditAction, showToast, src])
 
   // 键盘左右切换
   useEffect(() => {
@@ -289,6 +293,10 @@ export default function Lightbox() {
         onNext={goNext}
         showInputActions={isInputImage}
         onReplace={openReplaceFilePicker}
+        onRemoveMask={maskDraft?.targetImageId === lightboxImageId && maskDisabledReason ? () => {
+          clearMaskDraft()
+          showToast('已移除遮罩', 'success')
+        } : undefined}
         onEdit={editInputImage}
       />
       <input
@@ -316,11 +324,12 @@ interface LightboxInnerProps {
   onNext: () => void
   showInputActions: boolean
   onReplace: () => void
+  onRemoveMask?: () => void
   onEdit: () => void
 }
 
 /** 内部组件：保证挂载时 DOM 已经存在，所有 ref / effect 都可靠 */
-function LightboxInner({ src, comments, imageId, markupImageId, maskPreviewSrc, onClose, showNav, currentIndex, total, onPrev, onNext, showInputActions, onReplace, onEdit }: LightboxInnerProps) {
+function LightboxInner({ src, comments, imageId, markupImageId, maskPreviewSrc, onClose, showNav, currentIndex, total, onPrev, onNext, showInputActions, onReplace, onRemoveMask, onEdit }: LightboxInnerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const openedAtRef = useRef(Date.now())
 
@@ -872,10 +881,10 @@ function LightboxInner({ src, comments, imageId, markupImageId, maskPreviewSrc, 
           <button
             type="button"
             className="flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-blue-500 px-5 py-2.5 text-sm font-medium text-white shadow-md transition hover:bg-blue-600 hover:shadow-blue-500/25 active:scale-95"
-            onClick={onEdit}
+            onClick={onRemoveMask ?? onEdit}
           >
-            <EditIcon className="w-4 h-4" />
-            <span>编辑图片</span>
+            {onRemoveMask ? <CloseIcon className="w-4 h-4" /> : <EditIcon className="w-4 h-4" />}
+            <span>{onRemoveMask ? '移除遮罩' : '编辑图片'}</span>
           </button>
         </div>
       )}

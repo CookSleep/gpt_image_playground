@@ -154,7 +154,7 @@ describe('Seedream 5.5', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
     const profile = switchApiProfileProvider(createDefaultOpenAIProfile(), 'bytedance')
     const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id })
-    await expect(callImageApi({ settings, prompt: '测试', params: DEFAULT_PARAMS, inputImageDataUrls: Array(11).fill('data:image/png;base64,aW1hZ2U=') })).rejects.toThrow('最多接受 10 张参考图')
+    await expect(callImageApi({ settings, prompt: '测试', params: DEFAULT_PARAMS, inputImageDataUrls: Array(11).fill('data:image/png;base64,aW1hZ2U=') })).rejects.toThrow('最多支持 10 张参考图')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })

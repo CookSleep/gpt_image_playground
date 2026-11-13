@@ -1518,6 +1518,7 @@ describe('fal task recovery', () => {
     await putDbTask(falTask)
     vi.mocked(getFalQueuedImageResult).mockResolvedValueOnce({
       images: ['data:image/png;base64,fal-recovered'],
+      searchGrounding: [{ sources: [{ uri: 'https://example.com/source', title: 'Source' }] }],
       actualParams: { output_format: 'png' },
       actualParamsList: [{ output_format: 'png' }],
       revisedPrompts: [],
@@ -1536,6 +1537,7 @@ describe('fal task recovery', () => {
       transparentOutput: true,
     })
     expect(recovered?.transparentOriginalImages).toHaveLength(1)
+    expect(recovered?.searchGrounding).toEqual([{ sources: [{ uri: 'https://example.com/source', title: 'Source' }] }])
     const outputImage = await getImage(recovered!.outputImages[0])
     const originalImage = await getImage(recovered!.transparentOriginalImages![0])
     expect(outputImage?.dataUrl).toBe('transparent:data:image/png;base64,fal-recovered')
@@ -6110,5 +6112,67 @@ describe('lightbox reference context', () => {
     useStore.getState().setLightboxImageId('original', ['original'], null, { original: 'markup' })
     useStore.getState().setLightboxImageId(null)
     expect(useStore.getState().lightboxMarkupIds).toEqual({})
+  })
+})
+
+
+describe('参考图数量限制入口', () => {
+  const images = Array.from({ length: 6 }, (_, idx) => ({ id: `limit-${idx}`, dataUrl: `data:image/png;base64,${idx}` }))
+  const profile = createDefaultFalProfile({ id: 'limit-fal', apiKey: 'test-key', model: 'xai/grok-imagine-image/v2.0' })
+
+  beforeEach(() => {
+    vi.mocked(callImageApi).mockClear()
+    useStore.setState({
+      settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id }),
+      appMode: 'gallery', prompt: '测试', inputImages: [], params: { ...DEFAULT_PARAMS }, tasks: [],
+      reusedTaskApiProfileId: null, reusedTaskApiModel: null, reusedTaskApiProfileMissing: false,
+      maskDraft: null, batchProgress: null, showToast: vi.fn(),
+    })
+  })
+
+  it('共用添加入口保留超限图片，重复图片不占名额', () => {
+    for (const img of images.slice(0, 5)) useStore.getState().addInputImage(img)
+    expect(() => useStore.getState().addInputImage(images[0])).not.toThrow()
+    expect(() => useStore.getState().addInputImage(images[5])).not.toThrow()
+    expect(useStore.getState().inputImages).toEqual(images)
+  })
+
+  it('切换到更低上限保留全部图片，提交前阻止请求且不创建任务', async () => {
+    useStore.getState().setInputImages(images)
+    useStore.getState().setSettings({ profiles: [{ ...profile, model: 'xai/grok-imagine-image' }] })
+    expect(useStore.getState().inputImages).toEqual(images)
+    expect(await submitTask()).toEqual([])
+    expect(useStore.getState().showToast).toHaveBeenCalledWith(expect.stringContaining('最多支持 3 张'), 'error')
+    expect(callImageApi).not.toHaveBeenCalled()
+    expect(useStore.getState().tasks).toEqual([])
+    expect(useStore.getState().inputImages).toEqual(images)
+  })
+
+  it('命令行直接提交同样校验，不修改输入草稿', async () => {
+    useStore.getState().addInputImage(images[0])
+    expect(await submitTask({ input: { prompts: ['测试'], inputImages: images } })).toEqual([])
+    expect(callImageApi).not.toHaveBeenCalled()
+    expect(useStore.getState().inputImages).toEqual([images[0]])
+  })
+
+  it('重试超限任务不会覆盖已有结果', async () => {
+    const source = task({ inputImageIds: images.map((img) => img.id), outputImages: ['existing-output'] })
+    useStore.setState({ tasks: [source] })
+    await retryTask(source)
+    expect(useStore.getState().tasks).toEqual([source])
+    expect(callImageApi).not.toHaveBeenCalled()
+    expect(useStore.getState().showToast).toHaveBeenCalledWith(expect.stringContaining('最多支持 5 张'), 'error')
+  })
+
+  it('Agent 混合模式按图像配置校验，保留超限草稿', async () => {
+    const textProfile = createDefaultOpenAIProfile({ id: 'text', apiKey: 'test-key', apiMode: 'responses' })
+    useStore.setState({
+      settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [textProfile, profile], activeProfileId: textProfile.id, agentApiConfigMode: 'hybrid', agentTextProfileId: textProfile.id, agentImageProfileId: profile.id }),
+      appMode: 'agent', inputImages: images,
+    })
+    await submitAgentMessage()
+    expect(useStore.getState().showToast).toHaveBeenCalledWith(expect.stringContaining('最多支持 5 张'), 'error')
+    expect(useStore.getState().inputImages).toEqual(images)
+    expect(callImageApi).not.toHaveBeenCalled()
   })
 })

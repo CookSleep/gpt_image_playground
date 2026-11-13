@@ -3,7 +3,7 @@ import { normalizeBaseUrl } from './api'
 import {
   DEFAULT_FAL_BASE_URL,
   NATIVE_IMAGE_PROVIDERS,
-  DEFAULT_FAL_MODEL,
+  DEFAULT_FAL_MODEL_LIST,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_RESPONSES_MODEL,
   DEFAULT_SETTINGS,
@@ -63,7 +63,7 @@ export function prepareSettingsForCommit(draft: AppSettings): AppSettings {
     const baseUrl = profile.provider === 'fal'
       ? profile.baseUrl.trim().replace(/\/+$/, '') || (profile.id === defaultProfileId ? '' : DEFAULT_FAL_BASE_URL)
       : shouldKeepEmptyBaseUrl ? '' : normalizeBaseUrl(profile.baseUrl.trim() || nativeProvider?.baseUrl || emptyBaseUrlFallback, profile.provider === 'google' ? 'v1beta' : profile.provider === 'bytedance' ? 'v3' : 'v1')
-    const defaultModel = nativeProvider?.model ?? (profile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(profile.apiMode))
+    const defaultModel = nativeProvider?.model ?? (profile.provider === 'fal' ? DEFAULT_FAL_MODEL_LIST : getDefaultModelForMode(profile.apiMode))
     return {
       ...profile,
       name: profile.name.trim() || (profile.id === defaultProfileId ? '默认' : '新配置'),

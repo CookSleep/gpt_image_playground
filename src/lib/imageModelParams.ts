@@ -8,15 +8,20 @@ export function getImageModelOptions(profile: ApiProfile) {
   const ratios = ['auto', '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9']
   if (family === 'seedream') return { ratios: [...ratios, '1:2', '2:1', '1:4', '4:1', '1:8', '8:1', '1:16', '16:1'], resolutions: [...SEEDREAM_RESOLUTIONS] }
   if (family === 'grok') {
+    if (profile.provider === 'fal') return {
+      ratios: [...ratios.filter((ratio) => !['4:5', '5:4', '21:9'].includes(ratio)), '9:19.5', '19.5:9', '9:20', '20:9', '1:2', '2:1', ...(supportsGrokQuality(model) ? ['21:9', '5:2'] : [])],
+      resolutions: supportsGrokQuality(model) ? ['1K', '1.5K', '2K'] : ['1K', '2K'],
+    }
     if (usesGrokSizeParams(profile)) return { ratios: ['auto', '1:1', '16:9', '9:16', '3:2', '2:3'], resolutions: [] }
     return { ratios: [...ratios.filter((ratio) => ratio !== '4:5' && ratio !== '5:4'), '9:19.5', '19.5:9', '9:20', '20:9', '1:2', '2:1', '5:2'], resolutions: ['1K', '2K'] }
   }
-  const firstGeneration = /gemini-2\.5-|(?:^|\/)nano[-_]?banana(?:$|-(?:image|preview))/.test(model)
+  const firstGeneration = /gemini-2\.5-|(?:^|\/)nano[-_]?banana(?:$|\/|-(?:image|preview))/.test(model)
   const flashLite = /flash-lite-image/.test(model)
   const flash31 = /gemini-3\.1-.*image|nano[-_]?banana-2(?:$|[^.])/.test(model)
   return {
     ratios: firstGeneration || flashLite || /gemini-3-pro/.test(model) ? ratios : [...ratios, '1:4', '4:1', '1:8', '8:1'],
-    resolutions: profile.provider === 'google' && /gemini-2\.5-/.test(model) ? []
+    resolutions: (profile.provider === 'google' && /gemini-2\.5-/.test(model)) || (profile.provider === 'fal' && firstGeneration) ? []
+      : profile.provider === 'fal' && /nano-banana-2(?:$|\/)/.test(model) ? ['512', '1K', '2K', '4K']
       : firstGeneration || flashLite ? ['1K'] : flash31 && profile.provider === 'google' ? ['512', '1K', '2K', '4K'] : ['1K', '2K', '4K'],
   }
 }

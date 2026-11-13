@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MAX_INPUT_IMAGES } from '../../types'
+import { getInputImageLimit, getInputImageProfile } from '../../lib/inputImageLimits'
 import { addImageFromUrl, useStore } from '../../store'
 import { isTauri } from '../../lib/platform'
 import { useCloseOnEscape } from '../../hooks/useCloseOnEscape'
@@ -12,7 +12,7 @@ export default function AddImageUrlsModal({ onClose }: { onClose: () => void }) 
   const [text, setText] = useState('')
   const [errorLines, setErrorLines] = useState<Set<number>>(() => new Set())
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
-  const remaining = useStore((s) => MAX_INPUT_IMAGES - s.inputImages.length)
+  const inputImageLimit = useStore((s) => getInputImageLimit(getInputImageProfile(s)))
   const panelRef = useRef<HTMLDivElement>(null)
   const highlightRef = useRef<HTMLDivElement>(null)
 
@@ -48,10 +48,6 @@ export default function AddImageUrlsModal({ onClose }: { onClose: () => void }) 
     }
 
     const urls = [...new Set(lines.filter(Boolean))]
-    if (urls.length > remaining) {
-      showToast(`参考图最多 ${MAX_INPUT_IMAGES} 张，当前还能添加 ${remaining} 张`, 'error')
-      return
-    }
 
     setErrorLines(new Set())
     setProgress({ done: 0, total: urls.length })
@@ -134,7 +130,7 @@ export default function AddImageUrlsModal({ onClose }: { onClose: () => void }) 
         {/* 窗口较矮时只滚动说明和输入框，标题和按钮始终可见 */}
         <div className="custom-scrollbar -mx-2 min-h-0 overflow-y-auto overscroll-contain px-2">
           <p className="mb-3 text-sm leading-relaxed text-gray-500 dark:text-gray-400 text-pretty">
-            每行一个图片链接，按顺序添加为参考图，当前还能添加 {remaining} 张。原链接会随参考图保留，供只接受链接参考图的自定义服务商使用。
+            每行 1 个图片链接，按顺序添加为参考图，当前模型每次最多使用 {inputImageLimit} 张，超限图片会保留并置灰。原链接会随参考图保留，供只接受链接参考图的自定义服务商使用。
           </p>
           {/* 文本框文字透明，文字由下方同样排版的一层绘制，以便把出错行标红；不换行。
               这一层没有滚动条，可滚动范围与文本框不同，因此按文本框的滚动位置整体平移 */}
@@ -186,7 +182,7 @@ export default function AddImageUrlsModal({ onClose }: { onClose: () => void }) 
           </button>
           <button
             onClick={() => void handleSubmit()}
-            disabled={Boolean(progress) || remaining <= 0}
+            disabled={Boolean(progress)}
             className="flex-1 py-2 rounded-xl bg-blue-500 text-sm font-medium text-white hover:bg-blue-600 transition disabled:cursor-not-allowed disabled:opacity-60"
           >
             {progress ? `添加中 ${progress.done}/${progress.total}` : '添加'}

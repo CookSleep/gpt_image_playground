@@ -57,7 +57,7 @@ function ChatImageThumb({ imageId, imageIndex, maskImageId, round }: { imageId: 
       className={`relative h-16 w-16 shrink-0 overflow-hidden rounded-lg shadow-sm cursor-pointer transition-opacity hover:opacity-90 ${
         maskImageId || commentCount > 0 ? 'border-2 border-blue-500' : 'border border-gray-200 dark:border-white/[0.08]'
       }`}
-      onClick={() => setLightboxImageId(imageId, round.inputImageIds, round.prompt)}
+      onClick={() => setLightboxImageId(imageId, round.inputImageIds, round.prompt, {}, { type: 'history', maskTargetImageId: round.maskTargetImageId ?? round.inputImageIds[0], maskImageId: round.maskImageId })}
     >
       {src ? <img src={src} className="h-full w-full object-cover" alt="" /> : <div className="h-full w-full bg-gray-100 dark:bg-white/[0.04]" />}
       {maskImageId && (

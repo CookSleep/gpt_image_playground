@@ -14,6 +14,13 @@ const provider: CustomProviderDefinition = {
 }
 
 describe('图像搜索', () => {
+  it.each(['google/nano-banana-2.1', 'google/nano-banana-2.1/edit'])('按 fal.ai 端点区分网页搜索和图片搜索：%s', (model) => {
+    const profile = createDefaultOpenAIProfile({ provider: 'fal', model })
+    expect(getImageSearchSupport(profile)).toEqual({ googleSearch: undefined, imageSearch: '当前接口不支持 Image Search' })
+    expect(getImageSearchSupport({ ...profile, model: 'fal-ai/nano-banana-2' })).toEqual({ googleSearch: undefined, imageSearch: undefined })
+    const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id })
+    expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, google_search: true, image_search: true }, settings)).toMatchObject({ google_search: true, image_search: undefined })
+  })
   it.each([
     ['gemini-3.1-flash-image', ['minimal', 'high']],
     ['gemini-3.1-flash-lite-image', ['minimal', 'high']],
@@ -46,7 +53,7 @@ describe('图像搜索', () => {
 
   it('兼容接口没有统一搜索字段，自定义接口按模型映射判断', () => {
     const profile = createDefaultOpenAIProfile({ model: 'gemini-3.1-flash-image' })
-    expect(getImageSearchSupport(profile).googleSearch).toContain('映射')
+    expect(getImageSearchSupport(profile).googleSearch).toBe('当前接口不支持搜索参数')
     expect(getImageSearchSupport({ ...profile, provider: provider.id }, provider)).toEqual({ googleSearch: undefined, imageSearch: undefined })
     expect(getImageSearchSupport({ ...profile, provider: provider.id, model: 'gemini-lite-image' }, provider).imageSearch).toContain('未映射')
   })

@@ -41,6 +41,13 @@ export { DEFAULT_IMAGES_MODEL } from './imageModels'
 export const DEFAULT_RESPONSES_MODEL = 'gpt-6.1-sol'
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
+export const DEFAULT_FAL_MODEL_LIST = [
+  'openai/gpt-image-2.6/sunburst',
+  'openai/gpt-image-2.6/flare',
+  'google/nano-banana-2.1',
+  'xai/grok-imagine-image/v2.0/text-to-image',
+  'bytedance/seedream/v5.5/text-to-image',
+].join(', ')
 export const NATIVE_IMAGE_PROVIDERS = {
   google: { name: 'Google', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-nano-banana-2.1' },
   bytedance: { name: '字节跳动', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3/', model: 'doubao-seedream-5-5-261028' },
@@ -417,7 +424,7 @@ export function createDefaultFalProfile(overrides: Partial<ApiProfile> = {}): Ap
     provider: 'fal',
     baseUrl: DEFAULT_FAL_BASE_URL,
     apiKey: '',
-    model: DEFAULT_FAL_MODEL,
+    model: DEFAULT_FAL_MODEL_LIST,
     imageGenerationModel: DEFAULT_IMAGES_MODEL,
     timeout: DEFAULT_API_TIMEOUT,
     apiMode: 'images',
@@ -471,7 +478,7 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
       ...profile,
       provider,
       baseUrl: savedDraft?.baseUrl ?? DEFAULT_FAL_BASE_URL,
-      model: savedDraft?.model ?? DEFAULT_FAL_MODEL,
+      model: savedDraft?.model ?? DEFAULT_FAL_MODEL_LIST,
       imageGenerationModel: savedDraft?.imageGenerationModel ?? profile.imageGenerationModel,
       apiMode: 'images',
       reasoningEffort: savedDraft?.reasoningEffort,

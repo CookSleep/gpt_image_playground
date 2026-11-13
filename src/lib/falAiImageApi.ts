@@ -1,7 +1,10 @@
 import { fal } from '@fal-ai/client'
 import type { ApiProfile, FalApiResponse, TaskParams } from '../types'
+import { assertInputImageLimit } from './inputImageLimits'
 import { DEFAULT_FAL_BASE_URL } from './apiProfiles'
-import { isGptImage25PlusModel, isGptImage26PlusModel } from './imageModels'
+import { getImageModelFamily, isGptImage25PlusModel, isGptImage26PlusModel } from './imageModels'
+import { getImageModelParams, getSeedreamSize } from './imageModelParams'
+import { getImageSearchSupport, getImageThinkingSupport, parseImageSearchGrounding } from './imageSearch'
 import { apiFetch } from './platform'
 import {
   assertImageInputPayloadSize,
@@ -22,9 +25,10 @@ const DEFAULT_FAL_IMAGE_SIZE = { width: 1360, height: 1024 }
 
 function mapFalEndpoint(model: string, isEdit: boolean): string {
   const normalized = model.trim().replace(/^\/+/, '').replace(/\/+$/, '') || 'openai/gpt-image-2'
+  if (/(?:nano-banana[^/]*|grok-imagine-image(?:\/quality)?)\/edit$/.test(normalized)) return isEdit ? normalized : normalized.replace(/\/edit$/, '')
   if (normalized.endsWith('/edit')) return isEdit ? normalized : normalized.replace(/\/edit$/, '/text-to-image')
   if (normalized.endsWith('/text-to-image')) return isEdit ? normalized.replace(/\/text-to-image$/, '/edit') : normalized
-  if (/gpt-image-\d+\.\d+\//.test(normalized)) {
+  if (/gpt-image-\d+\.\d+\/|seedream\/v5\.5$|grok-imagine-image\/v2\.0$/.test(normalized)) {
     return `${normalized}/${isEdit ? 'edit' : 'text-to-image'}`
   }
   return isEdit ? `${normalized}/edit` : normalized
@@ -59,6 +63,34 @@ function configureFal(profile: ApiProfile) {
 
 async function createFalRequestInput(opts: CallApiOptions, profile: ApiProfile): Promise<Record<string, unknown>> {
   const isEdit = opts.inputImageDataUrls.length > 0
+  const family = getImageModelFamily(profile)
+  if (family) {
+    if (opts.maskDataUrl) throw new Error('此模型不支持遮罩编辑，请使用参考图和提示词描述修改内容')
+    const params = getImageModelParams(profile, opts.params)
+    const input: Record<string, unknown> = {
+      prompt: opts.prompt,
+      num_images: Math.min(4, Math.max(1, opts.params.n || 1)),
+      output_format: family === 'seedream' && opts.params.output_format === 'jpeg' && !opts.nativeTransparentBackground ? 'jpeg' : 'png',
+      ...(isEdit ? { image_urls: opts.inputImageDataUrls } : {}),
+    }
+    if (family === 'seedream') {
+      const size = getSeedreamSize(profile, opts.params)
+      input.image_size = size.includes('x') ? await mapFalImageSize(size) : `auto_${size}`
+      input.watermark = opts.params.watermark ?? false
+      input.background = opts.nativeTransparentBackground ? 'transparent' : opts.params.background === 'opaque' ? 'opaque' : 'auto'
+      return input
+    }
+    input.aspect_ratio = params.aspect_ratio
+    if (params.resolution) input.resolution = family === 'grok' ? params.resolution.toLowerCase() : params.resolution === '512' ? '0.5K' : params.resolution
+    if (params.quality) input.quality = params.quality
+    if (family === 'gemini') {
+      const search = getImageSearchSupport(profile)
+      if (!search.googleSearch && opts.params.google_search !== undefined) input.enable_web_search = opts.params.google_search
+      if (!search.imageSearch && opts.params.image_search !== undefined) input.enable_image_search = opts.params.image_search
+      if (getImageThinkingSupport(profile).levels.includes(opts.params.thinking_level ?? '')) input.thinking_level = opts.params.thinking_level
+    }
+    return input
+  }
   const isSvg = opts.params.output_format === 'svg'
   const input: Record<string, unknown> = {
     prompt: opts.prompt,
@@ -165,12 +197,18 @@ async function parseFalResult(payload: FalApiResponse, params: TaskParams, custo
   const imageResults = await parseFalImageResults(payload, mime, customBaseUrlLabel, signal)
   const actualParams = mergeActualParams(imageResults[0]?.actualParams)
   const rawImageUrls = imageResults.map((r) => r.rawImageUrl).filter((u): u is string => Boolean(u))
+  const searchGrounding = (Array.isArray(payload.grounding_metadata) ? payload.grounding_metadata : [])
+    .flatMap((metadata) => {
+      const grounding = parseImageSearchGrounding(metadata)
+      return grounding ? [grounding] : []
+    })
   return {
     images: imageResults.map((result) => result.image),
     actualParams,
     actualParamsList: imageResults.map((result) => result.actualParams),
     revisedPrompts: imageResults.map(() => undefined),
     ...(rawImageUrls.length ? { rawImageUrls } : {}),
+    ...(searchGrounding.length ? { searchGrounding } : {}),
   }
 }
 
@@ -218,6 +256,7 @@ export async function getFalQueuedImageResult(
 }
 
 export async function callFalAiImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
+  assertInputImageLimit(profile, opts.inputImageDataUrls.length)
   try {
     if (opts.maskDataUrl) {
       assertMaskEditFileSize('遮罩主图文件', getDataUrlDecodedByteSize(opts.inputImageDataUrls[0] ?? ''))

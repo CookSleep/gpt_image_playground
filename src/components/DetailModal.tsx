@@ -946,7 +946,7 @@ export default function DetailModal() {
                             className={`relative w-16 h-16 rounded-lg overflow-hidden border cursor-pointer hover:opacity-80 transition ${
                               isMaskTarget || commentCount > 0 || markupImageId ? 'border-blue-500 border-2 shadow-sm' : 'border-gray-200 dark:border-white/[0.08]'
                             }`}
-                            onClick={() => setLightboxImageId(imgId, allInputImageIds, task.prompt, inputMarkupIds)}
+                            onClick={() => setLightboxImageId(imgId, allInputImageIds, task.prompt, inputMarkupIds, { type: 'history', maskTargetImageId: maskTargetId, maskImageId: task.maskImageId })}
                           >
                             {displaySrc && (
                               <img

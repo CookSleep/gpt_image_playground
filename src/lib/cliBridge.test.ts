@@ -91,3 +91,20 @@ describe('CLI Seedream dimensions', () => {
     expect(mocks.submitTask).not.toHaveBeenCalled()
   })
 })
+
+describe('CLI 参考图数量校验', () => {
+  it.each([
+    ['openai', 'gpt-image-2', 16],
+    ['google', 'gemini-3-pro-image', 14],
+    ['fal', 'xai/grok-imagine-image', 3],
+    ['fal', 'xai/grok-imagine-image/v2.0', 5],
+    ['bytedance', 'doubao-seedream-5-5-261028', 10],
+  ])('%s / %s 超限时向 CLI 返回具体错误', async (provider, model, limit) => {
+    const profile = createDefaultOpenAIProfile({ id: 'test', provider, model, apiKey: 'test-key' })
+    state.settings = normalizeSettings({ profiles: [profile], activeProfileId: profile.id })
+    const reply = await send('generate_image', { prompt: '测试', reference_images: Array(limit + 1).fill('missing-image-id') })
+    expect(reply.error).toContain(`最多支持 ${limit} 张参考图`)
+    expect(mocks.submitTask).not.toHaveBeenCalled()
+    expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'cli_progress')).toBe(false)
+  })
+})

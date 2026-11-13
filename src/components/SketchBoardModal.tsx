@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { flushSync } from 'react-dom'
-import { MAX_INPUT_IMAGES, type SketchBoardRequest } from '../types'
+import type { SketchBoardRequest } from '../types'
 import { useStore } from '../store'
 import { canvasToBlob, loadImage } from '../lib/canvasImage'
 import { blobToDataUrl } from '../lib/dataUrl'
 import { storeImage } from '../lib/db'
 import { cacheImage, ensureImageCached } from '../lib/imageCache'
+import { getInputImageProfile } from '../lib/inputImageLimits'
+import { supportsImageMarkup } from '../lib/imageModels'
 import {
   SKETCH_FONT_FAMILY,
   SKETCH_HANDLES,
@@ -326,14 +328,14 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
     if (erase) drawEraseStroke(inkCtx, erase)
   }
 
-  function drawScene(ctx: CanvasRenderingContext2D, items: SketchElement[], erase?: SketchEraseStroke | null) {
+  function drawScene(ctx: CanvasRenderingContext2D, items: SketchElement[], erase?: SketchEraseStroke | null, markup = markupImage) {
     const size = docSize!
     renderInk(items, erase)
     ctx.clearRect(0, 0, size.width, size.height)
     ctx.fillStyle = paperColor
     ctx.fillRect(0, 0, size.width, size.height)
     if (baseImage) ctx.drawImage(baseImage, 0, 0, size.width, size.height)
-    if (markupImage && !markupCleared) ctx.drawImage(markupImage, 0, 0, size.width, size.height)
+    if (markup && !markupCleared) ctx.drawImage(markup, 0, 0, size.width, size.height)
     ctx.drawImage(inkCanvas, 0, 0)
   }
 
@@ -836,19 +838,17 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
     if (!docSize || !canConfirm || isSaving) return
     const state = useStore.getState()
     const replaceIdx = replaceImageId ? state.inputImages.findIndex((img) => img.id === replaceImageId) : -1
-    if (replaceIdx < 0 && state.inputImages.length >= MAX_INPUT_IMAGES) {
-      showToast(`参考图数量已达上限（${MAX_INPUT_IMAGES} 张），无法继续添加`, 'error')
+
+    if (replaceIdx >= 0 && elements.length === 0 && !markupCleared) {
+      saveComments(replaceIdx)
+      showToast('评论已更新', 'success')
+      closeNow()
       return
     }
 
-    // 在参考图上画的内容保存为与原图同尺寸的透明标注层，原图保持不变；只改了评论时不必重新导出
-    if (replaceIdx >= 0 && baseImage && replaceImageId) {
-      if (elements.length === 0 && !markupCleared) {
-        saveComments(replaceIdx)
-        showToast('评论已更新', 'success')
-        closeNow()
-        return
-      }
+    // 支持独立标注的接口保留透明图层；其他模式保存合成图。
+    const keepMarkup = state.appMode === 'gallery' && supportsImageMarkup(getInputImageProfile(state)) && !state.maskDraft
+    if (replaceIdx >= 0 && baseImage && replaceImageId && keepMarkup) {
       try {
         setIsSaving(true)
         // 旧标注可能还没加载完，保存时直接从图片库读取，避免丢掉它
@@ -883,9 +883,20 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
     try {
       setIsSaving(true)
       const canvas = document.createElement('canvas')
-      canvas.width = docSize.width
-      canvas.height = docSize.height
-      drawScene(canvas.getContext('2d')!, elements)
+      canvas.width = baseImage?.naturalWidth ?? docSize.width
+      canvas.height = baseImage?.naturalHeight ?? docSize.height
+      const existingMarkup = existingMarkupId && !markupCleared
+        ? markupImage ?? await ensureImageCached(existingMarkupId).then((dataUrl) => dataUrl ? loadImage(dataUrl) : null)
+        : null
+      const ctx = canvas.getContext('2d')!
+      if (baseImage) {
+        ctx.drawImage(baseImage, 0, 0)
+        if (existingMarkup) ctx.drawImage(existingMarkup, 0, 0, canvas.width, canvas.height)
+        renderInk(elements)
+        ctx.drawImage(inkCanvas, 0, 0, canvas.width, canvas.height)
+      } else {
+        drawScene(ctx, elements, undefined, existingMarkup)
+      }
       const dataUrl = await blobToDataUrl(await canvasToBlob(canvas, 'image/png'))
       const id = await storeImage(dataUrl, 'upload')
       cacheImage(id, dataUrl)
@@ -898,7 +909,11 @@ function SketchBoardEditor({ baseImageSrc, replaceImageId }: SketchBoardRequest)
         return
       }
       if (replaceIdx >= 0) {
-        useStore.getState().replaceInputImage(replaceIdx, { id, dataUrl })
+        if (id === replaceImageId) {
+          useStore.getState().setInputImageMarkup(id, undefined)
+        } else {
+          useStore.getState().replaceInputImage(replaceIdx, { id, dataUrl })
+        }
         showToast('参考图已更新', 'success')
       } else {
         useStore.getState().addInputImage({ id, dataUrl })

@@ -20,7 +20,7 @@ export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
 export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
 export const DEFAULT_AGENT_MAX_TOOL_ROUNDS = 15
-/** 接口允许的参考图数量上限 */
+/** 未配置更低模型限制时的应用参考图数量上限 */
 export const MAX_INPUT_IMAGES = 16
 
 export type CustomProviderRequestMethod = 'GET' | 'POST'
@@ -414,6 +414,12 @@ export interface AgentMessage {
   createdAt: number
 }
 
+export type LightboxContext = { type: 'input' } | {
+  type: 'history'
+  maskTargetImageId?: string | null
+  maskImageId?: string | null
+}
+
 export interface AgentRound {
   id: string
   index: number
@@ -576,6 +582,7 @@ export interface FalImageFile {
 }
 
 export interface FalApiResponse {
+  grounding_metadata?: unknown[]
   images?: FalImageFile[]
   image?: FalImageFile | string
   url?: string

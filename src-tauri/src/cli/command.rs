@@ -30,7 +30,7 @@ const USAGE: &str = "用法：
 
   用正在运行的 GPT Image Playground 生图、查看历史记录、查看和修改设置，效果与在应用里操作相同；应用需要保持打开。
   generate 用应用启用的 API 配置生图，提交后先输出任务 ID，全部任务结束后输出图片文件的路径；给出的参数会保存为应用的参数。
-  多个 --prompt 按应用的批量提交方式一起提交。--image 为参考图：本机图片路径或历史记录中的图片 ID，可重复，最多 16 张。
+  多个 --prompt 按应用的批量提交方式一起提交。--image 为参考图：本机图片路径或历史记录中的图片 ID，可重复，数量上限按应用当前启用的模型确定；超限时返回错误，不创建任务。
   质量：auto、low、medium、high、xhigh、max。--output 把结果图片另外复制到该目录。history 给出任务 ID 时只列出这些任务。
   settings set 的键：设置项名，params.<参数名>，proxy.mode、proxy.url；值按 JSON 解析，不是 JSON 时当作字符串。
   <JSON> 为 API 配置或服务商的字段，写 - 时从标准输入读取。profile save 不带 --id 时新建，新建的配置默认启用。

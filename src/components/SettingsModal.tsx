@@ -14,7 +14,7 @@ import {
   createDefaultOpenAIProfile,
   NATIVE_IMAGE_PROVIDERS,
   DEFAULT_FAL_BASE_URL,
-  DEFAULT_FAL_MODEL,
+  DEFAULT_FAL_MODEL_LIST,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_RESPONSES_MODEL,
   DEFAULT_SETTINGS,
@@ -1594,17 +1594,14 @@ export default function SettingsModal() {
                   onChange={(value) => updateActiveProfile({ model: value })}
                   onBlur={(value) => commitActiveProfilePatch({ model: value })}
                   disabled={activeProfileLocked}
-                  placeholder={nativeImageProvider?.model ?? (activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode))}
+                  placeholder={nativeImageProvider?.model ?? (activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL_LIST : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode))}
                 />
                 <div data-selectable-text className="mt-1.5 text-xs leading-6 text-gray-500 dark:text-gray-500">
                   {activeProfile.provider === 'fal' ? (
-                    <>
-                      当前支持：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">openai/gpt-image-2</code>{' '}
-                      <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">openai/gpt-image-2.5/sunburst</code>{' '}
-                      <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">openai/gpt-image-2.5/flare</code>{' '}
-                      <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">openai/gpt-image-2.6/sunburst</code>{' '}
-                      <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">openai/gpt-image-2.6/flare</code>。
-                    </>
+                    <MarkdownRenderer
+                      content="支持 [GPT Image](https://fal.ai/explore/search?q=gpt-image)、[Gemini（Nano Banana）](https://fal.ai/explore/search?q=nano-banana)、[Grok](https://fal.ai/explore/search?q=grok-imagine-image) 和 [Seedream 5.5](https://fal.ai/explore/search?q=seedream)，点击模型名称查看相关模型 ID，添加参考图后自动使用编辑接口。"
+                      className="!text-xs !leading-6"
+                    />
                   ) : nativeImageProvider ? (
                     <>图像模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{nativeImageProvider.model}</code>。</>
                   ) : activeCustomProvider ? (

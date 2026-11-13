@@ -1,5 +1,6 @@
 import { shouldReturnBase64 } from './apiProfiles'
 import { DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type CustomProviderDefinition, type CustomProviderPollMapping, type CustomProviderResultMapping, type CustomProviderSubmitMapping, type ImageApiResponse, type ImageResponseItem, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
+import { assertInputImageLimit } from './inputImageLimits'
 import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import {
@@ -443,11 +444,11 @@ async function parseResponsesApiStreamResponse(
 }
 
 export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile: ApiProfile, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
+  assertInputImageLimit(profile, opts.inputImageDataUrls.length)
   const family = getImageModelFamily(profile)
   if (family) {
     if (opts.maskDataUrl) throw new Error('此模型不支持遮罩编辑，请使用参考图和提示词描述修改内容')
     if (family !== 'seedream') opts = { ...opts, nativeTransparentBackground: false }
-    if (family === 'seedream' && opts.inputImageDataUrls.length > 10) throw new Error('Seedream 5.5 每次最多接受 10 张参考图')
   }
   if (customProvider) {
     customProvider = resolveCustomProviderModel(customProvider, profile.model)
@@ -492,7 +493,6 @@ async function callModelImagesApi(opts: CallApiOptions, profile: ApiProfile): Pr
     if (isEdit) {
       const urls = opts.inputImageUrls?.filter(isHttpUrl) ?? []
       if (urls.length !== opts.inputImageDataUrls.length) throw new Error('此模型只接受链接参考图，请通过图片链接添加参考图')
-      if (urls.length > 5) throw new Error('此模型每次最多接受 5 张参考图')
       body.image_urls = urls
     }
   } else {
@@ -502,7 +502,6 @@ async function callModelImagesApi(opts: CallApiOptions, profile: ApiProfile): Pr
     const images = opts.inputImageDataUrls.map((url) => ({ type: 'image_url', url }))
     if (images.length === 1) body.image = images[0]
     if (images.length > 1) body.images = images
-    if (profile.provider === 'xai' && images.length > 5) throw new Error('xAI 每次最多接受 5 张参考图')
   }
   if (shouldReturnBase64(profile)) body.response_format = 'b64_json'
   assertImageInputPayloadSize(opts.inputImageDataUrls.reduce((sum, url) => sum + url.length, 0))

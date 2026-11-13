@@ -20,8 +20,14 @@ export function getImageSearchSupport(profile: ApiProfile, provider?: CustomProv
       imageSearch: supports('$params.image_search') ? undefined : '当前服务商未映射 Image Search 参数',
     }
   }
+  if (profile.provider === 'fal') {
+    return {
+      googleSearch: /nano-banana-(?:pro|2)(?:$|[./])/.test(profile.model) ? undefined : '当前模型不支持 Google Search',
+      imageSearch: /nano-banana-2(?:$|\/)/.test(profile.model) ? undefined : '当前接口不支持 Image Search',
+    }
+  }
   if (profile.provider !== 'google') {
-    const reason = '当前接口未提供搜索参数映射，请使用 Google 接口或自定义服务商'
+    const reason = '当前接口不支持搜索参数'
     return { googleSearch: reason, imageSearch: reason }
   }
   const imageSearch = /gemini-3\.1-flash-image|nano[-_]?banana-2(?:$|[-.])/i.test(profile.model)
@@ -33,6 +39,11 @@ export function getImageSearchSupport(profile: ApiProfile, provider?: CustomProv
 }
 
 export function getImageThinkingSupport(profile: ApiProfile, provider?: CustomProviderDefinition | null): { levels: string[]; reason?: string } {
+  if (profile.provider === 'fal') {
+    const levels = /nano-banana-2\.1(?:$|\/)/.test(profile.model) ? ['minimal', 'medium', 'high']
+      : /nano-banana-2(?:$|\/)/.test(profile.model) ? ['minimal', 'high'] : []
+    return { levels, ...(levels.length ? {} : { reason: '当前模型不支持调整思考等级' }) }
+  }
   const levels = /nano[-_]?banana-2[.-]1/i.test(profile.model) ? ['minimal', 'medium', 'high']
     : /gemini-3\.1-flash-(?:lite-)?image|nano[-_]?banana-2(?:$|-)/i.test(profile.model) ? ['minimal', 'high'] : []
   if (provider && getImageModelFamily(profile) === 'gemini') {
@@ -42,7 +53,7 @@ export function getImageThinkingSupport(profile: ApiProfile, provider?: CustomPr
     }
     return { levels: [], reason: '当前服务商未映射思考等级参数' }
   }
-  if (profile.provider !== 'google') return { levels: [], reason: '当前接口不支持思考等级参数，可通过自定义服务商映射' }
+  if (profile.provider !== 'google') return { levels: [], reason: '当前接口不支持思考等级参数' }
   if (!levels.length) return { levels, reason: '当前模型不支持调整思考等级' }
   return { levels }
 }
@@ -50,15 +61,18 @@ export function getImageThinkingSupport(profile: ApiProfile, provider?: CustomPr
 export function parseImageSearchGrounding(value: unknown): ImageSearchGrounding | undefined {
   if (!value || typeof value !== 'object') return undefined
   const metadata = value as Record<string, unknown>
-  const entry = metadata.searchEntryPoint as { renderedContent?: unknown } | undefined
-  const renderedContent = typeof entry?.renderedContent === 'string' ? entry.renderedContent : undefined
+  const entry = (metadata.searchEntryPoint ?? metadata.search_entry_point) as { renderedContent?: unknown; rendered_content?: unknown } | undefined
+  const content = entry?.renderedContent ?? entry?.rendered_content
+  const renderedContent = typeof content === 'string' ? content : undefined
   const sources: ImageSearchGrounding['sources'] = []
-  for (const item of Array.isArray(metadata.groundingChunks) ? metadata.groundingChunks : []) {
+  const chunks = metadata.groundingChunks ?? metadata.grounding_chunks
+  for (const item of Array.isArray(chunks) ? chunks : []) {
     const source = item?.image ?? item?.web
-    const uri = source?.sourceUri ?? source?.uri
+    const uri = source?.sourceUri ?? source?.source_uri ?? source?.uri
     if (typeof uri !== 'string' || !/^https?:\/\//i.test(uri) || sources.some((item) => item.uri === uri)) continue
     // 只保留 https 图片，避免 https 页面加载 http 资源被拦截
-    const imageUri = typeof source.imageUri === 'string' && /^https:\/\//i.test(source.imageUri) ? source.imageUri : undefined
+    const image = source.imageUri ?? source.image_uri
+    const imageUri = typeof image === 'string' && /^https:\/\//i.test(image) ? image : undefined
     const domain = typeof source.domain === 'string' && source.domain ? source.domain : undefined
     sources.push({
       uri,

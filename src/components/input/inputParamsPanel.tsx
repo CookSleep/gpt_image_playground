@@ -352,7 +352,7 @@ export default function InputParamsPanel({
             <Select
               value={modelParams.resolution ?? 'auto'}
               onChange={(value) => setParams({ resolution: String(value) })}
-              options={(family === 'grok' ? ['1K', '2K'] : ['512', '1K', '2K', '4K']).map((value) => ({
+              options={(family === 'grok' ? isFalProvider ? ['1K', '1.5K', '2K'] : ['1K', '2K'] : ['512', '1K', '2K', '4K']).map((value) => ({
                 label: value,
                 value,
                 disabledReason: modelOptionsForImage.resolutions.includes(value) ? undefined : '当前模型不支持此分辨率',
@@ -441,7 +441,7 @@ export default function InputParamsPanel({
           )}
         </>
       )}
-      {family !== 'seedream' && (
+      {(family !== 'seedream' || isFalProvider) && (
         <label
           className={`relative flex items-center max-sm:flex-auto sm:shrink-0 ${agentAutoImageCount ? CHIP_DISABLED_CLASS : `${CHIP_CLASS} cursor-text`}`}
           onMouseEnter={() => { showAgentNHint(); streamConcurrentHint.show() }}

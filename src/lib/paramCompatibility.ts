@@ -10,6 +10,12 @@ export const DEFAULT_FAL_IMAGE_SIZE = '1360x1024'
 export const MAX_FAL_OUTPUT_IMAGES = 4
 export const MAX_OPENAI_OUTPUT_IMAGES = 10
 
+export function getMaskDisabledReason(profile: ApiProfile, format?: TaskParams['output_format']) {
+  if (getImageModelFamily(profile)) return '当前模型不支持遮罩编辑'
+  if (format === 'gif') return 'GIF 不支持遮罩编辑'
+  return undefined
+}
+
 export function getTaskParamSupport(settings: AppSettings, profile: ApiProfile) {
   const provider = getCustomProviderDefinition(settings, profile.provider)
   return {
@@ -20,7 +26,7 @@ export function getTaskParamSupport(settings: AppSettings, profile: ApiProfile) 
 
 export function getOutputImageLimitForSettings(settings: AppSettings, format?: TaskParams['output_format']) {
   const profile = getActiveApiProfile(settings)
-  if (getImageModelFamily(profile) === 'seedream') return 1
+  if (getImageModelFamily(profile) === 'seedream' && profile.provider !== 'fal') return 1
   if (profile.provider === 'fal') return format === 'svg' ? 1 : MAX_FAL_OUTPUT_IMAGES
   return MAX_OPENAI_OUTPUT_IMAGES
 }
@@ -31,7 +37,7 @@ export function normalizeParamsForSettings(
   options: { hasInputImages?: boolean; agent?: boolean } = {},
 ): TaskParams {
   const activeProfile = getActiveApiProfile(settings)
-  const outputImageLimit = getOutputImageLimitForSettings(settings, params.output_format)
+  const outputImageLimit = getOutputImageLimitForSettings(settings)
   const nextParams: TaskParams = {
     ...params,
     size: normalizeImageSize(params.size) || DEFAULT_PARAMS.size,
@@ -117,7 +123,7 @@ export function getParamDisabledReasons(profile: ApiProfile, options: { hasInput
     extendedQuality: supportsExtendedQuality(profile) ? undefined
       : isFal && isGptImage26PlusModel(profile.model) ? 'fal.ai 的 GPT Image 2.6 最高只支持 high'
       : isResponses ? '当前图像模型不支持此质量' : '当前模型不支持此质量',
-    autoSize: isFal && !options.hasInputImages ? 'fal.ai 的文生图模式不支持自动尺寸' : undefined,
+    autoSize: isFal && !getImageModelFamily(profile) && !options.hasInputImages ? '当前模型的文生图模式不支持自动尺寸' : undefined,
   }
 }
 

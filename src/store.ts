@@ -15,6 +15,7 @@ import type {
   TaskParams,
   InputImage,
   MaskDraft,
+  LightboxContext,
   SketchBoardRequest,
   TaskRecord,
   FavoriteCollection,
@@ -58,8 +59,9 @@ import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { OPENAI_IMAGE_TASK_PROVIDER, resolveCustomProviderModel } from './lib/imageProviderMappings'
 import { toApiInputImageDataUrl, validateMaskMatchesImage } from './lib/canvasImage'
 import { persistTaskInputImages, toReferenceImage } from './lib/inputImages'
+import { getInputImageLimitError, getInputImageProfile } from './lib/inputImageLimits'
 import { orderInputImagesForMask } from './lib/mask'
-import { getChangedParams, getTaskParamSupport, normalizeParamsForSettings, supportsTransparentOutput } from './lib/paramCompatibility'
+import { getChangedParams, getTaskParamSupport, getMaskDisabledReason, normalizeParamsForSettings, supportsTransparentOutput } from './lib/paramCompatibility'
 import { getImageModelFamily, isVectorOrAnimatedFormat } from './lib/imageModels'
 import { runWithConcurrency, splitBatchPrompts } from './lib/batchPrompts'
 import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
@@ -431,7 +433,8 @@ interface AppState {
   lightboxCommentPrompt: string | null
   /** 预览参考图时各图片对应的 markup 标注层 image store id；同一参考图在不同任务中的标注不同，需随预览传入 */
   lightboxMarkupIds: Record<string, string | undefined>
-  setLightboxImageId: (id: string | null, list?: string[], commentPrompt?: string | null, markupIds?: Record<string, string | undefined>) => void
+  lightboxContext: LightboxContext | null
+  setLightboxImageId: (id: string | null, list?: string[], commentPrompt?: string | null, markupIds?: Record<string, string | undefined>, context?: LightboxContext | null) => void
   /** 画板；baseImageSrc 为画布底图，replaceImageId 为完成后要替换的参考图 */
   sketchBoard: SketchBoardRequest | null
   setSketchBoard: (board: SketchBoardRequest | null) => void
@@ -850,6 +853,12 @@ export const useStore = create<AppState>()(
       clearMaskDraft: () => set((s) => syncActiveInputDraft(s, { maskDraft: null })),
       maskEditorImageId: null,
       setMaskEditorImageId: (maskEditorImageId) => {
+        const state = get()
+        const reason = maskEditorImageId && getMaskDisabledReason(getInputImageProfile(state), state.params.output_format)
+        if (reason) {
+          state.showToast(reason, 'info')
+          return
+        }
         if (maskEditorImageId) dismissAllTooltips()
         set((s) => syncActiveInputDraft(s, { maskEditorImageId }))
       },
@@ -1077,13 +1086,15 @@ export const useStore = create<AppState>()(
       lightboxImageList: [],
       lightboxCommentPrompt: null,
       lightboxMarkupIds: {},
-      setLightboxImageId: (lightboxImageId, list, commentPrompt = null, markupIds = {}) => {
+      lightboxContext: null,
+      setLightboxImageId: (lightboxImageId, list, commentPrompt = null, markupIds = {}, context = null) => {
         if (lightboxImageId) dismissAllTooltips()
         set({
           lightboxImageId,
           lightboxImageList: list ?? (lightboxImageId ? [lightboxImageId] : []),
           lightboxCommentPrompt: lightboxImageId ? commentPrompt : null,
           lightboxMarkupIds: lightboxImageId ? markupIds : {},
+          lightboxContext: lightboxImageId ? context : null,
         })
       },
       sketchBoard: null,
@@ -1181,6 +1192,7 @@ export const useStore = create<AppState>()(
           lightboxImageList: [],
           lightboxCommentPrompt: null,
           lightboxMarkupIds: {},
+          lightboxContext: null,
           sketchBoard: null,
           favoritePickerTaskIds: null,
           isManageCollectionsModalOpen: false,
@@ -1576,6 +1588,7 @@ async function completeRecoveredFalTask(task: TaskRecord, result: Awaited<Return
     actualParamsByImage: mapActualParamsByImage(outputIds, actualParamsList),
     revisedPromptByImage: undefined,
     ...createTaskDonePatch(task, Date.now()),
+    searchGrounding: result.searchGrounding,
     falRecoverable: false,
   })
   if (!isTaskHiddenByPrivacyMode(task)) {
@@ -1870,9 +1883,16 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     return []
   }
 
+  const inputLimitError = getInputImageLimitError(activeProfile, inputImages.length)
+  if (inputLimitError) {
+    showToast(inputLimitError, 'error')
+    return []
+  }
+
   const normalizedParams = normalizeParamsForSettings(params, requestSettings, { hasInputImages: inputImages.length > 0 })
-  if (maskDraft && normalizedParams.output_format === 'gif') {
-    showToast('GIF 不支持遮罩，请移除遮罩或切换输出格式', 'error')
+  const maskDisabledReason = maskDraft && getMaskDisabledReason(activeProfile, normalizedParams.output_format)
+  if (maskDisabledReason) {
+    showToast(`${maskDisabledReason}，请移除遮罩或切换模型／格式`, 'error')
     return []
   }
 
@@ -2633,6 +2653,16 @@ export async function submitAgentMessage() {
 
   const activeProfile = getAgentTextApiProfile(normalizedSettings)!
   const imageProfile = getAgentImageApiProfile(normalizedSettings)!
+  const maskDisabledReason = maskDraft && getMaskDisabledReason(imageProfile)
+  if (maskDisabledReason) {
+    showToast(`${maskDisabledReason}，请移除遮罩或切换模型`, 'error')
+    return
+  }
+  const inputLimitError = getInputImageLimitError(imageProfile, inputImages.length)
+  if (inputLimitError) {
+    showToast(inputLimitError, 'error')
+    return
+  }
 
   const trimmedPrompt = prompt.trim()
   if (!trimmedPrompt) {
@@ -2803,7 +2833,19 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
     return
   }
 
+  const maskDisabledReason = sourceRound.maskImageId && getMaskDisabledReason(imageProfile)
+  if (maskDisabledReason) {
+    showToast(`${maskDisabledReason}，请移除遮罩或切换模型`, 'error')
+    return
+  }
+
   const inputImageIds = uniqueIds(sourceRound.inputImageIds)
+  const inputLimitError = getInputImageLimitError(imageProfile, inputImageIds.length)
+  if (inputLimitError) {
+    showToast(inputLimitError, 'error')
+    return
+  }
+
   const requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
   const imageRequestSettings = createSettingsForApiProfile(normalizedSettings, imageProfile)
   const normalizedParams = {
@@ -4205,7 +4247,17 @@ export async function retryTask(task: TaskRecord) {
   const source = tasks.find((item) => item.id === task.id)
   if (!source || source.status === 'running' || source.falRecoverable || source.customRecoverable) return
   const activeProfile = getActiveApiProfile(settings)
+  const inputLimitError = getInputImageLimitError(activeProfile, source.inputImageIds.length)
+  if (inputLimitError) {
+    state.showToast(inputLimitError, 'error')
+    return
+  }
   const normalizedParams = normalizeParamsForSettings(source.params, settings, { hasInputImages: source.inputImageIds.length > 0 })
+  const maskDisabledReason = source.maskImageId && getMaskDisabledReason(activeProfile, normalizedParams.output_format)
+  if (maskDisabledReason) {
+    state.showToast(`${maskDisabledReason}，请移除遮罩或切换模型／格式`, 'error')
+    return
+  }
   const shouldUseTransparentOutput = normalizedParams.transparent_output && supportsTransparentOutput(settings, activeProfile, normalizedParams.output_format)
   const taskParams = shouldUseTransparentOutput
     ? getTransparentRequestParams(normalizedParams)

@@ -1,15 +1,16 @@
 import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { deleteFavoriteCollection, useStore, submitTask, submitAgentMessage, stopAgentResponse, stopBatchPrompts, addImageFromFile, removeMultipleTasks, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
-import { DEFAULT_PARAMS, MAX_INPUT_IMAGES, type TaskRecord } from '../types'
+import { DEFAULT_PARAMS, type TaskRecord } from '../types'
+import { getInputImageLimit, getInputImageProfile } from '../lib/inputImageLimits'
 import { getActiveAgentRounds } from '../lib/agentConversationState'
-import { createSettingsForApiProfile, getCustomProviderDefinition, getActiveApiProfile, getAgentImageApiProfile, getApiProfileModelGroups, resolveApiProfileModel } from '../lib/apiProfiles'
+import { createSettingsForApiProfile, getCustomProviderDefinition, getActiveApiProfile, getAgentImageApiProfile, getApiProfileModelGroups } from '../lib/apiProfiles'
 import { getImageModelFamily, isVectorOrAnimatedFormat } from '../lib/imageModels'
 import { getImageSearchSupport, getImageThinkingSupport } from '../lib/imageSearch'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { toReferenceImage } from '../lib/inputImages'
 import { splitBatchPrompts } from '../lib/batchPrompts'
-import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, getParamDisabledReasons, normalizeParamsForSettings, supportsTransparentOutput } from '../lib/paramCompatibility'
+import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, getMaskDisabledReason, getParamDisabledReasons, normalizeParamsForSettings, supportsTransparentOutput } from '../lib/paramCompatibility'
 import { getAtImageQuery, getImageComments, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { normalizeCodexCliImageSize, normalizeImageSize } from '../lib/size'
 import { getSeedreamSize, getSeedreamSizeParams } from '../lib/imageModelParams'
@@ -444,12 +445,7 @@ export default function InputBar() {
       ? getAgentImageApiProfile(settings) ?? settingsActiveProfile
       : settingsActiveProfile
   ), [appMode, settings, settingsActiveProfile])
-  const activeProfile = useMemo(() => {
-    const reusedProfile = appMode !== 'agent' && settings.reuseTaskApiProfileTemporarily && reusedTaskApiProfileId
-      ? settings.profiles.find((profile) => profile.id === reusedTaskApiProfileId)
-      : undefined
-    return reusedProfile ? resolveApiProfileModel(reusedProfile, reusedTaskApiModel ?? undefined, getCustomProviderDefinition(settings, reusedProfile.provider)) : currentActiveProfile
-  }, [appMode, currentActiveProfile, reusedTaskApiModel, reusedTaskApiProfileId, settings])
+  const activeProfile = useMemo(() => getInputImageProfile({ settings, appMode, reusedTaskApiProfileId, reusedTaskApiModel }), [settings, appMode, reusedTaskApiProfileId, reusedTaskApiModel])
   const isTemporarilyReusedProfile = activeProfile.id !== currentActiveProfile.id
   // 首页可选择其他勾选了展示在输入框模型列表中的配置；Agent 和临时复用其他配置时只列出当前配置
   const canSwitchProfile = appMode === 'gallery' && !isTemporarilyReusedProfile
@@ -488,7 +484,8 @@ export default function InputBar() {
   const hasSubmitApiConfig = Boolean(activeProfile.apiKey)
   // 批量进行中暂停画廊和 Agent 的提交，需等待完成或停止后再提交
   const batchRunning = Boolean(batchProgress)
-  const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !activeAgentIsRunning && !batchRunning)
+  const maskDisabledReason = maskDraft ? getMaskDisabledReason(activeProfile, params.output_format) : undefined
+  const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !activeAgentIsRunning && !batchRunning && !maskDisabledReason)
   const batchEnabled = appMode === 'gallery' && settings.showBatchPrompt && settings.batchPromptEnabled
   // 批量进行中始终在画廊显示入口，以便查看进度和停止
   const showBatch = appMode === 'gallery' && (settings.showBatchPrompt || batchRunning)
@@ -500,6 +497,8 @@ export default function InputBar() {
     : '请先配置 API'
   const submitTooltipText = activeAgentIsRunning
     ? '停止生成'
+    : maskDisabledReason
+    ? `${maskDisabledReason}，请移除遮罩或切换模型／格式`
     : !hasSubmitApiConfig
     ? '尚未完成 API 配置，请在右上角设置中进行'
     : appMode === 'agent'
@@ -531,24 +530,20 @@ export default function InputBar() {
   const isFalProvider = activeProvider === 'fal'
   const agentAutoImageCount = appMode === 'agent'
   const moderationDisabled = isFalProvider
-  // Agent 只用位图，SVG 和 GIF 在提交时换成 PNG，参数面板按实际发送的格式显示
-  const panelParams = appMode === 'agent' && isVectorOrAnimatedFormat(params.output_format)
-    ? { ...params, output_format: 'png' as const }
-    : params
   const transparentOutputAvailable = appMode === 'gallery'
   const showTransparentOutputControl = transparentOutputAvailable && supportsTransparentOutput(effectiveSettings, activeProfile, params.output_format)
   const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
-  const compressionDisabled = panelParams.output_format === 'png' || isVectorOrAnimatedFormat(panelParams.output_format) || isFalProvider
+  const compressionDisabled = params.output_format === 'png' || isVectorOrAnimatedFormat(params.output_format) || isFalProvider
   // 不可用的参数和格式仍然显示，置灰并说明原因
   const disabledReasons = getParamDisabledReasons(activeProfile, { hasInputImages: inputImages.length > 0, agent: appMode === 'agent' })
-  const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings, panelParams.output_format)
+  const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings, params.output_format)
   const nDraftValue = Number(nInput)
   const effectiveNValue = Number.isNaN(nDraftValue) ? params.n : nDraftValue
   const streamConcurrentByN = activeProfile.provider === 'openai' && !getImageModelFamily(activeProfile) && activeProfile.streamImages === true && !agentAutoImageCount && effectiveNValue > 1
   const nLimitHintText = agentAutoImageCount
     ? 'Agent 模式下数量由模型根据提示词自动决定'
-    : isFalProvider && panelParams.output_format === 'svg'
-      ? 'fal.ai 的 SVG 格式最多生成 1 张图片'
+    : isFalProvider && params.output_format === 'svg'
+      ? 'SVG 格式最多生成 1 张图片'
       : `最大请求数量为 ${outputImageLimit}`
   const sizeFamily = getImageModelFamily(activeProfile)
   const displaySize = sizeFamily === 'seedream'
@@ -566,8 +561,8 @@ export default function InputBar() {
     { label: 'xhigh', value: 'xhigh', disabledReason: disabledReasons.extendedQuality },
     { label: 'max', value: 'max', disabledReason: disabledReasons.extendedQuality },
   ]
-  const atImageLimit = inputImages.length >= MAX_INPUT_IMAGES
-  const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${MAX_INPUT_IMAGES} 张），无法继续添加` : '添加图片'
+  const inputImageLimit = getInputImageLimit(activeProfile)
+  const uploadImageTooltipText = '添加图片'
   const transparentOutputHint = useHintTooltip()
   const handleTransparentOutputMenuOpenChange = useCallback((open: boolean) => {
     if (open) transparentOutputHint.hide()
@@ -709,10 +704,12 @@ export default function InputBar() {
   }, [agentAutoImageCount, params.n])
 
   useEffect(() => {
-    const normalizedParams = normalizeParamsForSettings(params, effectiveSettings, { hasInputImages: inputImages.length > 0 })
+    const normalizedParams = normalizeParamsForSettings(params, effectiveSettings, { hasInputImages: inputImages.length > 0, agent: appMode === 'agent' })
+    if (appMode === 'agent') {
+      normalizedParams.n = 1
+      normalizedParams.transparent_output = false
+    }
     const patch = getChangedParams(params, normalizedParams)
-    // SVG 和 GIF 是画廊的选择，Agent 提交时会自行换成位图，这里不改写，切回画廊后仍然保留
-    if (appMode === 'agent' && isVectorOrAnimatedFormat(params.output_format)) delete patch.output_format
     if (Object.keys(patch).length) {
       setParams(patch)
     }
@@ -874,29 +871,8 @@ export default function InputBar() {
 
   const handleFiles = async (files: FileList | File[]) => {
     try {
-      const currentCount = useStore.getState().inputImages.length
-      if (currentCount >= MAX_INPUT_IMAGES) {
-        useStore.getState().showToast(
-          `参考图数量已达上限（${MAX_INPUT_IMAGES} 张），无法继续添加`,
-          'error',
-        )
-        return
-      }
-
-      const remaining = MAX_INPUT_IMAGES - currentCount
-      const accepted = Array.from(files).filter((f) => f.type.startsWith('image/'))
-      const toAdd = accepted.slice(0, remaining)
-      const discarded = accepted.length - toAdd.length
-
-      for (const file of toAdd) {
+      for (const file of Array.from(files).filter((file) => file.type.startsWith('image/'))) {
         await addImageFromFile(file)
-      }
-
-      if (discarded > 0) {
-        useStore.getState().showToast(
-          `已达上限 ${MAX_INPUT_IMAGES} 张，${discarded} 张图片被丢弃`,
-          'error',
-        )
       }
     } catch (err) {
       useStore.getState().showToast(
@@ -1360,7 +1336,13 @@ export default function InputBar() {
   const renderImageThumb = (img: (typeof inputImages)[number], idx: number) => {
     const isMaskTarget = maskDraft?.targetImageId === img.id
     const commentCount = getImageComments(prompt, idx).length
-    const imageHintText = isMaskTarget ? '遮罩图必须为第一张图' : ''
+    const overLimit = idx >= inputImageLimit
+    const maskUnavailable = isMaskTarget && Boolean(maskDisabledReason)
+    const imageHintText = maskUnavailable
+      ? `${maskDisabledReason}，可点击图片，在预览中移除遮罩`
+      : overLimit
+      ? `超出当前模型的 ${inputImageLimit} 张参考图上限，请移除超限图片或切换模型后提交`
+      : isMaskTarget ? '遮罩图必须为第 1 张图' : ''
     const displaySrc = isMaskTarget && maskPreviewUrl ? maskPreviewUrl : img.dataUrl
     const isImageDragging = imageDragIndex === idx
     const isLast = idx === inputImages.length - 1
@@ -1410,6 +1392,13 @@ export default function InputBar() {
     }
 
     const handleTouchStart = (e: React.TouchEvent) => {
+      clearImageHintTimer()
+      if (imageHintText) {
+        imageHintTimerRef.current = window.setTimeout(() => {
+          showImageHint(img.id)
+          suppressImageClickRef.current = true
+        }, 450)
+      }
       if (isMaskTarget) {
         const touch = e.touches[0]
         imageTouchDragRef.current = { index: idx, startX: touch.clientX, startY: touch.clientY, moved: false }
@@ -1425,17 +1414,23 @@ export default function InputBar() {
       const touch = e.touches[0]
       const touchDrag = imageTouchDragRef.current
       if (touchDrag.index === null) return
+      const dx = Math.abs(touch.clientX - touchDrag.startX)
+      const dy = Math.abs(touch.clientY - touchDrag.startY)
+      if (dx <= 6 && dy <= 6) return
+      clearImageHintTimer()
+      // 纵向滑动交给参考图区滚动，横向起拖才调整图片顺序。
+      if (!touchDrag.moved && dy >= dx) {
+        resetImageDrag()
+        return
+      }
 
       if (isMaskTarget) {
-        if (Math.abs(touch.clientX - touchDrag.startX) > 6 || Math.abs(touch.clientY - touchDrag.startY) > 6) {
-          e.preventDefault()
-          showImageHintUntilRelease(img.id)
-        }
+        e.preventDefault()
+        showImageHintUntilRelease(img.id)
         return
       }
 
       touchDrag.moved = true
-      clearImageHintTimer()
       setImageHintId(null)
       suppressImageClickRef.current = true
       e.preventDefault()
@@ -1448,15 +1443,14 @@ export default function InputBar() {
     const handleTouchEnd = (e: React.TouchEvent) => {
       const touchDrag = imageTouchDragRef.current
       clearImageHintTimer()
+      if (suppressImageClickRef.current) e.preventDefault()
       if (touchDrag.index !== null && imageDragOverIndexRef.current !== null) {
         e.preventDefault()
         moveInputImage(touchDrag.index, imageDragOverIndexRef.current)
-        window.setTimeout(() => {
-          suppressImageClickRef.current = false
-        }, 0)
       }
       resetImageDrag()
       hideLockedImageHint()
+      window.setTimeout(() => { suppressImageClickRef.current = false }, 0)
     }
 
     const handleTouchCancel = () => {
@@ -1470,8 +1464,9 @@ export default function InputBar() {
         key={img.id}
         data-input-image-index={idx}
         className={`relative group inline-block h-[52px] w-[52px] shrink-0 self-start transition-opacity ${isImageDragging ? 'opacity-40' : ''}`}
-        style={{ touchAction: isMaskTarget ? 'auto' : 'none' }}
+        style={{ touchAction: 'pan-y' }}
         draggable={!isMobile}
+        onMouseEnter={() => { if (imageHintText) showImageHint(img.id) }}
         onMouseLeave={hideImageHint}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
@@ -1483,6 +1478,7 @@ export default function InputBar() {
         onTouchCancel={handleTouchCancel}
         onContextMenu={(e) => {
           e.preventDefault()
+          if (isMobile && imageHintText) return
           const el = textareaRef.current
           // 按输入框最后的选区插入，选中了其他内容（包括胶囊）时直接覆盖
           const visibleLength = stripImageMentionMarkers(prompt).length
@@ -1508,8 +1504,8 @@ export default function InputBar() {
         }}
       >
         <ButtonTooltip
-          visible={imageHintId === img.id && Boolean(imageHintText) && (!isMobile || isMaskTarget)}
-          text={imageHintText}
+          visible={imageHintId === img.id && Boolean(imageHintText)}
+          text={<span className="block max-w-[min(20rem,calc(100vw-40px))] whitespace-normal">{imageHintText}</span>}
         />
         {showDropBefore && (
           <div className="absolute -left-[5px] top-0 bottom-0 w-[2px] bg-blue-500 rounded-full z-40 shadow-sm pointer-events-none" />
@@ -1518,14 +1514,14 @@ export default function InputBar() {
           <div className="absolute -right-[5px] top-0 bottom-0 w-[2px] bg-blue-500 rounded-full z-40 shadow-sm pointer-events-none" />
         )}
         <div
-          className={`relative w-[52px] h-[52px] rounded-xl overflow-hidden shadow-sm cursor-grab active:cursor-grabbing select-none ${
+          className={`relative w-[52px] h-[52px] rounded-xl overflow-hidden shadow-sm cursor-grab active:cursor-grabbing select-none ${overLimit || maskUnavailable ? 'grayscale opacity-40' : ''} ${
             isMaskTarget || commentCount > 0 || img.markupImageId
               ? 'border-2 border-blue-500'
               : 'border border-gray-200 dark:border-white/[0.08]'
           }`}
           onClick={() => {
             if (suppressImageClickRef.current) return
-            setLightboxImageId(img.id, inputImages.map((i) => i.id), prompt, Object.fromEntries(inputImages.map((i) => [i.id, i.markupImageId])))
+            setLightboxImageId(img.id, inputImages.map((i) => i.id), prompt, Object.fromEntries(inputImages.map((i) => [i.id, i.markupImageId])), { type: 'input' })
           }}
         >
           {displaySrc && (
@@ -1551,7 +1547,8 @@ export default function InputBar() {
             className="absolute inset-0 w-full h-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus:outline-none border-none"
             onClick={(e) => {
               e.stopPropagation()
-              setLightboxImageId(img.id, inputImages.map((i) => i.id), prompt, Object.fromEntries(inputImages.map((i) => [i.id, i.markupImageId])))
+              if (suppressImageClickRef.current) return
+              setLightboxImageId(img.id, inputImages.map((i) => i.id), prompt, Object.fromEntries(inputImages.map((i) => [i.id, i.markupImageId])), { type: 'input' })
             }}
             title="查看"
             aria-label="查看参考图"
@@ -1590,15 +1587,10 @@ export default function InputBar() {
       {!mobile && <ButtonTooltip visible={attachHover && !showUploadMenu} text={uploadImageTooltipText} />}
       <button
         onClick={() => {
-          if (atImageLimit) return
           setAttachHover(false)
           setShowUploadMenu(!showUploadMenu)
         }}
-        className={`p-2.5 rounded-xl transition-all shadow-sm ${
-          atImageLimit
-            ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
-            : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300 hover:shadow'
-        }`}
+        className="p-2.5 rounded-xl transition-all shadow-sm bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300 hover:shadow"
         aria-label={uploadImageTooltipText}
         aria-expanded={showUploadMenu}
       >
@@ -1689,10 +1681,18 @@ export default function InputBar() {
 
   const renderImageThumbs = () => {
     return (
-      <div ref={imagesRef} className="sm:[contain:inline-size]">
-        <div className="grid grid-cols-[repeat(auto-fill,52px)] justify-between gap-x-2 gap-y-3 mb-3">
-          {inputImages.map((img, idx) => renderImageThumb(img, idx))}
-          {renderClearAllButton()}
+      <div ref={imagesRef} className="mb-3 min-h-0 shrink-0 sm:[contain:inline-size]">
+        <div
+          className="max-h-[min(140px,25dvh)] sm:max-h-[min(204px,30dvh)] overflow-y-auto overflow-x-hidden overscroll-y-contain custom-scrollbar [scrollbar-gutter:stable]"
+          onScroll={hideImageHint}
+          role="region"
+          aria-label="参考图"
+          tabIndex={0}
+        >
+          <div className="grid grid-cols-[repeat(auto-fill,52px)] justify-between gap-x-2 gap-y-3 p-2.5">
+            {inputImages.map((img, idx) => renderImageThumb(img, idx))}
+            {renderClearAllButton()}
+          </div>
         </div>
         {touchDragPreview?.src && createPortal(
           <div
@@ -1709,7 +1709,7 @@ export default function InputBar() {
 
   const renderParams = () => (
     <InputParamsPanel
-      params={panelParams}
+      params={params}
       setParams={setParams}
       activeProfile={activeProfile}
       searchSupport={getImageSearchSupport(activeProfile, getCustomProviderDefinition(settings, activeProfile.provider))}
@@ -1773,7 +1773,7 @@ export default function InputBar() {
 
   return (
     <>
-      <DragUploadOverlay visible={isDragging} atImageLimit={atImageLimit} maxImages={MAX_INPUT_IMAGES} />
+      <DragUploadOverlay visible={isDragging} maxImages={inputImageLimit} />
 
       {showAddImageUrls && <AddImageUrlsModal onClose={() => setShowAddImageUrls(false)} />}
 
@@ -1833,7 +1833,7 @@ export default function InputBar() {
           {inputImages.length > 0 && (
             isMobile ? (
               <>
-                <div className={`collapse-section${mobileCollapsed ? ' collapsed' : ''}`}>
+                <div className={`collapse-section shrink-0${mobileCollapsed ? ' collapsed' : ''}`}>
                   <div className="collapse-inner">
                     {renderImageThumbs()}
                   </div>
@@ -1997,7 +1997,7 @@ export default function InputBar() {
                   onMouseEnter={() => setSubmitHover(true)}
                   onMouseLeave={() => setSubmitHover(false)}
                 >
-                  <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig || batchRunning) && submitHover} text={submitTooltipText} />
+                  <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig || batchRunning || Boolean(maskDisabledReason)) && submitHover} text={submitTooltipText} />
                   <button
                     onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : setShowSettings(true)}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
@@ -2040,7 +2040,7 @@ export default function InputBar() {
                   onMouseEnter={() => setSubmitHover(true)}
                   onMouseLeave={() => setSubmitHover(false)}
                 >
-                  <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig || batchRunning) && submitHover} text={submitTooltipText} />
+                  <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig || batchRunning || Boolean(maskDisabledReason)) && submitHover} text={submitTooltipText} />
                   <button
                     onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : setShowSettings(true)}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}

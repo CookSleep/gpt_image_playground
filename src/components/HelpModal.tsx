@@ -63,7 +63,13 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto overscroll-contain mb-6 text-sm text-gray-600 dark:text-gray-300 space-y-6 custom-scrollbar pr-2">
+        <div className="flex-1 overflow-y-auto overscroll-contain mb-6 text-sm text-gray-600 dark:text-gray-300 space-y-6 custom-scrollbar pr-2 [scrollbar-gutter:stable]">
+          <section>
+            <h4 className="mb-3 text-sm font-medium text-gray-800 dark:text-gray-200">参考图</h4>
+            <p>参考图数量上限按模型和服务商确定。超限图片会保留并置灰，悬浮或长按可查看原因；提交前请移除超限图片或切换模型。</p>
+            <p className="mt-2">图片较多时可在参考图区上下滚动；移动端横向起拖可调整顺序。</p>
+            <p className="mt-2">不支持遮罩的模型或输出格式点击“编辑图片”会直接进入画板。切换后若已有遮罩，遮罩图会置灰，悬浮或长按可查看原因；预览右侧会显示“移除遮罩”，移除后恢复“编辑图片”；也可切回支持的模型或输出格式。</p>
+          </section>
           {isAgentMode ? (
             <>
               <section>

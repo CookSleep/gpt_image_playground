@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { MAX_INPUT_IMAGES } from '../types'
 import { useStore, addImageFromUrl } from '../store'
 import { canCopyImageToClipboard, copyImageSourceToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getDownloadErrorMessage, getImageZipEntries, withSaveLocation } from '../lib/downloadImages'
@@ -10,7 +9,6 @@ import { CopyIcon, DownloadIcon, EditIcon } from './icons'
 export default function ImageContextMenu() {
   const [menuInfo, setMenuInfo] = useState<{ src: string; imageId?: string; outputImageIds: string[]; canCopyImage: boolean; x: number; y: number } | null>(null)
   const showToast = useStore((s) => s.showToast)
-  const inputImages = useStore((s) => s.inputImages)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
@@ -175,10 +173,6 @@ export default function ImageContextMenu() {
   const handleEdit = async (e: React.MouseEvent) => {
     e.stopPropagation()
     setMenuInfo(null)
-    if (inputImages.length >= MAX_INPUT_IMAGES) {
-      showToast(`参考图数量已达上限（${MAX_INPUT_IMAGES} 张），无法继续添加`, 'error')
-      return
-    }
 
     try {
       const src = await getOriginalImageSrc()

@@ -119,8 +119,8 @@
 ## ✨ 核心特性
 
 ### 🎨 强大的图像生成与编辑
-- **参考图与遮罩**：最多 16 张参考图（支持剪贴板、拖拽和图片链接），内置遮罩编辑器，自动预处理以符合官方分辨率限制；SVG 和 GIF 作为参考图时转为 PNG（GIF 取第一帧）。
-- **画板标注**：在空白画布或参考图上用画笔、文字、图形和像素橡皮擦标注修改意图；画板与遮罩编辑器可缩放平移（Alt / Ctrl + 滚轮、Alt + 拖动、双指捏合）。标注单独保存为透明图层，原图保持不变。
+- **参考图与遮罩**：支持剪贴板、拖拽和图片链接，提交数量上限按模型和服务商确定。超限图片保留并置灰，悬浮或长按可查看原因；切换模型不会删除图片，提交前需移除超限图片或切换模型。参考图区高度受限，图片较多时可上下滚动；移动端横向起拖可排序。内置遮罩编辑器，自动预处理以符合官方分辨率限制；不支持遮罩的模型或输出格式点击“编辑图片”会直接进入画板；已有遮罩图会置灰，悬浮或长按可查看原因，预览右侧可移除遮罩后继续编辑；SVG 和 GIF 作为参考图时转为 PNG（GIF 取第 1 帧）。
+- **画板标注**：在空白画布或参考图上用画笔、文字、图形和像素橡皮擦标注修改意图；画板与遮罩编辑器可缩放平移（Alt / Ctrl + 滚轮、Alt + 拖动、双指捏合）。GPT Image 2.5／2.6 的 OpenAI Images API 和 fal.ai 的 GPT Image 2.6 支持独立标注层；Agent、遮罩编辑及其他模型保存合成图。
 - **评论标注**：在画板中用评论工具点击图片添加评论，以“@图N 评论”插入提示词，发送时附上评论在图中的位置（如 `(X=52%, Y=41%)`），复用任务时可恢复。
 - **复杂度**：`auto`、`low`、`medium`、`high`，仅 GPT Image 2.6 及以上支持，在「更多」中设置；当前模型或模式不支持时选项置灰并说明原因。
 - **GIF 动图**：仅画廊模式，可设置帧数（2–16，默认 9）和每帧时长（20–2000 ms，默认 200），带参考图时也可用，但不能使用遮罩。
@@ -159,7 +159,7 @@
 - **多模型切换**：模型 ID 可用逗号分隔填写多个（如 `gpt-image-2.6-sunburst, gpt-image-2`），在首页切换，按配置分别记住；预置配置、URL 传参与导入导出均支持此写法。
 - **模型搜索与跨配置切换**：输入框模型列表按配置分组，支持按模型名、配置名或供应商搜索；在 **「设置 → API 配置」** 中开启“在输入框模型列表中展示”，即可在首页直接选择该配置的模型并切换配置。
 - **多供应商接入**：内置 OpenAI 兼容接口（`Images API` / `Responses API`）、Google、xAI、字节跳动、sub2api（异步）、fal.ai（队列），并可通过 JSON 导入自定义 HTTP 供应商（同步/异步任务）。
-- **Gemini / Grok / Seedream 5.5 图像生成**：支持官方接口和 OpenAI Images 兼容接口。
+- **Gemini / Grok / Seedream 5.5 图像生成**：支持官方接口、OpenAI Images 兼容接口和 fal.ai。可在 fal.ai 模型广场查看 [Gemini（Nano Banana）](https://fal.ai/explore/search?q=nano-banana)、[Grok](https://fal.ai/explore/search?q=grok-imagine-image) 和 [Seedream 5.5](https://fal.ai/explore/search?q=seedream) 的相关模型 ID，添加参考图后自动使用编辑接口。
 - **Google Search / Image Search**：部分 Gemini 模型支持网页和图片搜索，详情展示来源与搜索建议。
 - **Agent 模式独立 API 配置**：Agent 可使用原生（Responses API）或混合（Responses API + Images API）的独立配置，适配不支持 `image_generation` 工具的供应商或模型。
 - **API 代理**：OpenAI 兼容接口与 fal.ai 均可配置自定义代理；OpenAI 兼容接口还可走同源 `/api-proxy/`，由 Docker 或本地开发服务器转发，绕开浏览器 CORS 限制。
@@ -200,6 +200,7 @@ Windows 用户可以直接安装桌面客户端；网页版可以部署到 Verce
 
 Claude Code、Codex 等本机 AI 工具可以通过 CLI `gpt-image-playground` 调用客户端：生成和编辑图片、读取历史记录、查看和修改全部设置（API Key 只能写入）。
 
+- `generate --image` 可重复指定参考图，按应用当前启用的模型校验数量；超限时返回错误，不创建任务。
 - 安装时勾选“添加到 PATH”即可直接运行；使用时客户端需要保持打开，用法见 `gpt-image-playground --help`。
 - 在 **「设置 → Skill」** 中安装随附的 Skill，AI 工具就知道何时、如何调用它；客户端启动时会自动把已安装的 Skill 更新到当前版本。
 

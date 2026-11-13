@@ -1,4 +1,5 @@
 import type { ApiProfile } from '../types'
+import { assertInputImageLimit } from './inputImageLimits'
 import { buildApiUrl, readClientDevProxyConfig } from './devProxy'
 import { getImageModelParams } from './imageModelParams'
 import { getImageSearchSupport, getImageThinkingSupport, parseImageSearchGrounding } from './imageSearch'
@@ -6,6 +7,7 @@ import { assertImageInputPayloadSize, createRequestTimeoutError, getApiErrorMess
 import { apiFetch } from './platform'
 
 export async function callGoogleImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
+  assertInputImageLimit(profile, opts.inputImageDataUrls.length)
   const n = opts.params.n > 0 ? opts.params.n : 1
   // generateContent 没有 n 参数，多张使用独立请求，不传多轮历史。
   if (n > 1) {

@@ -117,7 +117,7 @@ export default function ModelPicker({ value, groups, activeProfileId, canSwitchP
           }}
           aria-expanded={open}
           aria-label={`模型 ${value}`}
-          className={`flex w-full items-center gap-1 min-w-0 ${CHIP_BASE_CLASS} ${CHIP_IDLE_CLASS} ${open ? '!bg-black/[0.07] dark:!bg-white/[0.1] rounded-b-none' : ''}`}
+          className={`flex w-full items-center gap-1 min-w-0 ${CHIP_BASE_CLASS} ${CHIP_IDLE_CLASS} ${open ? '!bg-black/[0.07] dark:!bg-white/[0.1]' : ''}`}
         >
           <span className="min-w-0 truncate">{value}</span>
           {canSwitchProfile && groups.length > 1 && activeProfileName && (
