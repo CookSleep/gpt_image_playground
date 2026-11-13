@@ -968,6 +968,68 @@ describe('callImageApi', () => {
     )
   })
 
+  describe('API proxy behind a login gateway', () => {
+    const loginPage = '<!DOCTYPE html>\n<html><body><form>登录</form></body></html>'
+    const html = (status: number) => () => Promise.resolve(new Response(loginPage, { status, headers: { 'Content-Type': 'text/html' } }))
+    const networkError = () => Promise.reject(new TypeError('Failed to fetch'))
+    const redirected = () => Promise.resolve({ type: 'opaqueredirect', status: 0 } as Response)
+    const callThroughProxy = (api: () => Promise<Response>, site: () => Promise<Response>, apiProxy = true) => {
+      vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => init?.method === 'HEAD' ? site() : api())
+      const result = callImageApi({
+        settings: {
+          ...DEFAULT_SETTINGS,
+          apiKey: 'test-key',
+          apiProxy,
+          baseUrl: apiProxy ? '' : 'http://api.example.com/v1',
+        },
+        prompt: 'prompt',
+        params: { ...DEFAULT_PARAMS },
+        inputImageDataUrls: [],
+      })
+      return { fetchMock, result }
+    }
+
+    it.each([
+      ['a blocked cross-origin redirect', networkError, redirected],
+      ['an HTML login page', html(403), html(403)],
+      ['a same-origin redirect to the login page', html(200), redirected],
+    ])('reports an expired login when the request ends in %s and the site itself requires login', async (_name, api, site) => {
+      const { fetchMock, result } = callThroughProxy(api, site)
+
+      await expect(result).rejects.toThrow('登录状态可能已过期，请刷新页面重新登录后重试。')
+      expect(fetchMock).toHaveBeenLastCalledWith('./', { method: 'HEAD', redirect: 'manual', cache: 'no-store' })
+    })
+
+    it('keeps the API error without checking the site when the API answers with JSON', async () => {
+      const { fetchMock, result } = callThroughProxy(() => Promise.resolve(new Response(JSON.stringify({
+        error: { message: 'Incorrect API key provided' },
+      }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      })), redirected)
+
+      await expect(result).rejects.toThrow('Incorrect API key provided')
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      ['an upstream HTML error page', html(403), () => Promise.resolve(new Response(null, { status: 200 })), loginPage],
+      ['a network error', networkError, networkError, 'Failed to fetch'],
+    ])('keeps the original error for %s when the site itself does not require login', async (_name, api, site, message) => {
+      const { result } = callThroughProxy(api, site)
+
+      await expect(result).rejects.toThrow(message)
+    })
+
+    it('does not check the site when the request does not use the API proxy', async () => {
+      const { fetchMock, result } = callThroughProxy(networkError, redirected, false)
+
+      await expect(result).rejects.toThrow('Failed to fetch')
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
   it('uses the same-origin API proxy path for sync custom providers', async () => {
     vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({

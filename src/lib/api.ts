@@ -1,5 +1,6 @@
 import { getActiveApiProfile, getCustomProviderDefinition } from './apiProfiles'
 import { composeMarkupDataUrl, toApiInputImageDataUrl } from './canvasImage'
+import { describeApiProxyError } from './devProxy'
 import { callFalAiImageApi } from './falAiImageApi'
 import { callGoogleImageApi } from './googleImageApi'
 import { supportsImageMarkup } from './imageModels'
@@ -34,5 +35,9 @@ export async function callImageApi(opts: CallApiOptions): Promise<CallApiResult>
   if (profile.provider === 'fal') return callFalAiImageApi(requestOpts, profile)
   if (profile.provider === 'google') return callGoogleImageApi(requestOpts, profile)
 
-  return callOpenAICompatibleImageApi(requestOpts, profile, customProvider)
+  try {
+    return await callOpenAICompatibleImageApi(requestOpts, profile, customProvider)
+  } catch (err) {
+    throw await describeApiProxyError(err, profile.apiProxy)
+  }
 }

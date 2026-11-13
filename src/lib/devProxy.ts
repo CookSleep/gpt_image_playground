@@ -108,3 +108,22 @@ export function isApiProxyLocked(proxyConfig: DevProxyConfig | null = readClient
 export function shouldUseApiProxy(apiProxy: boolean, proxyConfig: DevProxyConfig | null = readClientDevProxyConfig()): boolean {
   return isApiProxyAvailable(proxyConfig) && (apiProxy || isApiProxyLocked(proxyConfig))
 }
+
+/**
+ * 站点部署在登录网关之后时，登录过期后发往 API 代理的请求会被网关重定向到登录页或换成登录网页，
+ * 表现为网络错误、JSON 解析失败或报错内容是整页 HTML。此时再请求一次站点首页，
+ * 首页也被重定向或返回 401/403 才换成登录过期的提示；模型接口自身的报错不影响首页，保持原样。
+ * Service Worker 只接管 GET，用 HEAD 才能拿到网关的响应而不是缓存的页面
+ */
+export async function describeApiProxyError(err: unknown, apiProxy: boolean): Promise<unknown> {
+  if (!shouldUseApiProxy(apiProxy)) return err
+  const intercepted = err instanceof TypeError || err instanceof SyntaxError || (err instanceof Error && /^\s*<(!doctype|html)/i.test(err.message))
+  if (!intercepted) return err
+  try {
+    const response = await fetch('./', { method: 'HEAD', redirect: 'manual', cache: 'no-store' })
+    if (response.type !== 'opaqueredirect' && response.status !== 401 && response.status !== 403) return err
+  } catch {
+    return err
+  }
+  return new Error('登录状态可能已过期，请刷新页面重新登录后重试。')
+}
