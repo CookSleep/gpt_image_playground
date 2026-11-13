@@ -8,6 +8,8 @@ const MAX_PIXELS = 8_294_400
 const MAX_1K_PIXELS = 1_572_864
 
 export type SizeTier = '1K' | '2K' | '4K'
+/** Seedream 5.5 的分辨率档位，每档对应基准边长 1K=1024、1.5K=1536、2K=2048 */
+export const SEEDREAM_RESOLUTIONS = ['1K', '1.5K', '2K'] as const
 type PresetRatio = '1:1' | '3:2' | '2:3' | '16:9' | '9:16' | '4:3' | '3:4' | '21:9'
 
 function roundToMultiple(value: number, multiple: number) {
@@ -66,6 +68,40 @@ export function normalizeImageSize(size: string) {
 
   const { width, height } = normalizeDimensions(Number(match[1]), Number(match[2]))
   return `${width}x${height}`
+}
+
+export function normalizeSeedreamImageSize(size: string) {
+  const match = size.match(SIZE_PATTERN)
+  if (!match) return ''
+  let width = Number(match[1])
+  let height = Number(match[2])
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) return ''
+  for (let i = 0; i < 4; i++) {
+    width = Math.min(width, height * 16)
+    height = Math.min(height, width * 16)
+    const pixels = width * height
+    if (pixels < 921600) {
+      const scale = Math.sqrt(921600 / pixels)
+      width = Math.ceil(width * scale)
+      height = Math.ceil(height * scale)
+    } else if (pixels > 4624220) {
+      const scale = Math.sqrt(4624220 / pixels)
+      width = Math.floor(width * scale)
+      height = Math.floor(height * scale)
+    }
+  }
+  return `${width}x${height}`
+}
+
+// 按档位基准边长算出指定比例的宽高，再按模型限制规整，保证预览与实际发送的尺寸一致。
+export function getSeedreamRatioSize(resolution: string, ratio: string) {
+  const parsed = parseRatio(ratio)
+  if (!parsed) return ''
+  const { width, height } = parsed
+  const side = resolution === '1K' ? 1024 : resolution === '1.5K' ? 1536 : 2048
+  const short = Math.floor(side / Math.sqrt(Math.max(width, height) / Math.min(width, height)))
+  const long = Math.floor(short * Math.max(width, height) / Math.min(width, height))
+  return normalizeSeedreamImageSize(width >= height ? `${long}x${short}` : `${short}x${long}`)
 }
 
 export function normalizeCodexCliImageSize(size: string) {

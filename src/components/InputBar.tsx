@@ -12,6 +12,7 @@ import { splitBatchPrompts } from '../lib/batchPrompts'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, getParamDisabledReasons, normalizeParamsForSettings, supportsTransparentOutput } from '../lib/paramCompatibility'
 import { getAtImageQuery, getImageComments, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { normalizeCodexCliImageSize, normalizeImageSize } from '../lib/size'
+import { getSeedreamSize, getSeedreamSizeParams } from '../lib/imageModelParams'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { getSafeBoundingClientRect } from '../lib/domRect'
 import { suppressGlobalClicks } from '../lib/clickSuppression'
@@ -532,9 +533,13 @@ export default function InputBar() {
   const nLimitHintText = agentAutoImageCount
     ? 'Agent 模式下数量由模型根据提示词自动决定'
     : `最大请求数量为 ${outputImageLimit}`
-  const displaySize = disabledReasons.autoSize && params.size === 'auto'
-    ? DEFAULT_FAL_IMAGE_SIZE
-    : (activeProfile.codexCli ? normalizeCodexCliImageSize(params.size) : normalizeImageSize(params.size)) || DEFAULT_PARAMS.size
+  const sizeFamily = getImageModelFamily(activeProfile)
+  const displaySize = sizeFamily === 'seedream'
+    ? getSeedreamSize(activeProfile, params)
+    : disabledReasons.autoSize && params.size === 'auto'
+      ? DEFAULT_FAL_IMAGE_SIZE
+      : (activeProfile.codexCli ? normalizeCodexCliImageSize(params.size) : normalizeImageSize(params.size)) || DEFAULT_PARAMS.size
+  const sizePickerCurrentSize = sizeFamily === 'seedream' ? displaySize : disabledReasons.autoSize && params.size === 'auto' ? DEFAULT_FAL_IMAGE_SIZE : params.size
 
   const qualityOptions: SelectOption[] = [
     { label: 'auto', value: 'auto', disabledReason: disabledReasons.autoQuality },
@@ -1754,11 +1759,12 @@ export default function InputBar() {
 
       {showSizePicker && (
         <SizePickerModal
-          currentSize={disabledReasons.autoSize && params.size === 'auto' ? DEFAULT_FAL_IMAGE_SIZE : params.size}
-          onSelect={(size) => setParams({ size })}
+          currentSize={sizePickerCurrentSize}
+          onSelect={(size) => setParams(sizeFamily === 'seedream' ? getSeedreamSizeParams(size) : { size })}
           onClose={() => setShowSizePicker(false)}
           autoDisabledReason={disabledReasons.autoSize}
           codexCli={activeProfile.codexCli}
+          seedream={sizeFamily === 'seedream'}
         />
       )}
 

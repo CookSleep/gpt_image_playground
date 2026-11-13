@@ -2,7 +2,7 @@ import { DEFAULT_PARAMS, type ApiProfile, type AppSettings, type ParamDisabledRe
 import { getActiveApiProfile, getCustomProviderDefinition, isOpenAICompatibleProvider } from './apiProfiles'
 import { customProviderSupportsNativeTransparentBackground } from './customProviderCapabilities'
 import { getImageModelFamily, isGptImage26PlusModel, isVectorOrAnimatedFormat, supportsExtendedQuality, supportsGptImage26Params } from './imageModels'
-import { getImageModelParams } from './imageModelParams'
+import { getImageModelParams, getSeedreamSize } from './imageModelParams'
 import { getImageSearchSupport, getImageThinkingSupport } from './imageSearch'
 import { normalizeCodexCliImageSize, normalizeImageSize } from './size'
 
@@ -20,6 +20,7 @@ export function getTaskParamSupport(settings: AppSettings, profile: ApiProfile) 
 
 export function getOutputImageLimitForSettings(settings: AppSettings) {
   const profile = getActiveApiProfile(settings)
+  if (getImageModelFamily(profile) === 'seedream') return 1
   return profile.provider === 'fal' ? MAX_FAL_OUTPUT_IMAGES : MAX_OPENAI_OUTPUT_IMAGES
 }
 
@@ -38,6 +39,8 @@ export function normalizeParamsForSettings(
     google_search: undefined,
     image_search: undefined,
     thinking_level: undefined,
+    background: undefined,
+    watermark: undefined,
     n: Math.min(outputImageLimit, Math.max(1, params.n || DEFAULT_PARAMS.n)),
   }
 
@@ -45,6 +48,17 @@ export function normalizeParamsForSettings(
     const modelParams = getImageModelParams(activeProfile, params)
     const search = getImageSearchSupport(activeProfile, getCustomProviderDefinition(settings, activeProfile.provider))
     const thinking = getImageThinkingSupport(activeProfile, getCustomProviderDefinition(settings, activeProfile.provider))
+    if (getImageModelFamily(activeProfile) === 'seedream') {
+      const background = options.agent ? 'auto' : params.background ?? 'auto'
+      return {
+        ...nextParams, ...modelParams,
+        size: getSeedreamSize(activeProfile, params), quality: 'auto',
+        watermark: params.watermark ?? false,
+        background, transparent_output: background === 'transparent',
+        output_format: params.output_format === 'jpeg' && background !== 'transparent' ? 'jpeg' : 'png',
+        output_compression: null, moderation: 'auto', complexity: 'auto',
+      }
+    }
     return {
       ...nextParams, ...modelParams,
       google_search: search.googleSearch ? undefined : params.google_search,

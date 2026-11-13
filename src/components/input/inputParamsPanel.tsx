@@ -320,7 +320,7 @@ export default function InputParamsPanel({
           className={CHIP_CLASS}
         />
       </div>
-      {family && (
+      {family && family !== 'seedream' && (
         <>
           <div className="max-sm:flex-auto sm:shrink-0">
             <Select
@@ -380,7 +380,7 @@ export default function InputParamsPanel({
           )}
         </>
       )}
-      {!family && (
+      {(!family || family === 'seedream') && (
         <>
           <div
             className="relative max-sm:flex-auto sm:shrink-0"
@@ -404,75 +404,118 @@ export default function InputParamsPanel({
               text={disabledReasons.autoSize ?? 'Codex CLI 不支持尺寸参数，此处设置仅基于提示词工程'}
             />
           </div>
-          <div
-            className="relative max-sm:flex-auto sm:shrink-0"
-            onMouseEnter={qualityHint.show}
-            onMouseLeave={qualityHint.hide}
-            onTouchStart={qualityHint.startTouch}
-            onTouchEnd={qualityHint.clearTimer}
-            onTouchCancel={qualityHint.hide}
-            onClick={qualityHint.show}
-          >
+          {!family && (
+            <div
+              className="relative max-sm:flex-auto sm:shrink-0"
+              onMouseEnter={qualityHint.show}
+              onMouseLeave={qualityHint.hide}
+              onTouchStart={qualityHint.startTouch}
+              onTouchEnd={qualityHint.clearTimer}
+              onTouchCancel={qualityHint.hide}
+              onClick={qualityHint.show}
+            >
+              <Select
+                value={activeProfile.codexCli ? 'auto' : isFalProvider && params.quality === 'auto' ? 'high' : params.quality}
+                onChange={(val) => {
+                  if (!activeProfile.codexCli) setParams({ quality: val as TaskParams['quality'] })
+                }}
+                options={qualityOptions}
+                disabled={activeProfile.codexCli}
+                prefix={prefix('质量')}
+                menuClassName="min-w-max"
+                className={activeProfile.codexCli ? CHIP_DISABLED_CLASS : CHIP_CLASS}
+              />
+              <ButtonTooltip
+                visible={activeProfile.codexCli && qualityHint.visible}
+                text="Codex CLI 不支持质量参数"
+              />
+            </div>
+          )}
+        </>
+      )}
+      {family !== 'seedream' && (
+        <label
+          className={`relative flex items-center max-sm:flex-auto sm:shrink-0 ${agentAutoImageCount ? CHIP_DISABLED_CLASS : `${CHIP_CLASS} cursor-text`}`}
+          onMouseEnter={() => { showAgentNHint(); streamConcurrentHint.show() }}
+          onMouseLeave={() => { hideNLimitHint(); streamConcurrentHint.hide() }}
+          onTouchStart={() => { startAgentNHintTouch(); streamConcurrentHint.startTouch() }}
+          onTouchEnd={() => { clearAgentNHintTouchTimer(); streamConcurrentHint.clearTimer() }}
+          onTouchCancel={() => {
+            clearAgentNHintTouchTimer()
+            hideNLimitHint()
+            streamConcurrentHint.hide()
+          }}
+          onClick={() => { showAgentNHint(); streamConcurrentHint.show() }}
+        >
+          {prefix('数量')}
+          <input
+            value={nInput}
+            onChange={(e) => handleNInputChange(e.target.value)}
+            onFocus={() => setNInputFocused(true)}
+            onBlur={() => {
+              setNInputFocused(false)
+              commitN()
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowUp') {
+                handleNLimitIncreaseAttempt(() => e.preventDefault())
+              }
+            }}
+            onWheel={(e) => {
+              if (e.deltaY < 0) {
+                handleNLimitIncreaseAttempt(() => e.preventDefault())
+              }
+            }}
+            disabled={agentAutoImageCount}
+            type={agentAutoImageCount ? 'text' : 'number'}
+            min={agentAutoImageCount ? undefined : 1}
+            max={agentAutoImageCount ? undefined : outputImageLimit}
+            style={{ width: `${Math.max(1, nInput.length)}ch` }}
+            className="bg-transparent text-xs focus:outline-none disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          />
+          <ButtonTooltip visible={nLimitHint.visible} text={nLimitHintText} />
+          <ButtonTooltip visible={streamConcurrentByN && streamConcurrentHint.visible && !nLimitHint.visible} text="数量大于 1 时会将多图生成拆分为并发单图" />
+        </label>
+      )}
+      {family === 'seedream' && (
+        <>
+          <div className="max-sm:flex-auto sm:shrink-0">
             <Select
-              value={activeProfile.codexCli ? 'auto' : isFalProvider && params.quality === 'auto' ? 'high' : params.quality}
+              value={params.output_format === 'jpeg' ? 'jpeg' : 'png'}
               onChange={(val) => {
-                if (!activeProfile.codexCli) setParams({ quality: val as TaskParams['quality'] })
+                const format = val as TaskParams['output_format']
+                setParams({ output_format: format, ...(format === 'jpeg' ? { transparent_output: false, background: params.background === 'transparent' ? 'opaque' as const : params.background } : {}) })
               }}
-              options={qualityOptions}
-              disabled={activeProfile.codexCli}
-              prefix={prefix('质量')}
-              menuClassName="min-w-max"
-              className={activeProfile.codexCli ? CHIP_DISABLED_CLASS : CHIP_CLASS}
+              options={[{ label: 'PNG', value: 'png' }, { label: 'JPEG', value: 'jpeg' }]}
+              prefix={prefix('格式')}
+              className={CHIP_CLASS}
             />
-            <ButtonTooltip
-              visible={activeProfile.codexCli && qualityHint.visible}
-              text="Codex CLI 不支持质量参数"
+          </div>
+          {transparentOutputAvailable && (
+            <div className="max-sm:flex-auto sm:shrink-0">
+              <Select
+                value={params.background ?? 'auto'}
+                onChange={(val) => setParams({ background: val as TaskParams['background'], transparent_output: val === 'transparent' })}
+                options={(['auto', 'transparent', 'opaque'] as const)
+                  .filter((value) => params.output_format !== 'jpeg' || value !== 'transparent')
+                  .map((value) => ({ label: value === 'auto' ? '自动' : value === 'transparent' ? '透明' : '不透明', value }))}
+                prefix={prefix('背景')}
+                className={CHIP_CLASS}
+                onOpenChange={onTransparentOutputMenuOpenChange}
+              />
+            </div>
+          )}
+          <div className="max-sm:flex-auto sm:shrink-0">
+            <Select
+              value={String(params.watermark ?? false)}
+              onChange={(val) => setParams({ watermark: val === 'true' })}
+              options={[{ label: 'true', value: 'true' }, { label: 'false', value: 'false' }]}
+              prefix={prefix('水印')}
+              className={CHIP_CLASS}
             />
           </div>
         </>
       )}
-      <label
-        className={`relative flex items-center max-sm:flex-auto sm:shrink-0 ${agentAutoImageCount ? CHIP_DISABLED_CLASS : `${CHIP_CLASS} cursor-text`}`}
-        onMouseEnter={() => { showAgentNHint(); streamConcurrentHint.show() }}
-        onMouseLeave={() => { hideNLimitHint(); streamConcurrentHint.hide() }}
-        onTouchStart={() => { startAgentNHintTouch(); streamConcurrentHint.startTouch() }}
-        onTouchEnd={() => { clearAgentNHintTouchTimer(); streamConcurrentHint.clearTimer() }}
-        onTouchCancel={() => {
-          clearAgentNHintTouchTimer()
-          hideNLimitHint()
-          streamConcurrentHint.hide()
-        }}
-        onClick={() => { showAgentNHint(); streamConcurrentHint.show() }}
-      >
-        {prefix('数量')}
-        <input
-          value={nInput}
-          onChange={(e) => handleNInputChange(e.target.value)}
-          onFocus={() => setNInputFocused(true)}
-          onBlur={() => {
-            setNInputFocused(false)
-            commitN()
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowUp') {
-              handleNLimitIncreaseAttempt(() => e.preventDefault())
-            }
-          }}
-          onWheel={(e) => {
-            if (e.deltaY < 0) {
-              handleNLimitIncreaseAttempt(() => e.preventDefault())
-            }
-          }}
-          disabled={agentAutoImageCount}
-          type={agentAutoImageCount ? 'text' : 'number'}
-          min={agentAutoImageCount ? undefined : 1}
-          max={agentAutoImageCount ? undefined : outputImageLimit}
-          style={{ width: `${Math.max(1, nInput.length)}ch` }}
-          className="bg-transparent text-xs focus:outline-none disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-        />
-        <ButtonTooltip visible={nLimitHint.visible} text={nLimitHintText} />
-        <ButtonTooltip visible={streamConcurrentByN && streamConcurrentHint.visible && !nLimitHint.visible} text="数量大于 1 时会将多图生成拆分为并发单图" />
-      </label>
       {family === 'grok' && transparentOutputAvailable && (
         <div
           className="relative max-sm:flex-auto sm:shrink-0"
@@ -498,7 +541,7 @@ export default function InputParamsPanel({
           <ButtonTooltip visible={transparentOutputHint.visible} text="当前图像模型使用本地后处理生成透明背景" />
         </div>
       )}
-      {family !== 'grok' && (
+      {family !== 'grok' && family !== 'seedream' && (
         // 按 5rem 参与换行判断，再伸展到摘要全宽：空间不足时先截断摘要，连 5rem 都放不下才换行
         <ParamPopoverChip label="更多" summary={moreSummary} className="sm:basis-20 sm:grow sm:max-w-max">
           {family === 'gemini' && (

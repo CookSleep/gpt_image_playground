@@ -54,7 +54,7 @@ export function prepareSettingsForCommit(draft: AppSettings): AppSettings {
   const apiProxyLocked = isApiProxyLocked(proxyConfig)
   const defaultProfileId = getDefaultPresetProfileId() ?? getDefaultApiProfileId(draft)
   const profiles = draft.profiles.map((profile) => {
-    const nativeProvider = profile.provider === 'google' || profile.provider === 'xai' ? NATIVE_IMAGE_PROVIDERS[profile.provider] : null
+    const nativeProvider = profile.provider === 'google' || profile.provider === 'xai' || profile.provider === 'bytedance' ? NATIVE_IMAGE_PROVIDERS[profile.provider] : null
     const nextApiProxy = isProfileApiProxyEligible(draft, profile) && apiProxyAvailable ? (apiProxyLocked || profile.apiProxy) : false
     const shouldKeepEmptyBaseUrl = profile.provider !== 'fal' && nextApiProxy && !profile.baseUrl.trim()
     const emptyBaseUrlFallback = profile.id === defaultProfileId
@@ -62,7 +62,7 @@ export function prepareSettingsForCommit(draft: AppSettings): AppSettings {
       : DEFAULT_SETTINGS.baseUrl
     const baseUrl = profile.provider === 'fal'
       ? profile.baseUrl.trim().replace(/\/+$/, '') || (profile.id === defaultProfileId ? '' : DEFAULT_FAL_BASE_URL)
-      : shouldKeepEmptyBaseUrl ? '' : normalizeBaseUrl(profile.baseUrl.trim() || nativeProvider?.baseUrl || emptyBaseUrlFallback, profile.provider === 'google' ? 'v1beta' : 'v1')
+      : shouldKeepEmptyBaseUrl ? '' : normalizeBaseUrl(profile.baseUrl.trim() || nativeProvider?.baseUrl || emptyBaseUrlFallback, profile.provider === 'google' ? 'v1beta' : profile.provider === 'bytedance' ? 'v3' : 'v1')
     const defaultModel = nativeProvider?.model ?? (profile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(profile.apiMode))
     return {
       ...profile,

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { calculateImageSize, normalizeCodexCliImageSize, normalizeImageSize, parseRatio, type SizeTier } from '../lib/size'
+import { calculateImageSize, getSeedreamRatioSize, normalizeCodexCliImageSize, normalizeImageSize, normalizeSeedreamImageSize, parseRatio, SEEDREAM_RESOLUTIONS, type SizeTier } from '../lib/size'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import ViewportTooltip from './ViewportTooltip'
 
 const TIERS: SizeTier[] = ['1K', '2K', '4K']
 const SIZE_LIMIT_TEXT = '由于模型限制，不符合要求的分辨率会被自动规整：\n宽高均为 16 的倍数，最大边长 3840px，宽高比不超过 3:1，总像素限制为 655360-8294400。'
 const CODEX_CLI_SIZE_LIMIT_TEXT = '由于模型和 Codex CLI 限制，不符合要求的分辨率会被自动规整：\n宽高均为 16 的倍数，宽高比不超过 3:1，分辨率不超过 1K。'
+const SEEDREAM_SIZE_LIMIT_TEXT = '由于模型限制，不符合要求的分辨率会被自动规整：\n宽高比不超过 16:1，总像素限制为 921600-4624220。'
 const CLAMPED_SIZE_TEXT = '由于模型限制，原始分辨率已被自动规整'
 const RATIOS = [
   { label: '1:1', value: '1:1' },
@@ -25,6 +26,7 @@ interface Props {
   /** 不能使用自动尺寸的原因；设置后“自动”置灰 */
   autoDisabledReason?: string
   codexCli?: boolean
+  seedream?: boolean
 }
 
 type Mode = 'auto' | 'ratio' | 'resolution'
@@ -47,7 +49,7 @@ function findPresetForSize(size: string) {
   return null
 }
 
-export default function SizePickerModal({ currentSize, onSelect, onClose, autoDisabledReason, codexCli = false }: Props) {
+export default function SizePickerModal({ currentSize, onSelect, onClose, autoDisabledReason, codexCli = false, seedream = false }: Props) {
   usePreventBackgroundScroll(true)
 
   const modalRef = useRef<HTMLDivElement>(null)
@@ -73,16 +75,20 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, autoDi
     mouseDownTargetRef.current = null
   }
 
-  const currentPreset = findPresetForSize(currentSize)
+  const currentPreset = seedream ? null : findPresetForSize(currentSize)
   const currentParsedSize = parseSize(currentSize)
   const [mode, setMode] = useState<Mode>(() => {
+    if (seedream && (SEEDREAM_RESOLUTIONS as readonly string[]).includes(currentSize)) return 'auto'
     if (!currentSize || currentSize === 'auto') return autoDisabledReason ? 'ratio' : 'auto'
     if (currentPreset) return 'ratio'
     return 'resolution'
   })
 
   // Ratio mode state
-  const [tier, setTier] = useState<SizeTier>(currentPreset?.tier ?? '1K')
+  const [tier, setTier] = useState<SizeTier | '1.5K'>(
+    currentPreset?.tier
+    ?? (seedream && (SEEDREAM_RESOLUTIONS as readonly string[]).includes(currentSize) ? currentSize as SizeTier | '1.5K' : seedream ? '2K' : '1K'),
+  )
   const [ratio, setRatio] = useState(currentPreset?.ratio ?? (autoDisabledReason ? '4:3' : '1:1'))
   const [customRatio, setCustomRatio] = useState('16:9')
 
@@ -99,8 +105,8 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, autoDi
     if (hintTimerRef.current != null) window.clearTimeout(hintTimerRef.current)
   }, [])
 
-  const normalizeSize = codexCli ? normalizeCodexCliImageSize : normalizeImageSize
-  const sizeLimitText = codexCli ? CODEX_CLI_SIZE_LIMIT_TEXT : SIZE_LIMIT_TEXT
+  const normalizeSize = seedream ? normalizeSeedreamImageSize : codexCli ? normalizeCodexCliImageSize : normalizeImageSize
+  const sizeLimitText = seedream ? SEEDREAM_SIZE_LIMIT_TEXT : codexCli ? CODEX_CLI_SIZE_LIMIT_TEXT : SIZE_LIMIT_TEXT
 
   const activeRatio = ratio === 'custom' ? customRatio : ratio
   const parsedCustomRatio = parseRatio(customRatio)
@@ -108,14 +114,15 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, autoDi
   const customRatioClamped = Boolean(
     ratio === 'custom' &&
     parsedCustomRatio &&
-    Math.max(parsedCustomRatio.width, parsedCustomRatio.height) / Math.min(parsedCustomRatio.width, parsedCustomRatio.height) > 3,
+    Math.max(parsedCustomRatio.width, parsedCustomRatio.height) / Math.min(parsedCustomRatio.width, parsedCustomRatio.height) > (seedream ? 16 : 3),
   )
 
   const previewSize = useMemo(() => {
-    if (mode === 'auto') return 'auto'
+    if (mode === 'auto') return seedream ? tier : 'auto'
     
     if (mode === 'ratio') {
-      const size = calculateImageSize(tier, activeRatio)
+      if (seedream) return getSeedreamRatioSize(tier, activeRatio)
+      const size = calculateImageSize(tier as SizeTier, activeRatio)
       return size ? normalizeSize(size) : ''
     }
     
@@ -129,7 +136,7 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, autoDi
     }
     
     return ''
-  }, [mode, tier, activeRatio, customW, customH, normalizeSize])
+  }, [mode, tier, activeRatio, customW, customH, normalizeSize, seedream])
 
   const isClamped = useMemo(() => {
     if (!previewSize || previewSize === 'auto') return false
@@ -222,7 +229,7 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, autoDi
                 disabled={Boolean(autoDisabledReason)}
                 className={`flex-1 rounded-lg py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${mode === 'auto' ? 'bg-white text-gray-800 shadow-sm dark:bg-gray-700 dark:text-gray-100' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
               >
-                自动
+                {seedream ? '自动比例' : '自动'}
               </button>
               <ViewportTooltip visible={disabledHint === 'auto'} className="w-52 text-center">
                 {autoDisabledReason}
@@ -251,11 +258,22 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, autoDi
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>
                   </div>
-                  <h4 className="text-sm font-medium text-gray-800 dark:text-gray-200">自动尺寸</h4>
+                  <h4 className="text-sm font-medium text-gray-800 dark:text-gray-200">{seedream ? '自动比例' : '自动尺寸'}</h4>
+                  {seedream && (
+                    <div className="mt-4 grid grid-cols-3 gap-2">
+                      {SEEDREAM_RESOLUTIONS.map((item) => (
+                        <button key={item} className={buttonClass(tier === item)} onClick={() => setTier(item)}>{item}</button>
+                      ))}
+                    </div>
+                  )}
                   <p className="mt-2 text-xs text-gray-400 leading-relaxed dark:text-gray-500">
-                    不向模型传递具体的分辨率参数
-                    <br />
-                    由模型自己决定生成尺寸
+                    {seedream ? '只指定分辨率档位，比例由模型根据提示词决定' : '不向模型传递具体的分辨率参数'}
+                    {!seedream && (
+                      <>
+                        <br />
+                        由模型自己决定生成尺寸
+                      </>
+                    )}
                   </p>
                 </div>
               </div>
@@ -266,7 +284,7 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, autoDi
                 <section>
                   <div className="mb-2 text-xs font-medium text-gray-400 dark:text-gray-500">基准分辨率</div>
                   <div className="grid grid-cols-3 gap-2">
-                    {TIERS.map((item) => {
+                    {(seedream ? SEEDREAM_RESOLUTIONS : TIERS).map((item) => {
                       const disabled = codexCli && item !== '1K'
                       return (
                         <div key={item} className="relative" {...disabledHintHandlers(item, disabled)}>

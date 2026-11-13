@@ -619,7 +619,7 @@ export default function TaskCard({
                 </span>
               )}
               {/* Params: only show if not default or mismatch */}
-              {task.params.aspect_ratio && task.params.aspect_ratio !== 'auto' && (
+              {task.params.aspect_ratio && task.params.aspect_ratio !== 'auto' && task.params.aspect_ratio !== 'custom' && (
                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
                   <span className="text-gray-400 dark:text-gray-500">比例</span>
                   <span className="text-gray-600 dark:text-gray-300">{task.params.aspect_ratio}</span>

@@ -1,10 +1,12 @@
 import type { ApiProfile, TaskParams } from '../types'
+import { getSeedreamRatioSize, normalizeSeedreamImageSize, SEEDREAM_RESOLUTIONS } from './size'
 import { getImageModelFamily, supportsGrokQuality, usesGrokSizeParams } from './imageModels'
 
 export function getImageModelOptions(profile: ApiProfile) {
   const family = getImageModelFamily(profile)
   const model = profile.model.toLowerCase()
   const ratios = ['auto', '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9']
+  if (family === 'seedream') return { ratios: [...ratios, '1:2', '2:1', '1:4', '4:1', '1:8', '8:1', '1:16', '16:1'], resolutions: [...SEEDREAM_RESOLUTIONS] }
   if (family === 'grok') {
     if (usesGrokSizeParams(profile)) return { ratios: ['auto', '1:1', '16:9', '9:16', '3:2', '2:3'], resolutions: [] }
     return { ratios: [...ratios.filter((ratio) => ratio !== '4:5' && ratio !== '5:4'), '9:19.5', '19.5:9', '9:20', '20:9', '1:2', '2:1', '5:2'], resolutions: ['1K', '2K'] }
@@ -22,13 +24,25 @@ export function getImageModelOptions(profile: ApiProfile) {
 export function getImageModelParams(profile: ApiProfile, params: TaskParams): { aspect_ratio: string; resolution: string | undefined; quality: TaskParams['quality'] | undefined } {
   const family = getImageModelFamily(profile)
   const options = getImageModelOptions(profile)
-  const aspectRatio = options.ratios.includes(params.aspect_ratio ?? '') ? params.aspect_ratio! : 'auto'
-  const resolution = options.resolutions.includes(params.resolution?.toUpperCase() ?? '') ? params.resolution!.toUpperCase() : '1K'
+  const aspectRatio = family === 'seedream' && params.aspect_ratio === 'custom' ? 'custom' : options.ratios.includes(params.aspect_ratio ?? '') ? params.aspect_ratio! : 'auto'
+  const resolution = options.resolutions.includes(params.resolution?.toUpperCase() ?? '') ? params.resolution!.toUpperCase() : family === 'seedream' ? '2K' : '1K'
   return {
     aspect_ratio: aspectRatio,
-    resolution: options.resolutions.length ? resolution : undefined,
+    resolution: aspectRatio === 'custom' ? undefined : options.resolutions.length ? resolution : undefined,
     quality: family === 'grok' && supportsGrokQuality(profile.model)
       ? params.quality === 'low' || params.quality === 'medium' ? params.quality : 'auto'
       : undefined,
   }
+}
+
+export function getSeedreamSize(profile: ApiProfile, params: TaskParams) {
+  const modelParams = getImageModelParams(profile, params)
+  if (modelParams.aspect_ratio === 'custom') return normalizeSeedreamImageSize(params.size) || '2K'
+  if (modelParams.aspect_ratio === 'auto') return modelParams.resolution!
+  return getSeedreamRatioSize(modelParams.resolution!, modelParams.aspect_ratio)
+}
+
+/** 尺寸弹窗选中的结果：档位写回分辨率并交给模型定比例，宽高则固定为自定义尺寸 */
+export function getSeedreamSizeParams(size: string): Partial<TaskParams> {
+  return (SEEDREAM_RESOLUTIONS as readonly string[]).includes(size) ? { size, aspect_ratio: 'auto', resolution: size } : { size, aspect_ratio: 'custom', resolution: undefined }
 }

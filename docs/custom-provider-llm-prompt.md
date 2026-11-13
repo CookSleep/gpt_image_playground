@@ -57,7 +57,8 @@ body 模板变量：
 - $profile.model：用户在设置里填写的模型 ID。
 - $prompt：当前提示词。
 - $mode：没有参考图时为 text-to-image，有参考图时为 image-to-image。
-- $params.aspect_ratio、$params.resolution：Gemini（含 Nano Banana）、Grok 图像模型的比例和分辨率；这些模型的 $params.size 也为比例。
+- $params.aspect_ratio、$params.resolution、$params.size：Gemini（含 Nano Banana）、Grok 和 Seedream 5.5 图像模型的比例和分辨率；Seedream 5.5 的 $params.size 为分辨率档位（1K、1.5K、2K）或宽高像素值（如 2048x1152）。
+- $params.watermark：Seedream 5.5 的水印开关，布尔值，默认为 false。
 - $params.google_search、$params.image_search：Google Search、Image Search 开关（布尔值）；映射后可在 Gemini 模型的“搜索”参数中切换。
 - $params.thinking_level：Gemini 的思考等级，默认不发送；映射后可在参数栏中选择。
 - $resolution.upper、$resolution.lower：分辨率的大写、小写形式，例如 2K、2k。
@@ -65,7 +66,7 @@ body 模板变量：
 - $params.size、$params.quality、$params.output_format、$params.output_compression、$params.moderation、$params.n：应用内参数。
 - $params.n：用户选择的生成数量。
 - $params.complexity、$params.frame_count、$params.frame_duration_ms、$params.svg：GPT Image 2.6 参数，只在模型 ID 为 GPT Image 2.6 及以上时可用；复杂度选 auto 时省略 complexity，帧参数只在输出 GIF 时传入，svg 只在输出 SVG 时传入，值为 {"model":"SVG 编写模型 ID"}。
-- $params.background：API 原生透明背景参数；启用时为 `"transparent"`，未启用时自动省略。
+- $params.background：Seedream 5.5 为 auto（默认）、transparent 或 opaque；选择本地后处理且开启透明背景时为 opaque。其他模型仅在启用 API 原生透明背景时为 transparent，否则省略。
 - $inputImages.dataUrls：参考图 data URL 数组；没有参考图时会自动省略该字段。
 - $inputImages.base64：参考图 base64 数组，不含 `data:image/png;base64,` 前缀；没有参考图时会自动省略该字段。
 - $inputImages.urls：参考图链接数组，只包含在输入框「+ → 添加链接」中添加的参考图；没有时会自动省略该字段。配置只用它传参考图时，如果有参考图不是通过链接添加的，提交会报错。

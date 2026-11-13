@@ -4,11 +4,13 @@ export const DEFAULT_IMAGES_MODEL = 'gpt-image-2.6-sunburst'
 /** Images API 生成 SVG 时必填的 svg.model（负责编写 SVG 的文本模型） */
 export const DEFAULT_SVG_MODEL = 'gpt-6.1-sol'
 
-export function getImageModelFamily(profile: Pick<ApiProfile, 'provider' | 'apiMode' | 'model'>): 'gemini' | 'grok' | null {
+export function getImageModelFamily(profile: Pick<ApiProfile, 'provider' | 'apiMode' | 'model'>): 'gemini' | 'grok' | 'seedream' | null {
   if (profile.provider === 'openai' && profile.apiMode === 'responses') return null
   if (profile.provider === 'google') return 'gemini'
   if (profile.provider === 'xai') return 'grok'
+  if (profile.provider === 'bytedance') return 'seedream'
   const model = profile.model.trim().toLowerCase()
+  if (/(?:^|\/)(?:doubao-)?seedream[-_]5[._-]5(?:$|[-_/])/.test(model)) return 'seedream'
   if (/(?:^|\/)gemini-[^/]*image|(?:^|\/)(?:gemini-)?nano[-_]?banana/.test(model)) return 'gemini'
   if (/(?:^|\/)grok-[^/]*image|(?:^|\/)grok-imagine-\d/.test(model)) return 'grok'
   return null

@@ -8,16 +8,18 @@
 
 | 键 | 取值 |
 |---|---|
-| `size` | 如 `1024x1024`、`1536x1024`、`1024x1536`，或 `auto` |
+| `size` | 如 `1024x1024`、`1536x1024`、`1024x1536`，或 `auto`；Seedream 5.5 还可用 `1K`、`1.5K`、`2K` 或任意宽高 |
 | `google_search`、`image_search` | Google Search、Image Search 开关（布尔值），用于支持搜索的 Google 图像模型或已映射搜索参数的自定义服务商 |
 | `thinking_level` | Gemini 思考等级：`auto` 使用模型默认值，其他可选值随模型和接口能力变化 |
-| `quality` | GPT Image 支持 `auto`、`low`、`medium`、`high`，支持扩展质量的模型还可用 `xhigh`、`max`，否则降为 `high`；Grok Imagine Image 2.0 支持 `auto`、`low`、`medium`，其他值归为 `auto`；Gemini 和其余 Grok 图像模型不发送此参数 |
+| `quality` | GPT Image 支持 `auto`、`low`、`medium`、`high`，支持扩展质量的模型还可用 `xhigh`、`max`，否则降为 `high`；Grok Imagine Image 2.0 支持 `auto`、`low`、`medium`，其他值归为 `auto`；Gemini、Seedream 5.5 和其余 Grok 图像模型不发送此参数 |
 | `complexity` | `auto`、`low`、`medium`、`high`；只有 GPT Image 2.6 支持，`auto` 为不发送 |
-| `output_format` | `png`、`jpeg`、`webp`、`svg`、`gif`；`svg`、`gif` 只有 GPT Image 2.6 支持，`svg` 只能文生图，`gif` 也可用于参考图编辑 |
+| `output_format` | Seedream 5.5 仅支持 `png`、`jpeg`；其他模型可用 `png`、`jpeg`、`webp`、`svg`、`gif`；`svg`、`gif` 只有 GPT Image 2.6 支持，`svg` 只能文生图，`gif` 也可用于参考图编辑 |
 | `frame_count`、`frame_duration_ms` | GIF 的帧数（2–16，默认 9）和每帧毫秒数（20–2000，默认 200） |
 | `output_compression` | 0–100，jpeg、webp 的压缩质量；`null` 为不指定 |
 | `moderation` | `auto`、`low` |
 | `n` | 每个任务生成的张数，上限取决于当前配置 |
+| `background` | Seedream 5.5 背景：`auto`（默认）、`transparent`、`opaque`；透明背景仅支持 PNG |
+| `watermark` | Seedream 5.5 水印开关，布尔值，默认 `false` |
 | `transparent_output` | 透明背景，不支持 jpeg；自定义供应商未映射 `$params.background` 时 svg、gif 也不支持 |
 
 ## 偏好设置（settings）
@@ -63,7 +65,7 @@
 | 字段 | 含义 |
 |---|---|
 | `name` | 配置名称 |
-| `provider` | `openai`（OpenAI 兼容接口）、`google`（Google）、`xai`（xAI）、`sb2api-async`（sub2api 异步）、`fal`（fal.ai），或自定义服务商的 id。改服务商时，应用会恢复该配置在这个服务商下保存过的地址和模型 |
+| `provider` | `openai`（OpenAI 兼容接口）、`google`（Google）、`xai`（xAI）、`bytedance`（字节跳动）、`sb2api-async`（sub2api 异步）、`fal`（fal.ai），或自定义服务商的 id。改服务商时，应用会恢复该配置在这个服务商下保存过的地址和模型 |
 | `baseUrl` | API 地址，如 `https://api.openai.com/v1`。末尾带 `/` 时直接在该地址后拼接口路径，不补 `/v1` |
 | `apiKey` | API Key，只能写入 |
 | `model` | 模型 ID 列表，多个以 `, ` 分隔 |
@@ -74,7 +76,7 @@
 | `reasoningEffort` | Responses API 的推理强度：`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max` |
 | `timeout` | 请求超时（秒） |
 | `streamImages`、`streamPartialImages` | 流式传输，及请求的中间步骤图数（0–3），仅 OpenAI 兼容接口 |
-| `responseFormatB64Json` | 要求接口返回 Base64 图片数据 |
+| `responseFormatB64Json` | 要求接口返回 Base64 图片数据；未设置时，`x.ai`、`volces.com`、`bytepluses.com` 及其子域名默认开启，其他域名默认关闭；明确设置后不随地址变化 |
 | `codexCli` | Codex CLI 兼容模式 |
 | `apiProxy` | 使用部署端的 API 代理（网页版功能，客户端不使用） |
 | `transparentBackgroundMethod` | 透明背景：`api` 接口原生、`local` 本地后处理 |

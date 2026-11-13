@@ -14,6 +14,8 @@ import { requestBrowserNotificationPermission } from './browserNotification'
 import { ensureImageCached } from './imageCache'
 import { toReferenceImage } from './inputImages'
 import { normalizeParamsForSettings, supportsTransparentOutput } from './paramCompatibility'
+import { getImageModelFamily } from './imageModels'
+import { normalizeSeedreamImageSize, SEEDREAM_RESOLUTIONS } from './size'
 import { getProxySetting, setProxySetting } from './networkProxy'
 import { getPresetProfileIds, isPresetConfigOnlyEnabled, isPresetProfileLocked, isPresetProvider, isPresetProviderLocked } from './presetConfig'
 import {
@@ -92,11 +94,22 @@ function describeProfile(settings: AppSettings, profile: ApiProfile) {
 }
 
 /** 校验并解析生图参数，只返回传入的字段 */
-function parseParams(args: Record<string, unknown>) {
+function parseParams(args: Record<string, unknown>, profile = getActiveApiProfile(getSettings())) {
   const patch: Partial<TaskParams> = {}
   if (args.size !== undefined) {
     if (typeof args.size !== 'string' || !args.size.trim()) throw new Error('size 必须是非空字符串')
     patch.size = args.size.trim()
+    if (getImageModelFamily(profile) === 'seedream') {
+      const size = patch.size.toUpperCase()
+      if (size === 'AUTO' || (SEEDREAM_RESOLUTIONS as readonly string[]).includes(size)) {
+        patch.aspect_ratio = 'auto'
+        if (size !== 'AUTO') patch.resolution = size
+      } else {
+        if (!normalizeSeedreamImageSize(patch.size)) throw new Error(`Seedream size 必须是 auto、${SEEDREAM_RESOLUTIONS.join('、')} 或正整数宽高（如 1281x721）`)
+        patch.aspect_ratio = 'custom'
+        patch.resolution = undefined
+      }
+    }
   }
   if (args.quality !== undefined) {
     if (typeof args.quality !== 'string' || !QUALITIES.includes(args.quality)) throw new Error(`quality 只能是 ${QUALITIES.join('、')}`)
@@ -136,6 +149,16 @@ function parseParams(args: Record<string, unknown>) {
   if (args.transparent_output !== undefined) {
     if (typeof args.transparent_output !== 'boolean') throw new Error('transparent_output 必须是 true 或 false')
     patch.transparent_output = args.transparent_output
+    if (getImageModelFamily(profile) === 'seedream') patch.background = args.transparent_output ? 'transparent' : 'opaque'
+  }
+  if (args.watermark !== undefined && getImageModelFamily(profile) === 'seedream') {
+    if (typeof args.watermark !== 'boolean') throw new Error('watermark 必须是 true 或 false')
+    patch.watermark = args.watermark
+  }
+  if (args.background !== undefined && getImageModelFamily(profile) === 'seedream') {
+    if (args.background !== 'auto' && args.background !== 'transparent' && args.background !== 'opaque') throw new Error('background 只能是 auto、transparent、opaque')
+    patch.background = args.background
+    patch.transparent_output = args.background === 'transparent'
   }
   const format = patch.output_format ?? useStore.getState().params.output_format
   if (patch.transparent_output && format === 'jpeg') {
@@ -292,7 +315,9 @@ async function updateSettings(args: Record<string, unknown>) {
     const result = await requestBrowserNotificationPermission()
     if (!result.ok) throw new Error('系统没有允许通知，无法开启任务完成通知')
   }
-  const params = isObject(args.params) ? parseParams(args.params) : {}
+  const params = isObject(args.params)
+    ? parseParams(args.params, getActiveApiProfile(normalizeSettings({ ...settings, activeProfileId: activeId ?? settings.activeProfileId })))
+    : {}
   if (isObject(args.proxy)) {
     const proxy = { ...await getProxySetting(), ...args.proxy }
     if (proxy.mode !== 'system' && proxy.mode !== 'none' && proxy.mode !== 'custom') throw new Error('proxy.mode 只能是 system、none、custom')
@@ -333,7 +358,7 @@ function saveApiProfile(args: Record<string, unknown>) {
   const base = existing ?? createDefaultOpenAIProfile({ id: newId('openai'), name: '新配置' })
   const provider = typeof fields.provider === 'string' ? fields.provider : base.provider
   const customProvider = getCustomProviderDefinition(settings, provider)
-  if (!['openai', 'google', 'xai', 'sb2api-async', 'fal'].includes(provider) && !customProvider) throw new Error(`没有这个服务商：${provider}`)
+  if (!['openai', 'google', 'xai', 'bytedance', 'sb2api-async', 'fal'].includes(provider) && !customProvider) throw new Error(`没有这个服务商：${provider}`)
   const switched = provider === base.provider ? base : switchApiProfileProvider(base, provider, customProvider ?? undefined)
   const profile = { ...switched, ...fields, provider } as ApiProfile
   if (fields.selectedModel !== undefined && !splitModelList(profile.model).includes(String(fields.selectedModel))) {

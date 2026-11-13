@@ -1,3 +1,4 @@
+import { shouldReturnBase64 } from './apiProfiles'
 import { DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings } from '../types'
 import { createDefaultOpenAIProfile, getApiProviderLabel, getCustomProviderDefinition, normalizeSettings } from './apiProfiles'
 import { normalizeBaseUrl } from './devProxy'
@@ -136,7 +137,7 @@ export function describeImportLink(params: URLSearchParams, settings: AppSetting
     ['流式传输', (p) => onOff(p.streamImages)],
     ['请求中间步骤图像数', (p) => literal(String(p.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES))],
     ['透明背景实现方式', (p) => p.transparentBackgroundMethod === 'local' ? fixed('本地后处理') : p.transparentBackgroundMethod === 'api' ? fixed('API 原生') : literal(clip(String(p.transparentBackgroundMethod)))],
-    ['返回 Base64 图片数据', (p) => onOff(p.responseFormatB64Json)],
+    ['返回 Base64 图片数据', (p) => onOff(shouldReturnBase64(p))],
     ['Codex CLI 兼容模式', (p) => onOff(p.codexCli)],
     ['请求超时 (秒)', (p) => literal(clip(String(p.timeout)))],
     ['配置说明', (p) => literal(clip(p.description ?? ''))],

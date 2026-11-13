@@ -193,7 +193,7 @@ function buildPresetConfigOnlySettingsFromUrlParams(currentSettings: Partial<App
           if (typeof matched.imageGenerationModel === 'string') patch.imageGenerationModel = matched.imageGenerationModel.trim()
           if (typeof matched.timeout === 'number' && Number.isFinite(matched.timeout)) patch.timeout = matched.timeout
           if (typeof matched.apiProxy === 'boolean') patch.apiProxy = matched.apiProxy
-          if (matched.responseFormatB64Json === true) patch.responseFormatB64Json = true
+          if (typeof matched.responseFormatB64Json === 'boolean') patch.responseFormatB64Json = matched.responseFormatB64Json
           if (matched.transparentBackgroundMethod === 'api' || matched.transparentBackgroundMethod === 'local') {
             patch.transparentBackgroundMethod = matched.transparentBackgroundMethod
           }
@@ -219,7 +219,7 @@ function buildPresetConfigOnlySettingsFromUrlParams(currentSettings: Partial<App
   if (apiKeyParam !== null) patch.apiKey = apiKeyParam.trim()
   if (!apiKeyOnly) {
     if (profileNameParam?.trim()) patch.name = profileNameParam.trim()
-    if (apiUrlParam !== null) patch.baseUrl = normalizeBaseUrl(apiUrlParam.trim(), targetProfile.provider === 'google' ? 'v1beta' : 'v1')
+    if (apiUrlParam !== null) patch.baseUrl = normalizeBaseUrl(apiUrlParam.trim(), targetProfile.provider === 'google' ? 'v1beta' : targetProfile.provider === 'bytedance' ? 'v3' : 'v1')
     if (modelParam?.trim()) patch.model = modelParam.trim()
     if (imageGenerationModelParam !== null) patch.imageGenerationModel = imageGenerationModelParam.trim()
     if (transparentBackgroundMethodParam === 'api' || transparentBackgroundMethodParam === 'local') {
