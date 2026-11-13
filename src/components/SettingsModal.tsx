@@ -76,6 +76,7 @@ import ViewportTooltip from './ViewportTooltip'
 import { ChevronDownIcon, CloseIcon, CopyIcon, PlusIcon, TrashIcon, ExportIcon, ImportIcon, DragHandleIcon, LinkIcon, SparklesIcon } from './icons'
 import { TooltipButton } from './TooltipButton'
 import GeneralSettingsTab from './settings/GeneralSettingsTab'
+import ModelIdInput from './settings/ModelIdInput'
 import AppearanceSettingsTab from './settings/AppearanceSettingsTab'
 import AgentSettingsTab from './settings/AgentSettingsTab'
 import SkillSettingsSection from './settings/SkillSettingsSection'
@@ -1071,7 +1072,18 @@ export default function SettingsModal() {
           data-no-drag-select
           className="fixed inset-0 z-[70] flex items-center justify-center p-4"
           onPointerDownCapture={blockDataTransferInteraction}
-          onClickCapture={blockDataTransferClick}
+          onClickCapture={(e) => {
+            blockDataTransferClick(e)
+            if (e.defaultPrevented || !(e.target instanceof Element)) return
+            if (e.target.closest('input, textarea, select, button, a, [contenteditable="true"], [role="button"]')) return
+            const control = e.target.closest('label')?.control
+            if (control instanceof HTMLTextAreaElement || (control instanceof HTMLInputElement && !['checkbox', 'radio'].includes(control.type))) {
+              e.preventDefault()
+            }
+            if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) {
+              document.activeElement.blur()
+            }
+          }}
           onContextMenuCapture={blockDataTransferInteraction}
         >
       <div
@@ -1575,14 +1587,14 @@ export default function SettingsModal() {
                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">
                   {isResponsesProfile ? '文本模型 ID' : '模型 ID'}
                 </span>
-                <input
+                <ModelIdInput
+                  key={`${activeProfile.id}-model`}
+                  aria-label={isResponsesProfile ? '文本模型 ID' : '模型 ID'}
                   value={activeProfile.model}
-                  onChange={(e) => updateActiveProfile({ model: e.target.value })}
-                  onBlur={(e) => commitActiveProfilePatch({ model: e.target.value })}
-                  type="text"
+                  onChange={(value) => updateActiveProfile({ model: value })}
+                  onBlur={(value) => commitActiveProfilePatch({ model: value })}
                   disabled={activeProfileLocked}
                   placeholder={nativeImageProvider?.model ?? (activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode))}
-                  className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
                 <div data-selectable-text className="mt-1.5 text-xs leading-6 text-gray-500 dark:text-gray-500">
                   {activeProfile.provider === 'fal' ? (
@@ -1636,6 +1648,7 @@ export default function SettingsModal() {
                 <label className="block">
                   <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">图像模型 ID</span>
                   <input
+                    aria-label="图像模型 ID"
                     value={activeProfile.imageGenerationModel ?? ''}
                     onChange={(e) => updateActiveProfile({ imageGenerationModel: e.target.value })}
                     onBlur={(e) => commitActiveProfilePatch({ imageGenerationModel: e.target.value })}
@@ -1655,6 +1668,7 @@ export default function SettingsModal() {
                   <label className="block">
                     <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">SVG 编写模型 ID</span>
                     <input
+                      aria-label="SVG 编写模型 ID"
                       value={activeProfile.svgModel ?? ''}
                       onChange={(e) => updateActiveProfile({ svgModel: e.target.value })}
                       onBlur={(e) => commitActiveProfilePatch({ svgModel: e.target.value.trim() || undefined })}
