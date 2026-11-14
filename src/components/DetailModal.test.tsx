@@ -33,6 +33,22 @@ function renderTask(overrides: Partial<TaskRecord>) {
 }
 
 describe('任务详情参数', () => {
+  it.each([
+    { outputImages: ['a', 'b'], visible: true },
+    { outputImages: ['a'], outputErrors: [{ requestIndex: 0, error: '没有返回图片' }], visible: true },
+    { outputImages: [], outputErrors: [{ requestIndex: 0, error: '失败' }, { requestIndex: 1, error: '失败' }], visible: true },
+    { outputImages: ['a'], visible: false },
+    { outputImages: [], outputErrors: [{ requestIndex: 0, error: '失败' }], visible: false },
+    { outputImages: ['a', 'b'], status: 'running' as const, visible: false },
+  ])('按剩余结果显示删除按钮：%j', ({ visible, ...overrides }) => {
+    renderTask(overrides)
+    const html = renderToStaticMarkup(<DetailModal />)
+    expect(html.includes('aria-label="删除结果"')).toBe(visible)
+    if (visible && overrides.outputImages.length > 1) {
+      expect(html.indexOf('aria-label="删除结果"')).toBeLessThan(html.indexOf('aria-label="下载图片"'))
+    }
+  })
+
   it('显示任务保存的附加提示词，关闭当前开关不影响旧任务', () => {
     useStore.setState({ settings: { ...useStore.getState().settings, imagePromptHints: false } })
     renderTask({ promptHints: { prefix: '生成图像：', suffix: '请使用 google:search 搜索相关信息。' } })

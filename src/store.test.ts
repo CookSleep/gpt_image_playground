@@ -10,6 +10,7 @@ import { deleteAgentRoundFromConversation, getActiveAgentRounds, getAgentConvers
 import { cleanStaleAgentInputDrafts } from './lib/inputDraftState'
 import { ALL_FAVORITES_COLLECTION_ID } from './lib/favoriteState'
 import { normalizePersistedState } from './lib/persistedState'
+import { getTaskOutputSlots } from './lib/taskState'
 import { setPresetConfig } from './lib/presetConfig'
 import { FetchConnectError } from './lib/platform'
 vi.mock('./lib/db', () => {
@@ -144,7 +145,7 @@ import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
 import { getFalQueuedImageResult } from './lib/falAiImageApi'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
-import { clearData, clearFailedTasks, deleteFavoriteCollection, editOutputs, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, restoreExplicitPresetConfig, retryTask, reuseConfig, stopAgentResponse, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
+import { clearData, clearFailedTasks, deleteFavoriteCollection, editOutputs, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, removeTaskOutput, restoreExplicitPresetConfig, retryTask, reuseConfig, stopAgentResponse, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
 
 const commitTaskDeletionImplementation = vi.mocked(commitTaskDeletion).getMockImplementation()!
 const deleteDbImageImplementation = vi.mocked(deleteDbImage).getMockImplementation()!
@@ -4008,6 +4009,139 @@ describe('task deletion', () => {
     expect(state.selectedTaskIds).toEqual([remaining.id])
     expect((await getAllTasks()).map((item) => item.id)).toEqual([remaining.id])
     expect(state.showToast).toHaveBeenCalledWith('任务已删除', 'success')
+  })
+
+  it('删除中间图片并保存剩余结果、原图和图片参数', async () => {
+    const source = task({
+      params: { ...DEFAULT_PARAMS, n: 3 },
+      outputImages: ['a', 'b', 'c'],
+      transparentOriginalImages: ['original-a', 'original-b', ''],
+      actualParamsByImage: { a: { size: '1024x1024' }, b: { size: '1536x1024' } },
+      revisedPromptByImage: { a: 'A', b: 'B', c: 'C' },
+    })
+    for (const id of ['a', 'b', 'c', 'original-a', 'original-b']) {
+      await putImage({ id, dataUrl: `data:image/png;base64,${id}`, createdAt: 1 })
+    }
+    await putDbTask(source)
+    useStore.setState({ tasks: [source], detailTaskId: source.id })
+
+    await removeTaskOutput(source.id, getTaskOutputSlots(source)[1])
+
+    const updated = useStore.getState().tasks[0]
+    expect(updated.outputImages).toEqual(['a', 'c'])
+    expect(updated.transparentOriginalImages).toEqual(['original-a', ''])
+    expect(updated.actualParamsByImage).toEqual({ a: { size: '1024x1024' } })
+    expect(updated.revisedPromptByImage).toEqual({ a: 'A', c: 'C' })
+    expect(updated.params.n).toBe(3)
+    expect(useStore.getState().detailTaskId).toBe(source.id)
+    expect(await getAllTasks()).toEqual([updated])
+    expect((await getAllImageIds()).sort()).toEqual(['a', 'c', 'original-a'])
+  })
+
+  it('删除结果时保留其他任务及输入草稿引用的图片', async () => {
+    const source = task({ outputImages: ['a', 'b'], transparentOriginalImages: ['original-a', ''] })
+    const other = task({ id: 'other', inputImageIds: ['a'] })
+    await putImage({ id: 'a', dataUrl: 'data:image/png;base64,a', createdAt: 1 })
+    await putImage({ id: 'original-a', dataUrl: 'data:image/png;base64,original', createdAt: 1 })
+    useStore.setState({ tasks: [source, other], inputImages: [{ id: 'original-a', dataUrl: 'data:image/png;base64,original' }] })
+
+    await removeTaskOutput(source.id, getTaskOutputSlots(source)[0])
+
+    expect(useStore.getState().tasks[0].outputImages).toEqual(['b'])
+    expect((await getAllImageIds()).sort()).toEqual(['a', 'original-a'])
+  })
+
+  it('按槽位删除重复图片并保留剩余同图的元数据', async () => {
+    const source = task({
+      params: { ...DEFAULT_PARAMS, n: 4 },
+      outputImages: ['a', 'a', 'b'],
+      outputErrors: [{ requestIndex: 1, error: '没有返回图片' }],
+      transparentOriginalImages: ['original-first', 'original-second', ''],
+      actualParamsByImage: { a: { size: '1024x1024' } },
+      revisedPromptByImage: { a: 'A' },
+    })
+    await putImage({ id: 'a', dataUrl: 'data:image/png;base64,a', createdAt: 1 })
+    useStore.setState({ tasks: [source] })
+
+    await removeTaskOutput(source.id, getTaskOutputSlots(source)[2])
+
+    const updated = useStore.getState().tasks[0]
+    expect(getTaskOutputSlots(updated).map((slot) => slot.imageId || slot.error)).toEqual(['a', '没有返回图片', 'b'])
+    expect(updated.transparentOriginalImages).toEqual(['original-first', ''])
+    expect(updated.actualParamsByImage).toEqual(source.actualParamsByImage)
+    expect(updated.revisedPromptByImage).toEqual(source.revisedPromptByImage)
+    expect(await getImage('a')).toBeDefined()
+    expect(await getAllTasks()).toEqual([updated])
+  })
+
+  it('删除成功图片后清除失败记录会删除仅剩失败结果的任务', async () => {
+    const source = task({
+      params: { ...DEFAULT_PARAMS, n: 3 },
+      outputImages: ['a'],
+      outputErrors: [{ requestIndex: 1, error: '失败' }, { requestIndex: 2, error: '失败' }],
+    })
+    await putDbTask(source)
+    useStore.setState({ tasks: [source] })
+    await removeTaskOutput(source.id, getTaskOutputSlots(source)[0])
+    expect(getTaskOutputSlots(useStore.getState().tasks[0])).toHaveLength(2)
+
+    await clearFailedTasks()
+
+    expect(useStore.getState().tasks).toEqual([])
+    expect(await getAllTasks()).toEqual([])
+  })
+
+  it('连续删除图片和失败结果后保持翻页顺序，不按请求数量补空页', async () => {
+    const source = task({
+      params: { ...DEFAULT_PARAMS, n: 4 },
+      outputImages: ['a', 'b'],
+      outputErrors: [{ requestIndex: 1, error: '生成失败' }, { requestIndex: 3, error: '没有返回图片' }],
+    })
+    useStore.setState({ tasks: [source] })
+    await removeTaskOutput(source.id, getTaskOutputSlots(source)[0])
+    let updated = useStore.getState().tasks[0]
+    expect(getTaskOutputSlots(updated).map((slot) => slot.imageId || slot.error)).toEqual(['生成失败', 'b', '没有返回图片'])
+    await removeTaskOutput(source.id, getTaskOutputSlots(updated)[0])
+    updated = useStore.getState().tasks[0]
+    expect(getTaskOutputSlots(updated).map((slot) => slot.imageId || slot.error)).toEqual(['b', '没有返回图片'])
+    await removeTaskOutput(source.id, getTaskOutputSlots(updated)[1])
+    updated = useStore.getState().tasks[0]
+    expect(updated.outputImages).toEqual(['b'])
+    expect(updated.outputErrors).toEqual([])
+    expect(getTaskOutputSlots(updated)).toHaveLength(1)
+    expect(await getAllTasks()).toEqual([updated])
+  })
+
+  it('保留最后一个结果，不修改运行中的任务或已删除的结果', async () => {
+    const source = task({ outputImages: ['a', 'b'] })
+    useStore.setState({ tasks: [source] })
+    await removeTaskOutput(source.id, { imageId: 'missing', requestIndex: 0, error: '' })
+    expect(useStore.getState().tasks[0]).toBe(source)
+    await removeTaskOutput(source.id, getTaskOutputSlots(source)[1])
+    const updated = useStore.getState().tasks[0]
+    await removeTaskOutput(source.id, getTaskOutputSlots(updated)[0])
+    expect(useStore.getState().tasks[0]).toBe(updated)
+    const running = { ...source, status: 'running' as const }
+    useStore.setState({ tasks: [running] })
+    await removeTaskOutput(source.id, getTaskOutputSlots(running)[0])
+    expect(useStore.getState().tasks[0]).toBe(running)
+  })
+
+  it('保存失败时恢复结果并保留图片资源', async () => {
+    const source = task({ outputImages: ['a', 'b'] })
+    await putDbTask(source)
+    await putImage({ id: 'a', dataUrl: 'data:image/png;base64,a', createdAt: 1 })
+    useStore.setState({ tasks: [source] })
+    const saving = vi.spyOn(await import('./lib/db'), 'putTask').mockRejectedValueOnce(new Error('写入失败'))
+    try {
+      expect(await removeTaskOutput(source.id, getTaskOutputSlots(source)[0])).toBe(false)
+      expect(useStore.getState().tasks[0]).toBe(source)
+      expect(await getAllTasks()).toEqual([source])
+      expect(await getImage('a')).toBeDefined()
+      expect(useStore.getState().showToast).toHaveBeenCalledWith('删除失败，请重试', 'error')
+    } finally {
+      saving.mockRestore()
+    }
   })
 
   it('still deletes the target DB record when sibling payload persistence fails', async () => {

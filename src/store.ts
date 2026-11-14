@@ -78,7 +78,7 @@ import { canonicalizeBatchFunctionCallArguments, countResponseToolCalls, createR
 import { cleanStaleAgentInputDrafts, clearInputDraftState, isEmptyAgentInputDraft, normalizeAgentInputDrafts, remapAgentInputDraftMentionsForPathChange, restoreAgentInputDraftState, restoreGalleryInputDraftState, saveActiveAgentInputDrafts, saveGalleryInputDraft, syncActiveInputDraft, updateInputDraftImages } from './lib/inputDraftState'
 import { ALL_FAVORITES_COLLECTION_ID, DEFAULT_FAVORITE_COLLECTION_ID, createDefaultFavoriteCollection, deleteFavoriteCollectionState, ensureDefaultFavoriteCollection, getNewTaskFavoritePatch, getTaskFavoriteCollectionIds, mergeFavoriteCollections, normalizeFavoriteCollectionIds, normalizeFavoriteCollectionName, normalizeFavoriteCollections, normalizeFavoritePatch, normalizeLoadedFavoriteState, resolveDefaultFavoriteCollectionId, sameFavoriteCollectionIds } from './lib/favoriteState'
 import { createPersistedState, mergePersistedAgentConversations, migratePersistedState, normalizePersistedState } from './lib/persistedState'
-import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
+import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, getTaskOutputSlots, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
 import { stripInjectedCodexCliSizePrompt } from './lib/size'
 import { apiFetch, FetchConnectError, isTauri } from './lib/platform'
 import { pickSaveDir, saveFile, saveFileToDir, type SaveOptions } from './lib/saveFile'
@@ -4587,6 +4587,50 @@ async function deleteAgentAssistantMessageAndTasks(conversationId: string, messa
 
 type TaskDeletionStateUpdater = (state: AppState, taskIds: Set<string>) => Partial<AppState> | null
 
+export async function removeTaskOutput(taskId: string, output: { imageId: string; requestIndex: number; error: string }) {
+  const task = useStore.getState().tasks.find((item) => item.id === taskId)
+  if (!task || task.status !== 'done') return
+  const outputs = getTaskOutputSlots(task)
+  if (outputs.length <= 1) return
+  const removed = outputs.find((slot) => slot.requestIndex === output.requestIndex && slot.imageId === output.imageId && slot.error === output.error)
+  if (!removed) return
+  const imageId = removed.imageId
+  const index = removed.outputImageIndex
+
+  const slots = outputs.filter((slot) => slot !== removed)
+  const outputImages = task.outputImages.filter((_, idx) => idx !== index)
+  const actualParamsByImage = task.actualParamsByImage ? { ...task.actualParamsByImage } : undefined
+  const revisedPromptByImage = task.revisedPromptByImage ? { ...task.revisedPromptByImage } : undefined
+  if (!outputImages.includes(imageId)) {
+    if (actualParamsByImage) delete actualParamsByImage[imageId]
+    if (revisedPromptByImage) delete revisedPromptByImage[imageId]
+  }
+  const updated: TaskRecord = {
+    ...task,
+    outputImages,
+    transparentOriginalImages: task.transparentOriginalImages?.filter((_, idx) => idx !== index),
+    actualParamsByImage,
+    revisedPromptByImage,
+    outputErrors: task.outputErrors ? slots.flatMap((slot, requestIndex) => slot.error ? [{ requestIndex, error: slot.error }] : []) : undefined,
+  }
+  useStore.setState((state) => ({ tasks: state.tasks.map((item) => item.id === taskId ? updated : item) }))
+  try {
+    await putTask(updated)
+  } catch (err) {
+    console.error('保存结果删除失败', err)
+    useStore.setState((state) => ({ tasks: state.tasks.map((item) => item === updated ? task : item) }))
+    useStore.getState().showToast('删除失败，请重试', 'error')
+    return false
+  }
+  try {
+    await deleteUnreferencedImageIds([imageId, task.transparentOriginalImages?.[index] ?? ''])
+  } catch (err) {
+    console.warn('清理已删除的结果图片失败', err)
+  }
+  useStore.getState().showToast('结果已删除', 'success')
+  return true
+}
+
 async function removeTasks(taskIds: string[], updateState?: TaskDeletionStateUpdater) {
   const toDelete = new Set(taskIds)
   let deletedTasks: TaskRecord[] = []
@@ -4658,11 +4702,11 @@ export async function clearFailedTasks(taskIds?: string[]) {
   const failedTasks = useStore.getState().tasks
     .filter((task) => taskMatchesFilterStatus(task, 'error') && (!targetTaskIds || targetTaskIds.has(task.id)))
   const failedTaskIds = failedTasks
-    .filter((task) => task.status === 'error')
+    .filter((task) => task.status === 'error' || task.outputImages.length === 0)
     .map((task) => task.id)
   const partialFailedTaskIds = new Set(
     failedTasks
-      .filter((task) => task.status !== 'error' && taskHasOutputErrors(task))
+      .filter((task) => task.status !== 'error' && task.outputImages.length > 0 && taskHasOutputErrors(task))
       .map((task) => task.id),
   )
 

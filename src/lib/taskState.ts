@@ -4,6 +4,18 @@ type TaskLifecyclePatch = Pick<TaskRecord, 'status' | 'error' | 'finishedAt' | '
 type ActualParams = Partial<TaskParams>
 type ImageSize = { width?: number; height?: number }
 
+export function getTaskOutputSlots(task: TaskRecord) {
+  const errors = new Map(task.outputErrors?.map((item) => [item.requestIndex, item.error]))
+  const count = Math.max(task.outputImages.length + errors.size, ...Array.from(errors.keys(), (index) => index + 1))
+  let outputImageIndex = 0
+  return Array.from({ length: count }, (_, requestIndex) => {
+    const error = errors.get(requestIndex)
+    if (error) return { requestIndex, outputImageIndex: -1, imageId: '', error }
+    const index = outputImageIndex++
+    return { requestIndex, outputImageIndex: index, imageId: task.outputImages[index] ?? '', error: '' }
+  }).filter((slot) => slot.imageId || slot.error)
+}
+
 export function createTaskDonePatch(task: Pick<TaskRecord, 'createdAt' | 'startedAt'>, now: number): TaskLifecyclePatch {
   return {
     status: 'done',

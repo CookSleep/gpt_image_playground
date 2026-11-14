@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { useStore, reuseConfig, editOutputs, removeTask, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
+import { useStore, reuseConfig, editOutputs, removeTask, removeTaskOutput, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
@@ -11,6 +11,7 @@ import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { downloadImageEntriesAsZip, downloadImageIds, getDownloadErrorMessage, getImageZipEntries, withSaveLocation } from '../lib/downloadImages'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
+import { getTaskOutputSlots } from '../lib/taskState'
 import { getImageComments, getTaskPromptText, replaceImageMentionsForApi } from '../lib/promptImageMentions'
 import { getApiProviderLabel } from '../lib/apiProfiles'
 import { getImageModelFamily, supportsGrokQuality } from '../lib/imageModels'
@@ -60,6 +61,7 @@ export default function DetailModal() {
   const retryTooltip = useTooltip()
   const retriedAtTooltip = useTooltip()
   const downloadImageTooltip = useTooltip()
+  const deleteOutputTooltip = useTooltip()
   const downloadOriginalImageTooltip = useTooltip()
   const downloadAllTooltip = useTooltip()
   const copyTaskIdTooltip = useTooltip()
@@ -97,15 +99,6 @@ export default function DetailModal() {
   useEffect(() => {
     setStreamPreviewLoaded(false)
   }, [activeStreamPreviewSrc, detailTaskId, imageIndex])
-
-  useEffect(() => {
-    const count = task?.status === 'running'
-      ? streamPreviewItems.length
-      : task
-      ? (task.outputErrors?.length ? Math.max(task.params.n, task.outputImages.length + task.outputErrors.length) : task.outputImages.length)
-      : 0
-    if (count > 0 && imageIndex >= count) setImageIndex(count - 1)
-  }, [imageIndex, streamPreviewItems.length, task, task?.status])
 
   useCloseOnEscape(Boolean(task), () => setDetailTaskId(null))
   usePreventBackgroundScroll(Boolean(task), [modalRef, rawUrlsModalRef, rawResponseModalRef])
@@ -160,30 +153,11 @@ export default function DetailModal() {
   const maskSrc = task?.maskImageId ? imageSrcs[task.maskImageId] || '' : ''
   const allInputImageIds = task?.inputImageIds ?? []
   const inputMarkupIds: Record<string, string | undefined> = task?.markupImageId && allInputImageIds.length ? { [allInputImageIds[0]]: task.markupImageId } : {}
-  const outputSlots = useMemo(() => {
-    if (!task) return []
-    const outputErrors = task.outputErrors ?? []
-    if (outputErrors.length === 0) {
-      return task.outputImages.map((imageId, outputImageIndex) => ({
-        requestIndex: outputImageIndex,
-        outputImageIndex,
-        imageId,
-        error: '',
-      }))
-    }
-
-    const errorsByIndex = new Map(outputErrors.map((item) => [item.requestIndex, item.error]))
-    const requestedCount = Math.max(task.params.n, task.outputImages.length + outputErrors.length)
-    let outputImageIndex = 0
-    return Array.from({ length: requestedCount }, (_, requestIndex) => {
-      const error = errorsByIndex.get(requestIndex)
-      if (error) return { requestIndex, outputImageIndex: -1, imageId: '', error }
-      const imageId = task.outputImages[outputImageIndex] ?? ''
-      const slot = { requestIndex, outputImageIndex, imageId, error: '' }
-      outputImageIndex += 1
-      return slot
-    })
-  }, [task])
+  const outputSlots = useMemo(() => task ? getTaskOutputSlots(task) : [], [task])
+  useEffect(() => {
+    const count = task?.status === 'running' ? streamPreviewItems.length : outputSlots.length
+    if (count > 0 && imageIndex >= count) setImageIndex(count - 1)
+  }, [imageIndex, streamPreviewItems.length, outputSlots.length, task?.status])
   const currentOutputSlot = outputSlots[imageIndex]
   const currentOutputImageId = currentOutputSlot?.imageId || ''
   const currentOutputImageIndex = currentOutputSlot?.outputImageIndex ?? -1
@@ -481,8 +455,33 @@ export default function DetailModal() {
 
         {/* 左侧：图片 */}
         <div className="md:w-1/2 w-full h-64 md:h-auto bg-gray-100 dark:bg-black/20 relative flex items-center justify-center flex-shrink-0 min-h-[16rem]">
-          {task.status === 'done' && outputLen > 0 && (currentOutputImageId || task.outputImages.length > 0) && (
+          {task.status === 'done' && outputLen > 0 && (
             <div className="absolute right-3 top-[15px] z-20 flex items-center gap-1.5">
+              {currentOutputSlot && outputLen > 1 && (
+                <div className="relative group flex">
+                  <button
+                    type="button"
+                    {...deleteOutputTooltip.handlers}
+                    onClick={() => {
+                      deleteOutputTooltip.handlers.onClick()
+                      setConfirmDialog({
+                        title: '删除结果',
+                        message: '确定要删除这个结果吗？',
+                        awaitAction: true,
+                        busyText: '删除中…',
+                        action: () => removeTaskOutput(task.id, currentOutputSlot),
+                      })
+                    }}
+                    className="flex items-center justify-center px-1.5 py-0.5 bg-black/50 text-white rounded backdrop-blur-sm hover:bg-black/70 hover:text-red-400 transition-colors focus:outline-none focus:ring-1 focus:ring-white/50"
+                    aria-label="删除结果"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                  <ViewportTooltip visible={deleteOutputTooltip.visible} className="whitespace-nowrap">
+                    删除结果
+                  </ViewportTooltip>
+                </div>
+              )}
               {currentOutputImageId && (
                 <div className="relative group flex">
                   <button
