@@ -4,7 +4,7 @@ import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
-import { formatImageRatio } from '../lib/size'
+import { formatImageRatio, getActualRatioAndResolution } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyImageSourceToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
@@ -286,6 +286,10 @@ export default function DetailModal() {
   const currentTransparentOutputFailed = Boolean(currentOutputImageId && task.transparentOutput && task.transparentOriginalImages?.[currentOutputImageIndex] === '')
   const outputCompressionText = task.params.output_compression == null ? '未设置' : String(task.params.output_compression)
   const modelFamily = getImageModelFamily({ provider: taskProvider ?? 'openai', apiMode: task.apiMode ?? 'images', model: task.apiModel ?? '' })
+  // 接口回传的值优先，缺少时按实际像素推算
+  const modelActualParams = modelFamily
+    ? { ...getActualRatioAndResolution(currentActualParams?.size, task.params), ...currentActualParams }
+    : currentActualParams
   const showQualityCard = !modelFamily || (modelFamily === 'grok' && supportsGrokQuality(task.apiModel ?? ''))
   const showModerationCard = !modelFamily && task.apiProvider !== 'fal'
 
@@ -997,7 +1001,7 @@ export default function DetailModal() {
                   <span className="text-gray-400 dark:text-gray-500">比例</span>
                   <br />
                   <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                    <DetailParamValue task={task} paramKey="aspect_ratio" className="font-medium" actualParams={currentActualParams} />
+                    <DetailParamValue task={task} paramKey="aspect_ratio" className="font-medium" actualParams={modelActualParams} />
                   </div>
                 </div>
               )}
@@ -1006,7 +1010,7 @@ export default function DetailModal() {
                   <span className="text-gray-400 dark:text-gray-500">分辨率</span>
                   <br />
                   <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                    <DetailParamValue task={task} paramKey="resolution" className="font-medium" actualParams={currentActualParams} />
+                    <DetailParamValue task={task} paramKey="resolution" className="font-medium" actualParams={modelActualParams} />
                   </div>
                 </div>
               )}
