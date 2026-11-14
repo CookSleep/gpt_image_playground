@@ -62,7 +62,8 @@ import { persistTaskInputImages, toReferenceImage } from './lib/inputImages'
 import { getInputImageLimitError, getInputImageProfile } from './lib/inputImageLimits'
 import { orderInputImagesForMask } from './lib/mask'
 import { getChangedParams, getTaskParamSupport, getMaskDisabledReason, normalizeParamsForSettings, supportsTransparentOutput } from './lib/paramCompatibility'
-import { getImageModelFamily, isVectorOrAnimatedFormat } from './lib/imageModels'
+import { getImageRequestExecution } from './lib/imageRequestExecution'
+import { isVectorOrAnimatedFormat } from './lib/imageModels'
 import { runWithConcurrency, splitBatchPrompts } from './lib/batchPrompts'
 import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { blobToDataUrl, fileToDataUrl } from './lib/dataUrl'
@@ -93,6 +94,7 @@ const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const customRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const taskExecutions = new Map<string, symbol>()
+const taskRequestControllers = new Map<string, AbortController>()
 const agentRoundControllers = new Map<string, AbortController>()
 const agentRecoveryContinuations = new Set<string>()
 const deletedActiveAgentTasks = new Map<string, { task: TaskRecord; controller: AbortController }>()
@@ -1269,15 +1271,6 @@ function isRunningOpenAITask(task: TaskRecord) {
   return task.status === 'running' && (task.apiProvider ?? 'openai') !== 'fal' && !task.customTaskId
 }
 
-function isAsyncCustomProviderTask(settings: AppSettings, profile: ApiProfile, hasInputImages: boolean) {
-  const definition = getCustomProviderDefinition(settings, profile.provider)
-  if (!definition) return false
-  const customProvider = resolveCustomProviderModel(definition, profile.model)
-  if (!customProvider.poll) return false
-  const submitMapping = hasInputImages && customProvider.editSubmit ? customProvider.editSubmit : customProvider.submit
-  return Boolean(submitMapping.taskIdPath)
-}
-
 function clearOpenAIWatchdogTimer(taskId: string) {
   const timer = openAIWatchdogTimers.get(taskId)
   if (timer) clearTimeout(timer)
@@ -1310,18 +1303,6 @@ function scheduleOpenAIWatchdog(taskId: string, timeoutSeconds: number, profile?
     if (failed && !isTaskHiddenByPrivacyMode(task)) useStore.getState().showToast('OpenAI 任务请求超时', 'error')
   }, remainingMs)
   openAIWatchdogTimers.set(taskId, timer)
-}
-
-function usesConcurrentImageRequests(settings: AppSettings, profile: ApiProfile, params: TaskParams, hasInputImages: boolean) {
-  const n = params.n > 0 ? params.n : 1
-  if (n <= 1) return false
-  if (profile.provider === 'google') return true
-  if (getImageModelFamily(profile)) return false
-  if (profile.provider === 'openai') {
-    if (profile.apiMode === 'responses') return true
-    return profile.apiMode === 'images' && (profile.codexCli || params.output_format === 'svg' || (profile.streamImages && params.output_format !== 'gif'))
-  }
-  return profile.provider !== 'fal' && (profile.codexCli || params.output_format === 'svg') && !isAsyncCustomProviderTask(settings, profile, hasInputImages)
 }
 
 export function taskHasOutputErrors(task: Pick<TaskRecord, 'outputErrors'>) {
@@ -1505,6 +1486,12 @@ function clearCustomRecoveryTimer(taskId: string) {
   const timer = customRecoveryTimers.get(taskId)
   if (timer) clearTimeout(timer)
   customRecoveryTimers.delete(taskId)
+}
+
+function stopTaskRequest(taskId: string) {
+  clearCustomRecoveryTimer(taskId)
+  taskRequestControllers.get(taskId)?.abort()
+  taskRequestControllers.delete(taskId)
 }
 
 function scheduleCustomRecovery(taskId: string, delayMs = CUSTOM_RECOVERY_POLL_MS) {
@@ -2162,7 +2149,7 @@ function markAgentRoundTasksStopped(conversationId: string, roundId: string, now
 
   for (const task of runningTasks) {
     clearFalRecoveryTimer(task.id)
-    clearCustomRecoveryTimer(task.id)
+    stopTaskRequest(task.id)
     updateTaskInStore(task.id, {
       ...createTaskErrorPatch(task, AGENT_STOPPED_MESSAGE, now),
       falRecoverable: false,
@@ -2521,10 +2508,14 @@ async function persistTaskDeletionCleanup(deletedTaskIds: string[], cleanup: Ret
     await commitTaskDeletion(deletedTaskIds, tasks, conversations)
   } catch (err) {
     console.warn('原子清理任务关联数据失败，改用逐项持久化', err)
+    // 等待事务期间状态可能已更新或删除，回退只保存仍存在的最新记录。
+    const state = useStore.getState()
+    const taskIds = new Set(tasks.map((task) => task.id))
+    const conversationIds = new Set(conversations.map((conversation) => conversation.id))
     await Promise.all([
       ...deletedTaskIds.map((taskId) => dbDeleteTask(taskId)),
-      ...tasks.map((task) => dbPutTask(task)),
-      ...conversations.map((conversation) => dbPutAgentConversation(conversation)),
+      ...state.tasks.filter((task) => taskIds.has(task.id)).map((task) => dbPutTask(getPersistableTask(task))),
+      ...state.agentConversations.filter((conversation) => conversationIds.has(conversation.id)).map((conversation) => dbPutAgentConversation(getPersistableAgentConversation(conversation))),
     ])
   }
 }
@@ -3238,8 +3229,14 @@ async function executeAgentRound(
       signal: AbortSignal
       onPartialImage?: (event: { image: string; partialImageIndex?: number }) => void | Promise<void>
     }) => {
+      if (opts.signal.aborted || !useStore.getState().tasks.some((task) => task.id === opts.taskId)) throw createAgentAbortError()
+      const requestController = new AbortController()
+      const abortFromRound = () => requestController.abort(opts.signal.reason)
+      opts.signal.addEventListener('abort', abortFromRound, { once: true })
+      taskRequestControllers.set(opts.taskId, requestController)
       const result = await callImageApi({
         settings: imageRequestSettings,
+        signal: requestController.signal,
         prompt: replaceImageMentionsForApi(opts.prompt, opts.referenceImageDataUrls.length),
         params: opts.taskParams,
         inputImageDataUrls: opts.referenceImageDataUrls,
@@ -3264,6 +3261,9 @@ async function executeAgentRound(
             customRecoverable: false,
           })
         },
+      }).finally(() => {
+        opts.signal.removeEventListener('abort', abortFromRound)
+        if (taskRequestControllers.get(opts.taskId) === requestController) taskRequestControllers.delete(opts.taskId)
       })
       if (opts.signal.aborted) throw createAgentAbortError()
       const dataUrl = result.images[0]
@@ -3926,6 +3926,8 @@ async function executeTask(taskId: string) {
     taskExecutions.delete(taskId)
     return
   }
+  const requestController = new AbortController()
+  taskRequestControllers.set(taskId, requestController)
   const activeProfile = taskProfile ?? getActiveApiProfile(settings)
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
   const taskProvider = taskProfile?.provider ?? task.apiProvider ?? activeProfile.provider
@@ -3936,11 +3938,11 @@ async function executeTask(taskId: string) {
     ? { taskId: task.customTaskId }
     : null
 
-  if (
-    taskProvider !== 'fal' &&
-    !isAsyncCustomProviderTask(requestSettings, activeProfile, task.inputImageIds.length > 0) &&
-    !usesConcurrentImageRequests(requestSettings, activeProfile, task.params, task.inputImageIds.length > 0)
-  ) {
+  const requestExecution = getImageRequestExecution(
+    activeProfile, task.params, task.inputImageIds.length > 0,
+    getCustomProviderDefinition(requestSettings, activeProfile.provider),
+  )
+  if (taskProvider !== 'fal' && !requestExecution.isAsyncCustom && !requestExecution.concurrent) {
     scheduleOpenAIWatchdog(taskId, activeProfile.timeout, activeProfile)
   }
 
@@ -3966,6 +3968,7 @@ async function executeTask(taskId: string) {
 
     const result = await callImageApi({
       settings: requestSettings,
+      signal: requestController.signal,
       prompt: replaceImageMentionsForApi(requestPrompt, inputDataUrls.length),
       params: task.params,
       nativeTransparentBackground: task.params.transparent_output && !task.transparentOutput,
@@ -4132,6 +4135,7 @@ async function executeTask(taskId: string) {
       showTaskFailureNotification(task)
     }
   } finally {
+    if (taskRequestControllers.get(taskId) === requestController) taskRequestControllers.delete(taskId)
     if (taskExecutions.get(taskId) === execution) taskExecutions.delete(taskId)
     // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）
     if (!taskExecutions.has(taskId)) {
@@ -4321,7 +4325,7 @@ export async function retryTask(task: TaskRecord) {
     batchTaskIds.delete(taskId)
     clearOpenAIWatchdogTimer(taskId)
     clearFalRecoveryTimer(taskId)
-    clearCustomRecoveryTimer(taskId)
+    stopTaskRequest(taskId)
     useStore.getState().setTaskStreamPreview(taskId)
   }
   useStore.getState().setTasks(overwrite
@@ -4611,7 +4615,7 @@ async function removeTasks(taskIds: string[], updateState?: TaskDeletionStateUpd
       : undefined
     if (controller) deletedActiveAgentTasks.set(task.id, { task, controller })
     clearFalRecoveryTimer(task.id)
-    clearCustomRecoveryTimer(task.id)
+    stopTaskRequest(task.id)
     clearOpenAIWatchdogTimer(task.id)
     taskExecutions.delete(task.id)
   }
@@ -4694,6 +4698,13 @@ export async function clearData(options: ClearOptions = { clearConfig: true, cle
   if (useStore.getState().batchProgress) endBatch(activeBatchId)
 
   if (options.clearTasks) {
+    for (const task of useStore.getState().tasks) {
+      stopTaskRequest(task.id)
+      clearFalRecoveryTimer(task.id)
+      clearOpenAIWatchdogTimer(task.id)
+      taskExecutions.delete(task.id)
+    }
+    setTasks([])
     await dbClearTasks()
     await dbClearAgentConversations()
     await clearImages()
@@ -4730,15 +4741,15 @@ export async function clearData(options: ClearOptions = { clearConfig: true, cle
   showToast('所选数据已清空', 'success')
 }
 
-async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<ReturnType<typeof getCustomQueuedImageResult>>) {
+async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<ReturnType<typeof getCustomQueuedImageResult>>, signal: AbortSignal) {
   const latest = useStore.getState().tasks.find((item) => item.id === task.id)
-  if (!latest || latest.status === 'done' || latest.error === AGENT_STOPPED_MESSAGE) return
+  if (signal.aborted || !latest || latest.status === 'done' || latest.error === AGENT_STOPPED_MESSAGE) return
   if (latest.status !== 'running' && !latest.customRecoverable) return
 
   const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
   const actualParamsList = await resolveImageSizeParamsList(outputDataUrls, undefined, outputImageSizes)
   const latestBeforeUpdate = useStore.getState().tasks.find((item) => item.id === task.id)
-  if (!latestBeforeUpdate || latestBeforeUpdate.status === 'done' || latestBeforeUpdate.error === AGENT_STOPPED_MESSAGE || (latestBeforeUpdate.status !== 'running' && !latestBeforeUpdate.customRecoverable)) {
+  if (signal.aborted || !latestBeforeUpdate || latestBeforeUpdate.status === 'done' || latestBeforeUpdate.error === AGENT_STOPPED_MESSAGE || (latestBeforeUpdate.status !== 'running' && !latestBeforeUpdate.customRecoverable)) {
     await deleteUnreferencedImageIds([...outputIds, ...(transparentOriginalImageIds ?? [])])
     return
   }
@@ -4762,7 +4773,7 @@ async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<Ret
 async function recoverCustomTask(taskId: string) {
   const { settings, tasks } = useStore.getState()
   const task = tasks.find((item) => item.id === taskId)
-  if (!task || !task.customTaskId || task.status === 'done') return
+  if (!task || !isCustomRecoverableTask(task) || taskRequestControllers.has(taskId)) return
 
   const profile = getCustomRecoveryProfile(settings, task)
   const definition = profile ? getCustomProviderDefinition(settings, profile.provider) ?? (profile.provider === 'openai' || profile.provider === 'xai' ? OPENAI_IMAGE_TASK_PROVIDER : null) : null
@@ -4772,11 +4783,15 @@ async function recoverCustomTask(taskId: string) {
     return
   }
 
+  const controller = new AbortController()
+  taskRequestControllers.set(taskId, controller)
   try {
-    const result = await getCustomQueuedImageResult(profile, customProvider, task.customTaskId, task.params)
+    const result = await getCustomQueuedImageResult(profile, customProvider, task.customTaskId!, task.params, controller.signal)
+    if (controller.signal.aborted) return
     clearCustomRecoveryTimer(taskId)
-    await completeRecoveredCustomTask(task, result)
+    await completeRecoveredCustomTask(task, result, controller.signal)
   } catch (err) {
+    if (controller.signal.aborted) return
     clearCustomRecoveryTimer(taskId)
     if (!useStore.getState().tasks.some((item) => item.id === taskId)) return
     const error = err instanceof Error ? err.message : String(err)
@@ -4787,6 +4802,8 @@ async function recoverCustomTask(taskId: string) {
     })
     showTaskFailureNotification(task)
     if (isAgentTask(task)) void continueRecoveredAgentRound(taskId)
+  } finally {
+    if (taskRequestControllers.get(taskId) === controller) taskRequestControllers.delete(taskId)
   }
 }
 

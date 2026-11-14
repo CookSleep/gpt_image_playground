@@ -26,6 +26,87 @@ describe('Seedream 5.5', () => {
     }
   })
 
+  it.each([false, true])('keeps successful direct requests when one fails (edit=%s)', async (edit) => {
+    let count = 0
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      if (count++ === 1) return Response.json({ error: { message: '生成失败' } }, { status: 400 })
+      return Response.json({ data: [{ b64_json: 'aW1hZ2U=' }] })
+    })
+    const profile = switchApiProfileProvider(createDefaultOpenAIProfile({ apiKey: 'test-key' }), 'bytedance')
+    const settings = normalizeSettings({ profiles: [profile], activeProfileId: profile.id })
+    const params = normalizeParamsForSettings({ ...DEFAULT_PARAMS, n: 3 }, settings)
+    const inputImageDataUrls = edit ? ['data:image/png;base64,aW1hZ2U='] : []
+    const result = await callImageApi({ settings, prompt: '测试', params, inputImageDataUrls })
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    for (const [, init] of fetchMock.mock.calls) {
+      const body = JSON.parse(String(init?.body))
+      expect(body).not.toHaveProperty('n')
+      expect(body.image).toEqual(edit ? inputImageDataUrls : undefined)
+    }
+    expect(result.images).toHaveLength(2)
+    expect(result.failedRequests).toEqual([{ requestIndex: 1, error: expect.stringContaining('生成失败') }])
+  })
+
+  it.each([false, true])('submits a custom batch once with its mapped count (async=%s)', async (asyncTask) => {
+    const onCustomTaskEnqueued = vi.fn()
+    const data = Array.from({ length: 3 }, () => ({ b64_json: 'aW1hZ2U=' }))
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) =>
+      init?.method === 'POST' && asyncTask
+        ? Response.json({ id: 'job-1' })
+        : Response.json({ status: 'done', data }),
+    )
+    const mapping = {
+      path: 'submit', contentType: 'json' as const, body: { count: '$params.n', image: '$inputImages.dataUrls' },
+      ...(asyncTask ? { taskIdPath: 'id' } : {}),
+      result: { b64JsonPaths: ['data.*.b64_json'] },
+    }
+    const customProvider: CustomProviderDefinition = {
+      id: 'custom-test', name: '测试', submit: { path: 'unused' },
+      modelOverrides: [{ models: ['*seedream*'], submit: mapping, editSubmit: { ...mapping, path: 'edit' } }],
+      ...(asyncTask ? { poll: {
+        path: 'tasks/{task_id}', statusPath: 'status', successValues: ['done'],
+        failureValues: ['failed'], result: { b64JsonPaths: ['data.*.b64_json'] },
+      } } : {}),
+    }
+    const profile = createDefaultOpenAIProfile({
+      provider: customProvider.id, model: 'doubao-seedream-5-5-261028', baseUrl: 'https://example.com/v1', apiKey: 'test-key',
+    })
+    const settings = normalizeSettings({ profiles: [profile], activeProfileId: profile.id, customProviders: [customProvider] })
+    const params = normalizeParamsForSettings({ ...DEFAULT_PARAMS, n: 3 }, settings)
+    for (const inputImageDataUrls of [[], ['data:image/png;base64,aW1hZ2U=']]) {
+      fetchMock.mockClear()
+      onCustomTaskEnqueued.mockClear()
+      const result = await callImageApi({ settings, prompt: '测试', params, inputImageDataUrls, onCustomTaskEnqueued })
+      const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')
+      expect(posts).toHaveLength(1)
+      expect(String(posts[0][0])).toBe('https://example.com/v1/' + (inputImageDataUrls.length ? 'edit' : 'submit'))
+      expect(JSON.parse(String(posts[0][1]?.body)).count).toBe(3)
+      expect(fetchMock).toHaveBeenCalledTimes(asyncTask ? 2 : 1)
+      expect(result.images).toHaveLength(3)
+      if (asyncTask) expect(onCustomTaskEnqueued.mock.calls).toEqual([[{ taskId: 'job-1' }]])
+      else expect(onCustomTaskEnqueued).not.toHaveBeenCalled()
+    }
+  })
+
+  it('submits one compatible asynchronous batch with n', async () => {
+    const onCustomTaskEnqueued = vi.fn()
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) =>
+      init?.method === 'POST'
+        ? Response.json({ data: [{ task_id: 'job-1' }] })
+        : Response.json({ data: { status: 'completed', result: {
+            images: Array.from({ length: 3 }, () => ({ url: 'data:image/png;base64,aW1hZ2U=' })),
+          } } }),
+    )
+    const profile = createDefaultOpenAIProfile({ model: 'doubao-seedream-5-5-261028', baseUrl: 'https://example.com/v1', apiKey: 'test-key' })
+    const settings = normalizeSettings({ profiles: [profile], activeProfileId: profile.id })
+    const result = await callImageApi({ settings, prompt: '测试', params: { ...DEFAULT_PARAMS, n: 3 }, inputImageDataUrls: [], onCustomTaskEnqueued })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).n).toBe(3)
+    expect(onCustomTaskEnqueued.mock.calls).toEqual([[{ taskId: 'job-1' }]])
+    expect(result.images).toHaveLength(3)
+  })
+
   it('requests an opaque image for local background removal', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: 'aW1hZ2U=' }] })))
     const profile = createDefaultOpenAIProfile({ provider: 'bytedance', model: 'doubao-seedream-5-5-261028', baseUrl: 'https://example.com/v3/', apiKey: 'test-key', transparentBackgroundMethod: 'local' })
@@ -86,7 +167,7 @@ describe('Seedream 5.5', () => {
     const profile = switchApiProfileProvider(createDefaultOpenAIProfile(), 'bytedance')
     const settings = prepareSettingsForCommit(normalizeSettings({ profiles: [{ ...profile, baseUrl: profile.baseUrl.replace(/\/$/, '') }], activeProfileId: profile.id }))
     expect(getActiveApiProfile(settings)).toMatchObject({ provider: 'bytedance', model: 'doubao-seedream-5-5-261028', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', transparentBackgroundMethod: 'api', codexCli: false, streamImages: false })
-    expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, n: 6, resolution: '4K', output_format: 'webp', google_search: true }, settings)).toMatchObject({ n: 1, resolution: '2K', size: '2K', output_format: 'png', google_search: undefined })
+    expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, n: 6, resolution: '4K', output_format: 'webp', google_search: true }, settings)).toMatchObject({ n: 6, resolution: '2K', size: '2K', output_format: 'png', google_search: undefined })
   })
 
   it('keeps all resolution and ratio combinations within the documented pixel limits', () => {
@@ -128,7 +209,7 @@ describe('Seedream 5.5', () => {
       await callImageApi({ settings, prompt: '贴纸', params: { ...DEFAULT_PARAMS, n: 4, quality: 'high', moderation: 'low', output_compression: 70, output_format: 'jpeg', background: 'transparent' }, inputImageDataUrls, nativeTransparentBackground: true })
       const [url, init] = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]
       expect(url).toBe(`${profile.baseUrl}/images/generations`)
-      expect(JSON.parse(String(init?.body))).toEqual({ model: profile.model, prompt: '贴纸', size: '2K', output_format: 'png', background: 'transparent', watermark: false, response_format: 'b64_json', ...(inputImageDataUrls.length ? { image: inputImageDataUrls } : {}) })
+      expect(JSON.parse(String(init?.body))).toEqual({ model: profile.model, prompt: '贴纸', size: '2K', output_format: 'png', background: 'transparent', watermark: false, response_format: 'b64_json', ...(provider === 'openai' ? { n: 4 } : {}), ...(inputImageDataUrls.length ? { image: inputImageDataUrls } : {}) })
     }
   })
 
@@ -147,7 +228,7 @@ describe('Seedream 5.5', () => {
     await callImageApi({ settings, prompt: '测试', params: { ...DEFAULT_PARAMS, resolution: '1.5K', aspect_ratio: '1:1', n: 4, google_search: true, background: 'transparent' }, inputImageDataUrls: ['data:image/png;base64,aW1hZ2U='], nativeTransparentBackground: true })
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('https://example.com/v1/seedream/generate')
-    expect(JSON.parse(String(init?.body))).toEqual({ model: profile.model, prompt: '测试', size: '1536x1536', output_format: 'png', background: 'transparent', image: ['data:image/png;base64,aW1hZ2U='] })
+    expect(JSON.parse(String(init?.body))).toEqual({ model: profile.model, prompt: '测试', size: '1536x1536', output_format: 'png', background: 'transparent', n: 4, image: ['data:image/png;base64,aW1hZ2U='] })
   })
 
   it('rejects excess reference images before sending a request', async () => {

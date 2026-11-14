@@ -441,50 +441,49 @@ export default function InputParamsPanel({
           )}
         </>
       )}
-      {(family !== 'seedream' || isFalProvider) && (
-        <label
-          className={`relative flex items-center max-sm:flex-auto sm:shrink-0 ${agentAutoImageCount ? CHIP_DISABLED_CLASS : `${CHIP_CLASS} cursor-text`}`}
-          onMouseEnter={() => { showAgentNHint(); streamConcurrentHint.show() }}
-          onMouseLeave={() => { hideNLimitHint(); streamConcurrentHint.hide() }}
-          onTouchStart={() => { startAgentNHintTouch(); streamConcurrentHint.startTouch() }}
-          onTouchEnd={() => { clearAgentNHintTouchTimer(); streamConcurrentHint.clearTimer() }}
-          onTouchCancel={() => {
-            clearAgentNHintTouchTimer()
-            hideNLimitHint()
-            streamConcurrentHint.hide()
+      <label
+        className={`relative flex items-center max-sm:flex-auto sm:shrink-0 ${agentAutoImageCount ? CHIP_DISABLED_CLASS : `${CHIP_CLASS} cursor-text`}`}
+        onMouseEnter={() => { showAgentNHint(); streamConcurrentHint.show() }}
+        onMouseLeave={() => { hideNLimitHint(); streamConcurrentHint.hide() }}
+        onTouchStart={() => { startAgentNHintTouch(); streamConcurrentHint.startTouch() }}
+        onTouchEnd={() => { clearAgentNHintTouchTimer(); streamConcurrentHint.clearTimer() }}
+        onTouchCancel={() => {
+          clearAgentNHintTouchTimer()
+          hideNLimitHint()
+          streamConcurrentHint.hide()
+        }}
+        onClick={() => { showAgentNHint(); streamConcurrentHint.show() }}
+      >
+        {prefix('数量')}
+        <input
+          value={nInput}
+          onChange={(e) => handleNInputChange(e.target.value)}
+          onFocus={() => setNInputFocused(true)}
+          onBlur={() => {
+            setNInputFocused(false)
+            commitN()
           }}
-          onClick={() => { showAgentNHint(); streamConcurrentHint.show() }}
-        >
-          {prefix('数量')}
-          <input
-            value={nInput}
-            onChange={(e) => handleNInputChange(e.target.value)}
-            onFocus={() => setNInputFocused(true)}
-            onBlur={() => {
-              setNInputFocused(false)
-              commitN()
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowUp') {
-                handleNLimitIncreaseAttempt(() => e.preventDefault())
-              }
-            }}
-            onWheel={(e) => {
-              if (e.deltaY < 0) {
-                handleNLimitIncreaseAttempt(() => e.preventDefault())
-              }
-            }}
-            disabled={agentAutoImageCount}
-            type={agentAutoImageCount ? 'text' : 'number'}
-            min={agentAutoImageCount ? undefined : 1}
-            max={agentAutoImageCount ? undefined : outputImageLimit}
-            style={{ width: `${Math.max(1, nInput.length)}ch` }}
-            className="bg-transparent text-xs focus:outline-none disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-          />
-          <ButtonTooltip visible={nLimitHint.visible} text={nLimitHintText} />
-          <ButtonTooltip visible={streamConcurrentByN && streamConcurrentHint.visible && !nLimitHint.visible} text="数量大于 1 时会将多图生成拆分为并发单图" />
-        </label>
-      )}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowUp') {
+              handleNLimitIncreaseAttempt(() => e.preventDefault())
+            }
+          }}
+          onWheel={(e) => {
+            if (e.deltaY < 0) {
+              handleNLimitIncreaseAttempt(() => e.preventDefault())
+            }
+          }}
+          disabled={agentAutoImageCount}
+          type={agentAutoImageCount ? 'text' : 'number'}
+          min={agentAutoImageCount ? undefined : 1}
+          max={agentAutoImageCount ? undefined : outputImageLimit}
+          style={{ width: `${Math.max(1, nInput.length)}ch` }}
+          className="bg-transparent text-xs focus:outline-none disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        />
+        <ButtonTooltip visible={nLimitHint.visible} text={nLimitHintText} />
+        <ButtonTooltip visible={streamConcurrentByN && streamConcurrentHint.visible && !nLimitHint.visible} text="数量大于 1 时会将多图生成拆分为并发单图" />
+      </label>
+
       {family === 'seedream' && (
         <>
           <div className="max-sm:flex-auto sm:shrink-0">

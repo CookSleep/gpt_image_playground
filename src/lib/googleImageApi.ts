@@ -3,20 +3,19 @@ import { assertInputImageLimit } from './inputImageLimits'
 import { buildApiUrl, readClientDevProxyConfig } from './devProxy'
 import { getImageModelParams } from './imageModelParams'
 import { getImageSearchSupport, getImageThinkingSupport, parseImageSearchGrounding } from './imageSearch'
-import { assertImageInputPayloadSize, createRequestTimeoutError, getApiErrorMessage, mergeConcurrentApiResults, type CallApiOptions, type CallApiResult } from './imageApiShared'
+import { assertImageInputPayloadSize, createRequestTimeoutError, getApiErrorMessage, callConcurrentImageRequests, type CallApiOptions, type CallApiResult } from './imageApiShared'
+import { getImageRequestExecution } from './imageRequestExecution'
 import { apiFetch } from './platform'
 
 export async function callGoogleImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   assertInputImageLimit(profile, opts.inputImageDataUrls.length)
-  const n = opts.params.n > 0 ? opts.params.n : 1
   // generateContent 没有 n 参数，多张使用独立请求，不传多轮历史。
-  if (n > 1) {
-    const results = await Promise.allSettled(Array.from({ length: n }, () => callGoogleImageApi({
-      ...opts,
-      params: { ...opts.params, n: 1 },
-    }, profile)))
-    return mergeConcurrentApiResults(results)
-  }
+  return getImageRequestExecution(profile, opts.params, opts.inputImageDataUrls.length > 0).concurrent
+    ? callConcurrentImageRequests(opts, (options) => callGoogleImageApiSingle(options, profile))
+    : callGoogleImageApiSingle(opts, profile)
+}
+
+async function callGoogleImageApiSingle(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   if (opts.maskDataUrl) throw new Error('此模型不支持遮罩编辑，请使用参考图和提示词描述修改内容')
   const params = getImageModelParams(profile, opts.params)
   const search = getImageSearchSupport(profile)

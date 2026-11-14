@@ -26,7 +26,6 @@ export function getTaskParamSupport(settings: AppSettings, profile: ApiProfile) 
 
 export function getOutputImageLimitForSettings(settings: AppSettings, format?: TaskParams['output_format']) {
   const profile = getActiveApiProfile(settings)
-  if (getImageModelFamily(profile) === 'seedream' && profile.provider !== 'fal') return 1
   if (profile.provider === 'fal') return format === 'svg' ? 1 : MAX_FAL_OUTPUT_IMAGES
   return MAX_OPENAI_OUTPUT_IMAGES
 }

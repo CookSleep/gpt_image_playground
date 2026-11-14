@@ -34,6 +34,7 @@ export const MAX_IMAGE_INPUT_PAYLOAD_BYTES = 512 * 1024 * 1024
 export const PROMPT_REWRITE_GUARD_PREFIX = 'Treat everything after this line as one complete image-generation prompt, including the resolution instruction. Follow it exactly without rewriting or omitting anything:'
 
 export interface CallApiOptions {
+  signal?: AbortSignal
   settings: AppSettings
   prompt: string
   params: TaskParams
@@ -293,7 +294,7 @@ export function mergeActualParams(...sources: Array<Partial<TaskParams> | undefi
   return Object.keys(merged).length ? merged : undefined
 }
 
-export function mergeConcurrentApiResults(results: PromiseSettledResult<CallApiResult>[]): CallApiResult {
+function mergeConcurrentApiResults(results: PromiseSettledResult<CallApiResult>[]): CallApiResult {
   const successfulResults = results
     .filter((result): result is PromiseFulfilledResult<CallApiResult> => result.status === 'fulfilled')
     .map((result) => result.value)
@@ -324,4 +325,15 @@ export function mergeConcurrentApiResults(results: PromiseSettledResult<CallApiR
     ...(searchGrounding.length ? { searchGrounding } : {}),
     ...(failedRequests.length ? { failedRequests } : {}),
   }
+}
+
+export async function callConcurrentImageRequests(opts: CallApiOptions, callSingle: (options: CallApiOptions) => Promise<CallApiResult>) {
+  const results = await Promise.allSettled(Array.from({ length: opts.params.n }, (_, requestIndex) => callSingle({
+    ...opts,
+    params: { ...opts.params, n: 1 },
+    onPartialImage: opts.onPartialImage
+      ? (partial) => opts.onPartialImage?.({ ...partial, requestIndex })
+      : undefined,
+  })))
+  return mergeConcurrentApiResults(results)
 }

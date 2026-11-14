@@ -1470,6 +1470,150 @@ describe('agent conversation persistence', () => {
 
 })
 
+describe('Seedream concurrent tasks', () => {
+  const profile = createDefaultOpenAIProfile({
+    id: 'seedream-profile', provider: 'bytedance', model: 'doubao-seedream-5-5-261028',
+    baseUrl: 'https://example.com/v1', apiKey: 'test-key', timeout: 1,
+  })
+
+  beforeEach(async () => {
+    await clearTasks()
+    await clearImages()
+    await clearAgentConversations()
+    vi.mocked(callImageApi).mockReset()
+    useStore.setState({
+      settings: normalizeSettings({ profiles: [profile], activeProfileId: profile.id }),
+      tasks: [], agentConversations: [], appMode: 'gallery', inputImages: [], maskDraft: null,
+      prompt: 'prompt', params: { ...DEFAULT_PARAMS, n: 3 },
+    })
+  })
+
+  it('lets direct child requests finish after the task timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const request = deferred<Awaited<ReturnType<typeof callImageApi>>>()
+      vi.mocked(callImageApi).mockImplementationOnce(() => request.promise)
+
+      await submitTask()
+      await vi.advanceTimersByTimeAsync(2000)
+      const current = useStore.getState().tasks[0]
+      expect(current.status).toBe('running')
+      expect(hasInterruptibleOperations([current], [], null)).toBe(true)
+
+      request.resolve({ images: ['data:image/png;base64,c3VjY2Vzcw=='], failedRequests: [{ requestIndex: 1, error: '请求超时' }] })
+      await vi.advanceTimersByTimeAsync(1)
+      expect(useStore.getState().tasks[0]).toMatchObject({
+        status: 'done',
+        outputImages: [expect.any(String)],
+        outputErrors: [{ requestIndex: 1, error: '请求超时' }],
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('recovers all images from one saved custom batch ID without submitting again', async () => {
+    const customProfile = { ...profile, provider: 'custom-async' }
+    useStore.setState({ settings: normalizeSettings({
+      profiles: [customProfile], activeProfileId: customProfile.id,
+      customProviders: [{
+        id: 'custom-async', name: '测试',
+        submit: { path: 'submit', body: { n: '$params.n' }, taskIdPath: 'id' },
+        poll: { path: 'jobs/{task_id}', statusPath: 'status', successValues: ['done'],
+          failureValues: ['failed'], result: { b64JsonPaths: ['data.*.b64_json'] } },
+      }],
+    }) })
+    await putDbTask(task({
+      id: 'seedream-recover', apiProvider: customProfile.provider, apiProfileId: profile.id, apiModel: profile.model,
+      status: 'running', params: { ...DEFAULT_PARAMS, n: 3 }, customTaskId: 'job-1',
+    }))
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      expect(String(input)).toBe('https://example.com/v1/jobs/job-1')
+      expect(init?.method).toBe('GET')
+      return Response.json({ status: 'done', data: Array.from({ length: 3 }, () => ({ b64_json: 'c3VjY2Vzcw==' })) })
+    })
+    try {
+      await initStore()
+      await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
+      expect(fetchMock).toHaveBeenCalledOnce()
+      const recovered = (await getAllTasks())[0]
+      expect(recovered.outputImages).toHaveLength(3)
+      expect(recovered.customTaskId).toBe('job-1')
+      expect(recovered.customRecoverable).toBe(false)
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+})
+
+describe('custom task deletion cancels polling', () => {
+  const profile = createDefaultOpenAIProfile({
+    id: 'cancel-profile', provider: 'custom-async', model: 'seedream-5.5',
+    baseUrl: 'https://example.com/v1', apiKey: 'test-key',
+  })
+  beforeEach(async () => {
+    await clearTasks()
+    await clearImages()
+    await clearAgentConversations()
+    useStore.setState({
+      settings: normalizeSettings({
+        profiles: [profile], activeProfileId: profile.id,
+        customProviders: [{
+          id: 'custom-async', name: '测试',
+          submit: { path: 'submit', taskIdPath: 'id' },
+          poll: { path: 'jobs/{task_id}', intervalSeconds: 1, statusPath: 'status',
+            successValues: ['done'], failureValues: ['failed'], result: { b64JsonPaths: ['data.*.b64_json'] } },
+        }],
+      }),
+      tasks: [], agentConversations: [], appMode: 'gallery', prompt: 'test',
+      params: DEFAULT_PARAMS, inputImages: [], maskDraft: null, galleryInputDraft: null,
+    })
+  })
+
+  it.each(['submitted', 'recovered', 'inflight', 'clear'])('stops %s polling and keeps deleted tasks absent', async (mode) => {
+    vi.useFakeTimers()
+    let pollingSignal: AbortSignal | undefined
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      if (init?.method === 'POST') return Response.json({ id: 'job-1' })
+      pollingSignal = init?.signal ?? undefined
+      if (mode === 'inflight') return new Promise<Response>((_, reject) => {
+        pollingSignal?.addEventListener('abort', () => reject(pollingSignal?.reason), { once: true })
+      })
+      return Response.json({ status: 'pending' })
+    })
+    try {
+      if (mode === 'submitted') {
+        const api = await vi.importActual<typeof import('./lib/api')>('./lib/api')
+        vi.mocked(callImageApi).mockImplementationOnce(api.callImageApi)
+        await submitTask()
+      } else {
+        await putDbTask(task({
+          id: 'cancel-task', apiProvider: profile.provider, apiProfileId: profile.id, apiModel: profile.model,
+          status: 'running', customTaskId: 'job-1',
+        }))
+        await initStore()
+      }
+      await vi.advanceTimersByTimeAsync(1)
+      expect(pollingSignal).toBeDefined()
+      expect(pollingSignal?.aborted).toBe(false)
+      const callsBeforeDeletion = fetchMock.mock.calls.length
+      const removal = mode === 'clear'
+        ? clearData({ clearConfig: false, clearTasks: true })
+        : removeTask(useStore.getState().tasks[0])
+      expect(useStore.getState().tasks).toEqual([])
+      expect(pollingSignal?.aborted).toBe(true)
+      await removal
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(fetchMock).toHaveBeenCalledTimes(callsBeforeDeletion)
+      expect(await getAllTasks()).toEqual([])
+      expect(useStore.getState().tasks).toEqual([])
+    } finally {
+      fetchMock.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('fal task recovery', () => {
   beforeEach(async () => {
     await clearTasks()
@@ -2586,6 +2730,32 @@ describe('agent round deletion', () => {
     expect(useStore.getState().tasks.map((item) => item.id)).toEqual(['task-concurrent'])
     expect(useStore.getState().agentConversations[0].rounds.map((round) => round.id)).toEqual(['round-concurrent'])
     expect(useStore.getState().agentConversations[0].messages.map((message) => message.id)).toEqual(['message-concurrent'])
+  })
+
+  it.each(['updated', 'removed'])('uses current conversation state when deletion fallback runs after it was %s', async (change) => {
+    const conversation = agentConversation({
+      activeRoundId: 'round-a',
+      rounds: [{
+        id: 'round-a', index: 1, parentRoundId: null, userMessageId: 'user-a',
+        prompt: '删除', inputImageIds: [], outputTaskIds: ['task-a'],
+        status: 'done', error: null, createdAt: 1, finishedAt: 2,
+      }],
+      messages: [{ id: 'user-a', role: 'user', content: '删除', roundId: 'round-a', createdAt: 1 }],
+    })
+    useStore.setState({
+      agentConversations: [conversation],
+      tasks: [task({ id: 'task-a', sourceMode: 'agent', agentConversationId: conversation.id, agentRoundId: 'round-a' })],
+    })
+    const pending = deferred<undefined>()
+    vi.mocked(commitTaskDeletion).mockImplementationOnce(() => pending.promise)
+    const deletion = useStore.getState().deleteAgentRound(conversation.id, 'round-a')
+    await vi.waitFor(() => expect(useStore.getState().agentConversations[0].rounds).toEqual([]))
+    const latest = { ...useStore.getState().agentConversations[0], title: '新回复后的会话' }
+    useStore.setState({ agentConversations: change === 'updated' ? [latest] : [] })
+    await vi.waitFor(async () => expect((await getAllAgentConversations()).map((item) => item.title)).toEqual(change === 'updated' ? [latest.title] : []))
+    pending.reject(new Error('atomic failed'))
+    await deletion
+    expect((await getAllAgentConversations()).map((item) => item.title)).toEqual(change === 'updated' ? [latest.title] : [])
   })
 
   it('reports a warning when both atomic persistence and its fallback fail after deletion', async () => {
@@ -4603,6 +4773,62 @@ describe('agent built-in image tool failure', () => {
       size: '2048x2048',
       quality: 'high',
     })
+  })
+
+  it.each(['single', 'batch'])('skips Hybrid %s requests deleted while their task is being saved', async (mode) => {
+    const imageProfile = createDefaultOpenAIProfile({ id: 'image-profile', apiKey: 'image-key', apiMode: 'images' })
+    useStore.setState({
+      settings: normalizeSettings({
+        ...useStore.getState().settings,
+        profiles: [responsesProfile, imageProfile],
+        agentApiConfigMode: 'hybrid',
+        agentTextProfileId: responsesProfile.id,
+        agentImageProfileId: imageProfile.id,
+        agentMaxToolRounds: 3,
+      }),
+    })
+    vi.mocked(callAgentResponsesApi)
+      .mockResolvedValueOnce({
+        text: '', images: [], responseId: 'prepare-delete',
+        outputItems: [{
+          type: 'function_call',
+          name: mode === 'single' ? 'generate_image' : 'generate_image_batch',
+          call_id: 'prepare-call',
+          arguments: JSON.stringify(mode === 'single'
+            ? { id: 'deleted', prompt: 'deleted prompt' }
+            : { images: [{ id: 'deleted', prompt: 'deleted prompt' }, { id: 'live', prompt: 'live prompt' }] }),
+        }],
+      })
+      .mockResolvedValueOnce({ text: '完成', images: [], outputItems: [], responseId: 'prepare-done' })
+    vi.mocked(callImageApi).mockResolvedValue({ images: ['data:image/png;base64,live'], actualParams: {} })
+    const db = await import('./lib/db')
+    const original = db.putTask
+    const pending = deferred<void>()
+    const saving = vi.spyOn(db, 'putTask').mockImplementationOnce(async (task) => {
+      const id = await original(task)
+      await pending.promise
+      return id
+    })
+    try {
+      await submitAgentMessage()
+      await vi.waitFor(() => expect(saving).toHaveBeenCalled())
+      const deleted = useStore.getState().tasks.find((task) => task.prompt === 'deleted prompt')!
+      expect(deleted).toBeDefined()
+      expect(callImageApi).not.toHaveBeenCalled()
+      await removeTask(deleted)
+      pending.resolve()
+      await vi.waitFor(() => expect(useStore.getState().agentConversations[0].rounds[0]?.status).toBe('done'))
+      expect(callImageApi).toHaveBeenCalledTimes(mode === 'single' ? 0 : 1)
+      expect(useStore.getState().tasks.some((task) => task.id === deleted.id)).toBe(false)
+      if (mode === 'batch') {
+        expect(vi.mocked(callImageApi).mock.calls[0][0].prompt).toBe('live prompt')
+        expect(useStore.getState().tasks).toEqual([expect.objectContaining({ prompt: 'live prompt', status: 'done' })])
+      }
+      expect(JSON.stringify(useStore.getState().agentConversations[0].rounds[0].responseOutput)).not.toContain('deleted prompt')
+    } finally {
+      pending.resolve()
+      saving.mockRestore()
+    }
   })
 
   it('does not commit or report a deleted Hybrid single-image result', async () => {
