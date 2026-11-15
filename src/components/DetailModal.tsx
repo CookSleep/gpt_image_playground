@@ -286,9 +286,9 @@ export default function DetailModal() {
   const currentTransparentOutputFailed = Boolean(currentOutputImageId && task.transparentOutput && task.transparentOriginalImages?.[currentOutputImageIndex] === '')
   const outputCompressionText = task.params.output_compression == null ? '未设置' : String(task.params.output_compression)
   const modelFamily = getImageModelFamily({ provider: taskProvider ?? 'openai', apiMode: task.apiMode ?? 'images', model: task.apiModel ?? '' })
-  // 接口回传的值优先，缺少时按实际像素推算
+  // 接口不回传比例和分辨率，Google 接口记录的是请求值，以实际像素推算为准
   const modelActualParams = modelFamily
-    ? { ...getActualRatioAndResolution(currentActualParams?.size, task.params), ...currentActualParams }
+    ? { ...currentActualParams, ...getActualRatioAndResolution(currentActualParams?.size, task.params) }
     : currentActualParams
   const showQualityCard = !modelFamily || (modelFamily === 'grok' && supportsGrokQuality(task.apiModel ?? ''))
   const showModerationCard = !modelFamily && task.apiProvider !== 'fal'
