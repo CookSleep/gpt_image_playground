@@ -94,6 +94,28 @@ export async function getImageMeta(id: string): Promise<Omit<StoredImage, 'dataU
   return meta
 }
 
+export function updateImageDimensions(id: string, width: number, height: number): Promise<boolean> {
+  return openDB().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction([STORE_IMAGES, STORE_THUMBNAILS], 'readwrite')
+    const images = tx.objectStore(STORE_IMAGES)
+    const thumbnails = tx.objectStore(STORE_THUMBNAILS)
+    let updated = false
+    const req = images.get(id)
+    req.onsuccess = () => {
+      if (!req.result) return
+      images.put({ ...req.result, width, height })
+      updated = true
+      const thumbnail = thumbnails.get(id)
+      thumbnail.onsuccess = () => {
+        if (thumbnail.result) thumbnails.put({ ...thumbnail.result, width, height })
+      }
+    }
+    tx.oncomplete = () => resolve(updated)
+    tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error)
+  }))
+}
+
 export function getStoredImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
   return getStoredThumbnailRecord(id).then(fromThumbnailRecord)
 }

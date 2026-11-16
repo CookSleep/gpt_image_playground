@@ -4,6 +4,7 @@ import { useStore, retryTask } from '../store'
 import { ensureImageThumbnailCached, subscribeImageThumbnail } from '../lib/imageCache'
 import { useNearViewport } from '../hooks/useNearViewport'
 import { formatImageRatio } from '../lib/size'
+import { getImageActualParams } from '../lib/imageActualParams'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_FAL_MODEL, DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
@@ -315,7 +316,10 @@ export default function TaskCard({
   // 接口不回传 complexity，只显示设置的值
   const showComplexity = task.params.complexity !== 'auto'
 
-  const sizeDisplay = getParamDisplay(task, 'size')
+  const coverActualParams = getImageActualParams(task, coverSize, task.actualParamsByImage?.[task.outputImages[0]] ?? task.actualParams)
+  const ratioDisplay = getParamDisplay(task, 'aspect_ratio', coverActualParams)
+  const resolutionDisplay = getParamDisplay(task, 'resolution', coverActualParams)
+  const sizeDisplay = getParamDisplay(task, 'size', coverActualParams)
   const showSize = task.params.size !== 'auto' || sizeDisplay.isMismatch
 
   const formatDisplay = getParamDisplay(task, 'output_format')
@@ -622,13 +626,13 @@ export default function TaskCard({
               {task.params.aspect_ratio && task.params.aspect_ratio !== 'auto' && task.params.aspect_ratio !== 'custom' && (
                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
                   <span className="text-gray-400 dark:text-gray-500">比例</span>
-                  <span className="text-gray-600 dark:text-gray-300">{task.params.aspect_ratio}</span>
+                  {ratioDisplay.isMismatch ? <ActualValueBadge value={ratioDisplay.displayValue} className="px-1 rounded-sm" tooltip="图片实际值" /> : <span className="text-gray-600 dark:text-gray-300">{ratioDisplay.displayValue}</span>}
                 </span>
               )}
               {task.params.resolution && (
                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
                   <span className="text-gray-400 dark:text-gray-500">分辨率</span>
-                  <span className="text-gray-600 dark:text-gray-300">{task.params.resolution}</span>
+                  {resolutionDisplay.isMismatch ? <ActualValueBadge value={resolutionDisplay.displayValue} className="px-1 rounded-sm" tooltip="图片实际值" /> : <span className="text-gray-600 dark:text-gray-300">{resolutionDisplay.displayValue}</span>}
                 </span>
               )}
               {task.params.thinking_level && task.params.thinking_level !== 'auto' && (
@@ -660,7 +664,7 @@ export default function TaskCard({
               {showSize && (
                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
                   <span className="text-gray-400 dark:text-gray-500">尺寸</span>
-                  {sizeDisplay.isMismatch ? <ActualValueBadge value={sizeDisplay.displayValue} className="px-1 rounded-sm" /> : <span className="text-gray-600 dark:text-gray-300">{sizeDisplay.displayValue}</span>}
+                  {sizeDisplay.isMismatch ? <ActualValueBadge value={sizeDisplay.displayValue} className="px-1 rounded-sm" tooltip="图片实际值" /> : <span className="text-gray-600 dark:text-gray-300">{sizeDisplay.displayValue}</span>}
                 </span>
               )}
               {showFormat && (

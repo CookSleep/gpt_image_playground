@@ -4,6 +4,7 @@ const db = vi.hoisted(() => ({
   CURRENT_THUMBNAIL_VERSION: 2,
   getImage: vi.fn(),
   getImageMeta: vi.fn(),
+  getImageDimensions: vi.fn().mockResolvedValue({ width: 1200, height: 800 }),
   getImageThumbnail: vi.fn(),
 }))
 const imageBlob = vi.hoisted(() => ({
@@ -20,6 +21,7 @@ import {
   clearImageCaches,
   deleteImageCacheEntry,
   ensureImageThumbnailCached,
+  ensureImageDimensionsCached,
   getCachedImage,
   scheduleMissingThumbnailBackfill,
   scheduleThumbnailBackfill,
@@ -28,17 +30,20 @@ import {
 
 describe('imageCache', () => {
   beforeEach(() => {
+    vi.useFakeTimers()
     URL.revokeObjectURL = vi.fn()
     clearImageCaches()
     vi.clearAllMocks()
     db.getImage.mockResolvedValue(undefined)
     db.getImageMeta.mockResolvedValue(undefined)
+    db.getImageDimensions.mockReset().mockResolvedValue({ width: 1200, height: 800 })
     db.getImageThumbnail.mockResolvedValue(undefined)
     imageBlob.getThumbnailSource.mockResolvedValue(undefined)
     imageBlob.getFreshThumbnailIds.mockResolvedValue([])
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    await vi.runAllTimersAsync()
     vi.useRealTimers()
   })
 
@@ -180,15 +185,16 @@ describe('imageCache', () => {
 
     expect(db.getImageMeta.mock.calls.map(([id]) => id)).toEqual(['visible', 'background'])
     expect(db.getImageThumbnail.mock.calls.map(([id]) => id)).toEqual(['visible', 'background'])
-    expect(onThumbnail).toHaveBeenCalledWith({
+    expect(onThumbnail).toHaveBeenCalledWith(expect.objectContaining({
       src: 'visible-thumbnail',
       width: 1000,
       height: 1000,
-    })
+    }))
     unsubscribe()
   })
 
   it('allows a failed thumbnail backfill to be scheduled again', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.useFakeTimers()
     db.getImageMeta.mockResolvedValue({ width: 1000, height: 1000 })
     db.getImageThumbnail
@@ -205,6 +211,101 @@ describe('imageCache', () => {
     scheduleThumbnailBackfill(['image'])
     await vi.advanceTimersByTimeAsync(250)
     await vi.waitFor(() => expect(db.getImageThumbnail).toHaveBeenCalledTimes(2))
+    warn.mockRestore()
+  })
+
+  it('先返回已有缩略图，宽高补全后同时通知卡片和详情', async () => {
+    db.getImageMeta.mockResolvedValue({ id: 'image' })
+    imageBlob.getThumbnailSource.mockResolvedValue({ src: 'ready-thumbnail', thumbnailVersion: 2 })
+    let finish!: (size: { width: number; height: number }) => void
+    db.getImageDimensions.mockReturnValue(new Promise((resolve) => { finish = resolve }))
+    const onThumbnail = vi.fn()
+    const unsubscribe = subscribeImageThumbnail('image', onThumbnail)
+
+    expect(await ensureImageThumbnailCached('image')).toMatchObject({ src: 'ready-thumbnail' })
+    expect(db.getImageDimensions).not.toHaveBeenCalled()
+    const detail = ensureImageDimensionsCached('image')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(db.getImageDimensions).toHaveBeenCalledOnce()
+    expect(onThumbnail).not.toHaveBeenCalled()
+    finish({ width: 2496, height: 1664 })
+    expect(await detail).toEqual({ width: 2496, height: 1664 })
+    expect(onThumbnail).toHaveBeenCalledWith(expect.objectContaining({ src: 'ready-thumbnail', width: 2496, height: 1664 }))
+    expect(await ensureImageThumbnailCached('image')).toMatchObject({ width: 2496, height: 1664 })
+    unsubscribe()
+  })
+
+  it('宽高补全与缩略图重建共享并发额度，可见图片优先', async () => {
+    db.getImageMeta.mockResolvedValue({ id: 'image' })
+    cacheThumbnail('visible', { src: 'visible-thumbnail', thumbnailVersion: 2 })
+    let finish!: (size: { width: number; height: number }) => void
+    db.getImageDimensions.mockReturnValue(new Promise((resolve) => { finish = resolve }))
+    db.getImageThumbnail.mockResolvedValue({ thumbnailDataUrl: 'background-thumbnail', width: 1000, height: 1000, thumbnailVersion: 2 })
+    scheduleThumbnailBackfill(['background'])
+    const detail = ensureImageDimensionsCached('visible')
+
+    await vi.advanceTimersByTimeAsync(250)
+    expect(db.getImageDimensions).toHaveBeenCalledWith('visible')
+    expect(db.getImageThumbnail).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(db.getImageThumbnail).not.toHaveBeenCalled()
+    finish({ width: 2496, height: 1664 })
+    await detail
+    await vi.advanceTimersByTimeAsync(250)
+    expect(db.getImageThumbnail).toHaveBeenCalledExactlyOnceWith('background')
+  })
+
+  it('缺少缩略图时详情复用重建结果，不另行解析宽高', async () => {
+    db.getImageMeta.mockResolvedValue({ id: 'image' })
+    db.getImageThumbnail.mockResolvedValue({ thumbnailDataUrl: 'new-thumbnail', width: 2496, height: 1664, thumbnailVersion: 2 })
+    const first = ensureImageDimensionsCached('image')
+    const second = ensureImageDimensionsCached('image')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(await first).toEqual({ width: 2496, height: 1664 })
+    expect(await second).toEqual({ width: 2496, height: 1664 })
+    expect(db.getImageThumbnail).toHaveBeenCalledOnce()
+    expect(db.getImageDimensions).not.toHaveBeenCalled()
+  })
+
+  it('宽高读取失败后结束等待，后续访问可以重试', async () => {
+    db.getImageMeta.mockResolvedValue({ id: 'image' })
+    cacheThumbnail('image', { src: 'ready-thumbnail', thumbnailVersion: 2 })
+    db.getImageDimensions.mockResolvedValueOnce(undefined)
+    const first = ensureImageDimensionsCached('image')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(await first).toBeUndefined()
+    const second = ensureImageDimensionsCached('image')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(await second).toEqual({ width: 1200, height: 800 })
+    expect(db.getImageDimensions).toHaveBeenCalledTimes(2)
+  })
+
+  it('已有真实宽高直接返回，不等待后台队列', async () => {
+    db.getImageMeta.mockResolvedValue({ id: 'image', width: 2496, height: 1664 })
+    expect(await ensureImageDimensionsCached('image')).toEqual({ width: 2496, height: 1664 })
+    expect(db.getImageThumbnail).not.toHaveBeenCalled()
+    expect(db.getImageDimensions).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { width: undefined, height: undefined, limit: 1 },
+    { width: 4000, height: 2000, limit: 1 },
+    { width: 2000, height: 2000, limit: 2 },
+    { width: 2000, height: 1000, limit: 3 },
+    { width: 1000, height: 1000, limit: 4 },
+  ])('按图片尺寸控制并发上限 $limit', async ({ width, height, limit }) => {
+    db.getImageMeta.mockResolvedValue({ width, height })
+    const finish: Array<() => void> = []
+    db.getImageThumbnail.mockImplementation(() => new Promise((resolve) => finish.push(() => resolve(undefined))))
+    scheduleThumbnailBackfill(['a', 'b', 'c', 'd', 'e'])
+    await vi.advanceTimersByTimeAsync(250)
+    expect(db.getImageThumbnail).toHaveBeenCalledTimes(limit)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(db.getImageThumbnail).toHaveBeenCalledTimes(limit)
+    db.getImageThumbnail.mockResolvedValue(undefined)
+    finish.forEach((resolve) => resolve())
+    await vi.runAllTimersAsync()
+    expect(db.getImageThumbnail).toHaveBeenCalledTimes(5)
   })
 
   it('only reads originals for images missing a current thumbnail', async () => {

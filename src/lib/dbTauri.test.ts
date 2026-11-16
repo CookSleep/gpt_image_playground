@@ -6,7 +6,7 @@ const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true, invoke }))
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }))
 
-import { getAllTasks, getImage, getStoredImageThumbnail, hashDataUrl, putImage, putImageThumbnail, storeImageWithSize } from './db'
+import { getAllTasks, getImage, getImageMeta, getStoredImageThumbnail, hashDataUrl, putImage, putImageThumbnail, storeImageWithSize, updateImageDimensions } from './db'
 import { bytesToBase64 } from './dataUrl'
 import { commitTaskDeletion, dataUrlToPayload, putTask } from './dbTauri'
 
@@ -189,5 +189,14 @@ describe('dbTauri', () => {
     expect(result.id).toBe(await hashDataUrl(dataUrl))
     expect(files.has(`image_put:${result.id}`)).toBe(true)
     expect((await getImage(result.id))?.dataUrl).toBe(dataUrl)
+  })
+
+  it('读取和补全宽高只调用元数据接口', async () => {
+    invoke.mockResolvedValueOnce({ width: 2496, height: 1664, source: 'generated', createdAt: 1 })
+    expect(await getImageMeta('image')).toEqual({ id: 'image', width: 2496, height: 1664, source: 'generated', createdAt: 1 })
+    expect(invoke).toHaveBeenLastCalledWith('image_meta', { id: 'image' }, undefined)
+    invoke.mockResolvedValueOnce(false)
+    expect(await updateImageDimensions('deleted', 2496, 1664)).toBe(false)
+    expect(invoke).toHaveBeenLastCalledWith('image_dimensions_update', { id: 'deleted', width: 2496, height: 1664 }, undefined)
   })
 })

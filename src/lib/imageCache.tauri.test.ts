@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
     CURRENT_THUMBNAIL_VERSION: 2,
     getImage: vi.fn(),
     getImageMeta: vi.fn(),
+    getImageDimensions: vi.fn().mockResolvedValue({ width: 1200, height: 800 }),
     getImageThumbnail: vi.fn(),
   },
   getThumbnailFile: vi.fn(),
@@ -31,6 +32,7 @@ describe('imageCache（客户端）', () => {
   const created: Blob[] = []
 
   beforeEach(() => {
+    vi.useFakeTimers()
     vi.clearAllMocks()
     created.length = 0
     URL.createObjectURL = vi.fn((blob: Blob) => {
@@ -39,10 +41,11 @@ describe('imageCache（客户端）', () => {
     })
     URL.revokeObjectURL = vi.fn()
     clearImageCaches()
-    mocks.db.getImageMeta.mockResolvedValue(undefined)
+    mocks.db.getImageMeta.mockResolvedValue({ width: 1000, height: 1000 })
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    await vi.runAllTimersAsync()
     vi.useRealTimers()
   })
 
@@ -60,7 +63,8 @@ describe('imageCache（客户端）', () => {
     await vi.waitFor(() => expect(mocks.db.getImageThumbnail).toHaveBeenCalledTimes(2))
     expect(mocks.db.getImageThumbnail.mock.calls.map(([id]) => id).sort()).toEqual(['none', 'stale'])
     // 宽高取自数据库记录，不为此读取图片文件
-    expect(mocks.db.getImageMeta).not.toHaveBeenCalled()
+    expect(mocks.db.getImageMeta.mock.calls.map(([id]) => id)).toEqual(['stale', 'none'])
+    expect(mocks.getImageStats).toHaveBeenCalledOnce()
   })
 
   it('查询图片信息失败时退回全部补全', async () => {

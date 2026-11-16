@@ -13,8 +13,8 @@ describe('db 门面（网页版）', () => {
 
   it('底层存取全部使用 IndexedDB 实现', () => {
     for (const [name, fn] of Object.entries(indexedDbBackend)) {
-      // 读取任务时会补全旧记录的参数，单独测试
-      if (name === 'getAllTasks') continue
+      // 任务读写包含参数清洗，单独测试
+      if (name === 'getAllTasks' || name === 'putTask') continue
       expect(db[name as keyof typeof db], name).toBe(fn)
     }
   })
@@ -24,5 +24,22 @@ describe('db 门面（网页版）', () => {
     vi.spyOn(indexedDbBackend, 'getAllTasks').mockResolvedValue([{ id: 'old', params: oldParams } as unknown as TaskRecord])
     const [task] = await db.getAllTasks()
     expect(task.params).toMatchObject({ complexity: 'auto', frame_count: 9, frame_duration_ms: 120 })
+  })
+
+  it('写入任务时清理尺寸类响应参数，保留请求和其他响应属性', async () => {
+    const put = vi.spyOn(indexedDbBackend, 'putTask').mockResolvedValue('old')
+    const source: TaskRecord = {
+      id: 'old', params: DEFAULT_PARAMS,
+      prompt: '', inputImageIds: [], outputImages: [], status: 'done', error: null, createdAt: 0, finishedAt: 1, elapsed: 1,
+      actualParams: { size: '2K', resolution: '2K', quality: 'high' },
+      actualParamsByImage: { image: { size: '1024x1024', aspect_ratio: '1:1', output_format: 'png' } },
+    }
+    await db.putTask(source)
+    expect(put).toHaveBeenCalledWith({
+      ...source,
+      actualParams: { quality: 'high' },
+      actualParamsByImage: { image: { output_format: 'png' } },
+    })
+    expect(source.actualParams?.size).toBe('2K')
   })
 })

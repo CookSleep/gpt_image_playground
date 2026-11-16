@@ -755,7 +755,7 @@ describe('mask draft lifecycle in store actions', () => {
     setTimeoutSpy.mockRestore()
   })
 
-  it('stores decoded image size as actual size when the API omits size', async () => {
+  it('stores decoded dimensions on the image without duplicating them in actual params', async () => {
     const { callImageApi } = await import('./lib/api')
     vi.mocked(callImageApi).mockClear()
     vi.mocked(callImageApi).mockResolvedValueOnce({
@@ -773,13 +773,13 @@ describe('mask draft lifecycle in store actions', () => {
     await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
 
     const [task] = useStore.getState().tasks
-    expect(task.actualParams).toMatchObject({ size: '1254x1254', output_format: 'png', n: 1 })
-    expect(task.actualParamsByImage?.[task.outputImages[0]]).toMatchObject({ size: '1254x1254', output_format: 'png' })
+    expect(task.actualParams).toMatchObject({ output_format: 'png', n: 1 })
+    expect(task.actualParamsByImage?.[task.outputImages[0]]).toMatchObject({ output_format: 'png' })
     await clearTasks()
     await clearImages()
   })
 
-  it('keeps API-returned actual size over decoded image size', async () => {
+  it('discards API dimensions and persists decoded image dimensions separately', async () => {
     const { callImageApi } = await import('./lib/api')
     vi.mocked(callImageApi).mockClear()
     vi.mocked(callImageApi).mockResolvedValueOnce({
@@ -797,8 +797,9 @@ describe('mask draft lifecycle in store actions', () => {
     await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
 
     const [task] = useStore.getState().tasks
-    expect(task.actualParams?.size).toBe('1024x1024')
-    expect(task.actualParamsByImage?.[task.outputImages[0]].size).toBe('1024x1024')
+    expect(task.actualParams?.size).toBeUndefined()
+    expect(await getImage(task.outputImages[0])).toMatchObject({ width: 1254, height: 1254 })
+    expect(task.actualParamsByImage?.[task.outputImages[0]].size).toBeUndefined()
     await clearTasks()
     await clearImages()
   })
@@ -1317,6 +1318,22 @@ describe('agent conversation persistence', () => {
     const serializedStoredTasks = JSON.stringify(storedTasks)
     expect(serializedStoredTasks).toContain('image_generation_call')
     expect(serializedStoredTasks).not.toContain('legacy-task-base64')
+  })
+
+  it('启动时清理历史任务中的尺寸类响应字段并写回', async () => {
+    const source = task({
+      id: 'legacy-size',
+      params: { ...DEFAULT_PARAMS, size: '1024x1024', resolution: '1K' },
+      actualParams: { size: '2K', resolution: '2K', quality: 'high' },
+      actualParamsByImage: { a: { size: '2K', aspect_ratio: '1:1', output_format: 'png' } },
+    })
+    await putDbTask(source)
+    await initStore()
+    const loaded = useStore.getState().tasks.find((item) => item.id === source.id)
+    expect(loaded?.actualParams).toEqual({ quality: 'high' })
+    expect(loaded?.actualParamsByImage).toEqual({ a: { output_format: 'png' } })
+    expect(loaded?.params).toEqual(source.params)
+    expect((await getAllTasks()).find((item) => item.id === source.id)).toEqual(loaded)
   })
 
   it('keeps agent conversations created while initStore is loading', async () => {
@@ -2778,6 +2795,23 @@ describe('data import', () => {
     const stored = await getAllTasks()
     expect(stored.find((item) => item.id === valid.id)?.startedAt).toBe(5)
     expect(stored.find((item) => item.id === invalid.id)?.startedAt).toBeUndefined()
+  })
+
+  it('导入旧备份时清理尺寸类响应字段并持久化，保留请求参数', async () => {
+    const source = task({
+      id: 'imported-size', params: { ...DEFAULT_PARAMS, size: '1024x1024', resolution: '1K' },
+      actualParams: { size: '2K', aspect_ratio: '1:1', resolution: '2K', quality: 'high' },
+      actualParamsByImage: { a: { size: '1024x1024' } },
+    })
+    const imported = await importData(importFile({
+      version: 3, exportedAt: new Date(0).toISOString(), tasks: [source], imageFiles: {},
+    }), { importConfig: false, importTasks: true })
+    expect(imported).toBe(true)
+    const stored = (await getAllTasks()).find((item) => item.id === source.id)
+    expect(stored?.actualParams).toEqual({ quality: 'high' })
+    expect(stored?.actualParamsByImage).toBeUndefined()
+    expect(stored?.params).toEqual(source.params)
+    expect(useStore.getState().tasks.find((item) => item.id === source.id)).toEqual(stored)
   })
 
   it('skips empty agent conversations when importing task data', async () => {

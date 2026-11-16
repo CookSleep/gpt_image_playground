@@ -147,6 +147,24 @@ pub async fn image_get(state: State<'_, StorageState>, id: String) -> Result<Res
 }
 
 #[tauri::command]
+pub async fn image_meta(state: State<'_, StorageState>, id: String) -> Result<Option<FileMeta>> {
+    run(state, move |s| s.image_meta(&id)).await
+}
+
+#[tauri::command]
+pub async fn image_dimensions_update(
+    state: State<'_, StorageState>,
+    id: String,
+    width: i64,
+    height: i64,
+) -> Result<bool> {
+    run(state, move |s| {
+        s.update_image_dimensions(&id, width, height)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn image_put(state: State<'_, StorageState>, request: Request<'_>) -> Result<()> {
     put_from_request(state, request, Kind::Image).await
 }

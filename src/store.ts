@@ -77,7 +77,7 @@ import { canonicalizeBatchFunctionCallArguments, countResponseToolCalls, createR
 import { cleanStaleAgentInputDrafts, clearInputDraftState, isEmptyAgentInputDraft, normalizeAgentInputDrafts, remapAgentInputDraftMentionsForPathChange, restoreAgentInputDraftState, restoreGalleryInputDraftState, saveActiveAgentInputDrafts, saveGalleryInputDraft, syncActiveInputDraft, updateInputDraftImages } from './lib/inputDraftState'
 import { ALL_FAVORITES_COLLECTION_ID, DEFAULT_FAVORITE_COLLECTION_ID, createDefaultFavoriteCollection, deleteFavoriteCollectionState, ensureDefaultFavoriteCollection, getNewTaskFavoritePatch, getTaskFavoriteCollectionIds, mergeFavoriteCollections, normalizeFavoriteCollectionIds, normalizeFavoriteCollectionName, normalizeFavoriteCollections, normalizeFavoritePatch, normalizeLoadedFavoriteState, resolveDefaultFavoriteCollectionId, sameFavoriteCollectionIds } from './lib/favoriteState'
 import { createPersistedState, mergePersistedAgentConversations, migratePersistedState, normalizePersistedState } from './lib/persistedState'
-import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
+import { createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks, normalizeTaskActualParams } from './lib/taskState'
 import { stripInjectedCodexCliSizePrompt } from './lib/size'
 import { apiFetch, FetchConnectError, isTauri } from './lib/platform'
 import { pickSaveDir, saveFile, saveFileToDir, type SaveOptions } from './lib/saveFile'
@@ -1252,8 +1252,9 @@ function genId(): string {
 }
 
 function getPersistableTask(task: TaskRecord): TaskRecord {
-  const rawResponsePayload = getPersistableRawResponsePayload(task.rawResponsePayload)
-  return rawResponsePayload === task.rawResponsePayload ? task : { ...task, rawResponsePayload }
+  const normalized = normalizeTaskActualParams(task)
+  const rawResponsePayload = getPersistableRawResponsePayload(normalized.rawResponsePayload)
+  return rawResponsePayload === normalized.rawResponsePayload ? normalized : { ...normalized, rawResponsePayload }
 }
 
 function putTask(task: TaskRecord): Promise<IDBValidKey> {
@@ -1517,64 +1518,13 @@ function scheduleCustomRecovery(taskId: string, delayMs = CUSTOM_RECOVERY_POLL_M
   customRecoveryTimers.set(taskId, timer)
 }
 
-async function readImageSizeParam(dataUrl: string): Promise<Partial<TaskParams> | undefined> {
-  if (typeof Image === 'undefined') return undefined
-
-  return new Promise((resolve) => {
-    let settled = false
-    const image = new Image()
-    const finish = (params: Partial<TaskParams> | undefined) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      resolve(params)
-    }
-    const timer = setTimeout(() => finish(undefined), 2000)
-    image.onload = () => {
-      if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-        finish({ size: `${image.naturalWidth}x${image.naturalHeight}` })
-      } else {
-        finish(undefined)
-      }
-    }
-    image.onerror = () => finish(undefined)
-    image.src = dataUrl
-    if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
-      finish({ size: `${image.naturalWidth}x${image.naturalHeight}` })
-    }
-  })
-}
-
-async function readImageSizeParamsList(images: string[]): Promise<Array<Partial<TaskParams> | undefined>> {
-  return Promise.all(images.map((image) => readImageSizeParam(image)))
-}
-
-async function resolveImageSizeParamsList(
-  images: string[],
-  preferred?: Array<Partial<TaskParams> | undefined>,
-  sizes?: Array<{ width?: number; height?: number } | undefined>,
-): Promise<Array<Partial<TaskParams> | undefined>> {
-  const withStoredSizes = images.map((_, index) => addImageSizeParam(preferred?.[index], sizes?.[index]))
-  if (withStoredSizes.every(hasActualSizeParam)) {
-    return withStoredSizes
-  }
-  const fallback = await readImageSizeParamsList(images)
-  return images.map((_, index) => {
-    const params = withStoredSizes[index]
-    const fallbackParams = fallback[index]
-    if (hasActualSizeParam(params)) return params
-    if (fallbackParams?.size) return { ...(params ?? {}), size: fallbackParams.size }
-    return hasActualParams(params) ? params : fallbackParams
-  })
-}
-
 async function completeRecoveredFalTask(task: TaskRecord, result: Awaited<ReturnType<typeof getFalQueuedImageResult>>) {
   const latest = useStore.getState().tasks.find((item) => item.id === task.id)
   if (!latest || latest.status === 'done' || latest.error === AGENT_STOPPED_MESSAGE) return
   if (latest.status !== 'running' && !latest.falRecoverable) return
 
-  const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
-  const actualParamsList = await resolveImageSizeParamsList(outputDataUrls, result.actualParamsList, outputImageSizes)
+  const { outputIds, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
+  const actualParamsList = result.actualParamsList
   const latestBeforeUpdate = useStore.getState().tasks.find((item) => item.id === task.id)
   if (!latestBeforeUpdate || latestBeforeUpdate.status === 'done' || latestBeforeUpdate.error === AGENT_STOPPED_MESSAGE || (latestBeforeUpdate.status !== 'running' && !latestBeforeUpdate.falRecoverable)) {
     await deleteUnreferencedImageIds([...outputIds, ...(transparentOriginalImageIds ?? [])])
@@ -1683,7 +1633,7 @@ export async function initStore() {
     useStore.getState().setDefaultFavoriteCollectionId(normalizedFavorites.defaultFavoriteCollectionId)
   }
   await Promise.all(tasks
-    .filter((task, index) => normalizedFavorites.changed || interruptedTaskIds.has(task.id) || task.rawResponsePayload !== markedTasks[index]?.rawResponsePayload)
+    .filter((task, index) => normalizedFavorites.changed || interruptedTaskIds.has(task.id) || task.rawResponsePayload !== markedTasks[index]?.rawResponsePayload || task.actualParams !== markedTasks[index]?.actualParams || task.actualParamsByImage !== markedTasks[index]?.actualParamsByImage)
     .map((task) => putTask(task)))
   useStore.getState().setTasks(tasks)
   showSupportPromptForExistingLocalData(tasks)
@@ -2357,8 +2307,6 @@ function addTaskReferencedImageIds(target: Set<string>, task: TaskRecord) {
 
 async function storeTaskOutputImages(task: TaskRecord, images: string[]) {
   const outputIds: string[] = []
-  const outputDataUrls: string[] = []
-  const outputImageSizes: Array<{ width?: number; height?: number }> = []
   const transparentOriginalImageIds: string[] = []
   const storedImageIds: string[] = []
 
@@ -2378,8 +2326,6 @@ async function storeTaskOutputImages(task: TaskRecord, images: string[]) {
         } catch (err) {
           console.warn('透明背景后处理失败，已回退为原始输出', err)
           outputIds.push(original.id)
-          outputDataUrls.push(dataUrl)
-          outputImageSizes.push(original)
           transparentOriginalImageIds.push('')
           continue
         }
@@ -2389,14 +2335,10 @@ async function storeTaskOutputImages(task: TaskRecord, images: string[]) {
       storedImageIds.push(stored.id)
       cacheImage(stored.id, outputDataUrl)
       outputIds.push(stored.id)
-      outputDataUrls.push(outputDataUrl)
-      outputImageSizes.push(stored)
     }
 
     return {
       outputIds,
-      outputDataUrls,
-      outputImageSizes,
       transparentOriginalImageIds: transparentOriginalImageIds.length ? transparentOriginalImageIds : undefined,
     }
   } catch (err) {
@@ -3065,7 +3007,7 @@ async function executeAgentRound(
         await deleteUnreferencedImageIds([stored.id])
         return { taskId, committed: false }
       }
-      const actualParams = deriveAgentImageActualParams(image.actualParams, stored)
+      const actualParams = deriveAgentImageActualParams(image.actualParams)
       updateTaskInStore(taskId, {
         prompt: image.revisedPrompt ?? latestBeforeUpdate.prompt,
         outputImages: [stored.id],
@@ -3613,7 +3555,7 @@ async function executeAgentRound(
         const promptRefs = await resolveReferenceImages(promptRefIds)
         const stored = await storeImageWithSize(image.dataUrl, 'generated')
         cacheImage(stored.id, image.dataUrl)
-        const actualParams = deriveAgentImageActualParams(image.actualParams, stored)
+        const actualParams = deriveAgentImageActualParams(image.actualParams)
         const task: TaskRecord = {
           id: genId(),
           prompt: image.revisedPrompt ?? round?.prompt ?? userMessage.content,
@@ -4010,13 +3952,9 @@ async function executeTask(taskId: string) {
     }
 
     // 存储输出图片
-    const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
+    const { outputIds, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
     const isAsyncCustomTask = taskProvider !== 'fal' && taskProvider !== 'openai' && Boolean(customTaskInfo)
-    const actualParamsList = await resolveImageSizeParamsList(
-      outputDataUrls,
-      isAsyncCustomTask ? undefined : result.actualParamsList,
-      outputImageSizes,
-    )
+    const actualParamsList = isAsyncCustomTask ? undefined : result.actualParamsList
     const actualParams = deriveGalleryActualParams(taskProvider, isAsyncCustomTask, result.actualParams, actualParamsList, outputIds.length)
     const shouldStoreRevisedPrompts = taskProvider !== 'fal' && !isAsyncCustomTask
     const actualParamsByImage = mapActualParamsByImage(outputIds, actualParamsList)
@@ -4735,8 +4673,7 @@ async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<Ret
   if (!latest || latest.status === 'done' || latest.error === AGENT_STOPPED_MESSAGE) return
   if (latest.status !== 'running' && !latest.customRecoverable) return
 
-  const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
-  const actualParamsList = await resolveImageSizeParamsList(outputDataUrls, undefined, outputImageSizes)
+  const { outputIds, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
   const latestBeforeUpdate = useStore.getState().tasks.find((item) => item.id === task.id)
   if (!latestBeforeUpdate || latestBeforeUpdate.status === 'done' || latestBeforeUpdate.error === AGENT_STOPPED_MESSAGE || (latestBeforeUpdate.status !== 'running' && !latestBeforeUpdate.customRecoverable)) {
     await deleteUnreferencedImageIds([...outputIds, ...(transparentOriginalImageIds ?? [])])
@@ -4746,8 +4683,8 @@ async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<Ret
   updateTaskInStore(task.id, {
     outputImages: outputIds,
     transparentOriginalImages: transparentOriginalImageIds,
-    actualParams: firstActualParams(actualParamsList),
-    actualParamsByImage: mapActualParamsByImage(outputIds, actualParamsList),
+    actualParams: undefined,
+    actualParamsByImage: undefined,
     revisedPromptByImage: undefined,
     ...createTaskDonePatch(task, Date.now()),
     customRecoverable: false,

@@ -70,5 +70,14 @@ describe('getActualRatioAndResolution', () => {
   it('returns nothing without a measurable size', () => {
     expect(getActualRatioAndResolution(undefined, { resolution: '1K' })).toEqual({})
     expect(getActualRatioAndResolution('2k', { resolution: '1K' })).toEqual({})
+    expect(getActualRatioAndResolution('0x1024', {})).toEqual({})
+    expect(getActualRatioAndResolution('9999999999999999999999x1024', {})).toEqual({})
+  })
+
+  it('同一像素尺寸的档位不随请求档位改变', () => {
+    for (const resolution of ['1K', '1.5K', '2K', '4K']) {
+      expect(getActualRatioAndResolution('1770x1770', { resolution }).resolution).toBe('1.5K')
+      expect(getActualRatioAndResolution('2496x1664', { resolution }).resolution).toBe('2K')
+    }
   })
 })
