@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { GIF_FRAME_COUNT_RANGE, GIF_FRAME_DURATION_RANGE, IMAGE_COMPLEXITIES, type ApiProfile, type AppSettings, type BatchProgress, type BatchPromptMode, type ParamDisabledReasons, type TaskParams } from '../../types'
+import { GIF_FRAME_COUNT_RANGE, GIF_FRAME_DURATION_RANGE, IMAGE_COMPLEXITIES, type ApiProfile, type AppSettings, type BatchProgress, type BatchPromptMode, type CustomProviderImageSize, type ImageParameterControl, type ParamDisabledReasons, type TaskParams } from '../../types'
 import { DEFAULT_BATCH_PROMPT_CONCURRENCY, normalizeBatchPromptConcurrency } from '../../lib/batchPrompts'
 import { isTauri } from '../../lib/platform'
-import { getImageModelFamily, supportsGrokQuality } from '../../lib/imageModels'
+import { getImageModelFamily } from '../../lib/imageModels'
 import { getImageModelOptions, getImageModelParams } from '../../lib/imageModelParams'
 import { getImageSearchSupport, getImageThinkingSupport } from '../../lib/imageSearch'
 import type { ApiProfileModelGroup } from '../../lib/apiProfiles'
@@ -172,6 +172,7 @@ export default function InputParamsPanel({
   params,
   setParams,
   activeProfile,
+  imageSize,
   searchSupport,
   thinkingSupport,
   modelGroups,
@@ -182,6 +183,7 @@ export default function InputParamsPanel({
   isFalProvider,
   displaySize,
   qualityOptions,
+  parameterControls,
   selectClass,
   transparentOutputAvailable,
   showTransparentOutputControl,
@@ -229,6 +231,7 @@ export default function InputParamsPanel({
   params: TaskParams
   setParams: (patch: Partial<TaskParams>) => void
   activeProfile: ApiProfile
+  imageSize?: CustomProviderImageSize
   searchSupport: ReturnType<typeof getImageSearchSupport>
   thinkingSupport: ReturnType<typeof getImageThinkingSupport>
   modelGroups: ApiProfileModelGroup[]
@@ -239,6 +242,7 @@ export default function InputParamsPanel({
   isFalProvider: boolean
   displaySize: string
   qualityOptions: SelectOption[]
+  parameterControls: Record<keyof TaskParams, ImageParameterControl>
   selectClass: string
   transparentOutputAvailable: boolean
   showTransparentOutputControl: boolean
@@ -285,11 +289,12 @@ export default function InputParamsPanel({
 }) {
   // 折叠时也展示弹层内每一项的当前值，不支持的参数不显示
   const family = getImageModelFamily(activeProfile)
-  const modelOptionsForImage = getImageModelOptions(activeProfile)
-  const modelParams = getImageModelParams(activeProfile, params)
+  const sizeFamily = imageSize ? imageSize.mode === 'pixels' ? null : 'custom' : family
+  const modelOptionsForImage = getImageModelOptions(activeProfile, imageSize)
+  const modelParams = getImageModelParams(activeProfile, params, imageSize)
   const resolutionHint = useHintTooltip({ enabled: () => !modelOptionsForImage.resolutions.length })
   const thinkingHint = useHintTooltip({ enabled: () => Boolean(thinkingSupport.reason) })
-  const qualityDisabled = family === 'grok' && !supportsGrokQuality(activeProfile.model)
+  const qualityDisabled = Boolean(parameterControls.quality.disabledReason)
   const thinkingValue = thinkingSupport.levels.includes(params.thinking_level ?? '') ? params.thinking_level! : 'auto'
   const isGif = params.output_format === 'gif'
   const moreSummary = (
@@ -328,13 +333,13 @@ export default function InputParamsPanel({
           onOpenSettings={onOpenSettings}
         />
       </div>
-      {family && family !== 'seedream' && (
+      {sizeFamily && sizeFamily !== 'seedream' && (
         <>
           <div className="max-sm:flex-auto sm:shrink-0">
             <Select
               value={modelParams.aspect_ratio}
               onChange={(value) => setParams({ aspect_ratio: String(value) })}
-              options={modelOptionsForImage.ratios.map((value) => ({ label: value, value }))}
+              options={parameterControls.aspect_ratio.options ?? []}
               prefix={prefix('比例')}
               menuClassName="min-w-max"
               className={CHIP_CLASS}
@@ -352,11 +357,7 @@ export default function InputParamsPanel({
             <Select
               value={modelParams.resolution ?? 'auto'}
               onChange={(value) => setParams({ resolution: String(value) })}
-              options={(family === 'grok' ? isFalProvider ? ['1K', '1.5K', '2K'] : ['1K', '2K'] : ['512', '1K', '2K', '4K']).map((value) => ({
-                label: value,
-                value,
-                disabledReason: modelOptionsForImage.resolutions.includes(value) ? undefined : '当前模型不支持此分辨率',
-              }))}
+              options={parameterControls.resolution.options ?? []}
               disabled={!modelOptionsForImage.resolutions.length}
               prefix={prefix('分辨率')}
               menuClassName="min-w-max"
@@ -364,82 +365,80 @@ export default function InputParamsPanel({
             />
             <ButtonTooltip visible={!modelOptionsForImage.resolutions.length && resolutionHint.visible} text="当前模型不支持分辨率参数" />
           </div>
-          {family === 'grok' && (
-            <div
-              className="relative max-sm:flex-auto sm:shrink-0"
-              onMouseEnter={qualityHint.show}
-              onMouseLeave={qualityHint.hide}
-              onTouchStart={qualityHint.startTouch}
-              onTouchEnd={qualityHint.clearTimer}
-              onTouchCancel={qualityHint.hide}
-              onClick={qualityHint.show}
-            >
-              <Select
-                value={modelParams.quality ?? 'auto'}
-                onChange={(value) => setParams({ quality: value as TaskParams['quality'] })}
-                options={['auto', 'low', 'medium'].map((value) => ({ label: value, value }))}
-                disabled={qualityDisabled}
-                prefix={prefix('质量')}
-                menuClassName="min-w-max"
-                className={qualityDisabled ? CHIP_DISABLED_CLASS : CHIP_CLASS}
-              />
-              <ButtonTooltip visible={qualityDisabled && qualityHint.visible} text="当前模型不支持质量参数" />
-            </div>
-          )}
         </>
       )}
-      {(!family || family === 'seedream') && (
-        <>
-          <div
-            className="relative max-sm:flex-auto sm:shrink-0"
-            onMouseEnter={sizeHint.show}
-            onMouseLeave={sizeHint.hide}
-            onTouchStart={sizeHint.startTouch}
-            onTouchEnd={sizeHint.clearTimer}
-            onTouchCancel={sizeHint.hide}
-            onClick={sizeHint.show}
+      {family === 'grok' && (
+        <div
+          className="relative max-sm:flex-auto sm:shrink-0"
+          onMouseEnter={qualityHint.show}
+          onMouseLeave={qualityHint.hide}
+          onTouchStart={qualityHint.startTouch}
+          onTouchEnd={qualityHint.clearTimer}
+          onTouchCancel={qualityHint.hide}
+          onClick={qualityHint.show}
+        >
+          <Select
+            value={modelParams.quality ?? 'auto'}
+            onChange={(value) => setParams({ quality: value as TaskParams['quality'] })}
+            options={qualityOptions}
+            disabled={qualityDisabled}
+            prefix={prefix('质量')}
+            menuClassName="min-w-max"
+            className={qualityDisabled ? CHIP_DISABLED_CLASS : CHIP_CLASS}
+          />
+          <ButtonTooltip visible={qualityDisabled && qualityHint.visible} text="当前模型不支持质量参数" />
+        </div>
+      )}
+      {(!sizeFamily || sizeFamily === 'seedream') && (
+        <div
+          className="relative max-sm:flex-auto sm:shrink-0"
+          onMouseEnter={sizeHint.show}
+          onMouseLeave={sizeHint.hide}
+          onTouchStart={sizeHint.startTouch}
+          onTouchEnd={sizeHint.clearTimer}
+          onTouchCancel={sizeHint.hide}
+          onClick={sizeHint.show}
+        >
+          <button
+            type="button"
+            onClick={() => { dismissAllTooltips(); onOpenSizePicker() }}
+            className={`flex w-full items-center ${CHIP_CLASS}`}
           >
-            <button
-              type="button"
-              onClick={() => { dismissAllTooltips(); onOpenSizePicker() }}
-              className={`flex w-full items-center ${CHIP_CLASS}`}
-            >
-              {prefix('尺寸')}
-              <span className="font-mono">{displaySize}</span>
-            </button>
-            <ButtonTooltip
-              visible={(Boolean(disabledReasons.autoSize) || activeProfile.codexCli) && sizeHint.visible}
-              text={disabledReasons.autoSize ?? 'Codex CLI 不支持尺寸参数，此处设置仅基于提示词工程'}
-            />
-          </div>
-          {!family && (
-            <div
-              className="relative max-sm:flex-auto sm:shrink-0"
-              onMouseEnter={qualityHint.show}
-              onMouseLeave={qualityHint.hide}
-              onTouchStart={qualityHint.startTouch}
-              onTouchEnd={qualityHint.clearTimer}
-              onTouchCancel={qualityHint.hide}
-              onClick={qualityHint.show}
-            >
-              <Select
-                value={activeProfile.codexCli ? 'auto' : isFalProvider && params.quality === 'auto' ? 'high' : params.quality}
-                onChange={(val) => {
-                  if (!activeProfile.codexCli) setParams({ quality: val as TaskParams['quality'] })
-                }}
-                options={qualityOptions}
-                disabled={activeProfile.codexCli}
-                prefix={prefix('质量')}
-                menuClassName="min-w-max"
-                className={activeProfile.codexCli ? CHIP_DISABLED_CLASS : CHIP_CLASS}
-              />
-              <ButtonTooltip
-                visible={activeProfile.codexCli && qualityHint.visible}
-                text="Codex CLI 不支持质量参数"
-              />
-            </div>
-          )}
-        </>
+            {prefix('尺寸')}
+            <span className="font-mono">{displaySize}</span>
+          </button>
+          <ButtonTooltip
+            visible={(Boolean(disabledReasons.autoSize) || activeProfile.codexCli) && sizeHint.visible}
+            text={disabledReasons.autoSize ?? 'Codex CLI 不支持尺寸参数，此处设置仅基于提示词工程'}
+          />
+        </div>
+      )}
+      {!family && (
+        <div
+          className="relative max-sm:flex-auto sm:shrink-0"
+          onMouseEnter={qualityHint.show}
+          onMouseLeave={qualityHint.hide}
+          onTouchStart={qualityHint.startTouch}
+          onTouchEnd={qualityHint.clearTimer}
+          onTouchCancel={qualityHint.hide}
+          onClick={qualityHint.show}
+        >
+          <Select
+            value={activeProfile.codexCli ? 'auto' : isFalProvider && params.quality === 'auto' ? 'high' : params.quality}
+            onChange={(val) => {
+              if (!activeProfile.codexCli) setParams({ quality: val as TaskParams['quality'] })
+            }}
+            options={qualityOptions}
+            disabled={activeProfile.codexCli}
+            prefix={prefix('质量')}
+            menuClassName="min-w-max"
+            className={activeProfile.codexCli ? CHIP_DISABLED_CLASS : CHIP_CLASS}
+          />
+          <ButtonTooltip
+            visible={activeProfile.codexCli && qualityHint.visible}
+            text="Codex CLI 不支持质量参数"
+          />
+        </div>
       )}
       <label
         className={`relative flex items-center max-sm:flex-auto sm:shrink-0 ${agentAutoImageCount ? CHIP_DISABLED_CLASS : `${CHIP_CLASS} cursor-text`}`}
@@ -493,7 +492,7 @@ export default function InputParamsPanel({
                 const format = val as TaskParams['output_format']
                 setParams({ output_format: format, ...(format === 'jpeg' ? { transparent_output: false, background: params.background === 'transparent' ? 'opaque' as const : params.background } : {}) })
               }}
-              options={[{ label: 'PNG', value: 'png' }, { label: 'JPEG', value: 'jpeg' }]}
+              options={parameterControls.output_format.options ?? []}
               prefix={prefix('格式')}
               className={CHIP_CLASS}
             />
@@ -503,9 +502,7 @@ export default function InputParamsPanel({
               <Select
                 value={params.background ?? 'auto'}
                 onChange={(val) => setParams({ background: val as TaskParams['background'], transparent_output: val === 'transparent' })}
-                options={(['auto', 'transparent', 'opaque'] as const)
-                  .filter((value) => params.output_format !== 'jpeg' || value !== 'transparent')
-                  .map((value) => ({ label: value === 'auto' ? '自动' : value === 'transparent' ? '透明' : '不透明', value }))}
+                options={parameterControls.background.options ?? []}
                 prefix={prefix('背景')}
                 className={CHIP_CLASS}
                 onOpenChange={onTransparentOutputMenuOpenChange}
@@ -567,11 +564,7 @@ export default function InputParamsPanel({
                   <Select
                     value={thinkingValue}
                     onChange={(value) => setParams({ thinking_level: value as TaskParams['thinking_level'] })}
-                    options={['auto', 'minimal', 'low', 'medium', 'high'].map((value) => ({
-                      label: value,
-                      value,
-                      disabledReason: value === 'auto' || thinkingSupport.levels.includes(value) ? undefined : '当前模型不支持此思考等级',
-                    }))}
+                    options={parameterControls.thinking_level.options ?? []}
                     disabled={Boolean(thinkingSupport.reason)}
                     className={thinkingSupport.reason ? CONTROL_DISABLED_CLASS : selectClass}
                   />
@@ -663,13 +656,7 @@ export default function InputParamsPanel({
                         ...(val === 'jpeg' ? { transparent_output: false } : {}),
                       })
                     }}
-                    options={[
-                      { label: 'PNG', value: 'png' },
-                      { label: 'JPEG', value: 'jpeg' },
-                      { label: 'WebP', value: 'webp' },
-                      { label: 'SVG', value: 'svg', disabledReason: disabledReasons.svg },
-                      { label: 'GIF', value: 'gif', disabledReason: disabledReasons.gif },
-                    ]}
+                    options={parameterControls.output_format.options ?? []}
                     className={selectClass}
                   />
                 </div>

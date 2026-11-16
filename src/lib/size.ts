@@ -10,6 +10,21 @@ const MAX_PIXELS = 8_294_400
 const MAX_1K_PIXELS = 1_572_864
 
 export type SizeTier = '1K' | '2K' | '4K'
+export const SIZE_TIERS: SizeTier[] = ['1K', '2K', '4K']
+export const SIZE_LIMIT_TEXT = '由于模型限制，不符合要求的分辨率会被自动规整：\n宽高均为 16 的倍数，最大边长 3840px，宽高比不超过 3:1，总像素限制为 655360-8294400。'
+export const CODEX_CLI_SIZE_LIMIT_TEXT = '由于模型和 Codex CLI 限制，不符合要求的分辨率会被自动规整：\n宽高均为 16 的倍数，宽高比不超过 3:1，分辨率不超过 1K。'
+export const SEEDREAM_SIZE_LIMIT_TEXT = '由于模型限制，不符合要求的分辨率会被自动规整：\n宽高比不超过 16:1，总像素限制为 921600-4624220。'
+export const SIZE_RATIOS = [
+  { label: '1:1', value: '1:1' },
+  { label: '3:2', value: '3:2' },
+  { label: '2:3', value: '2:3' },
+  { label: '16:9', value: '16:9' },
+  { label: '9:16', value: '9:16' },
+  { label: '4:3', value: '4:3' },
+  { label: '3:4', value: '3:4' },
+  { label: '21:9', value: '21:9' },
+]
+
 /** Seedream 5.5 的分辨率档位，每档对应基准边长 1K=1024、1.5K=1536、2K=2048 */
 export const SEEDREAM_RESOLUTIONS = ['1K', '1.5K', '2K'] as const
 type PresetRatio = '1:1' | '3:2' | '2:3' | '16:9' | '9:16' | '4:3' | '3:4' | '21:9'

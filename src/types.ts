@@ -44,6 +44,7 @@ export interface CustomProviderSubmitMapping {
   contentType?: CustomProviderContentType
   query?: Record<string, string>
   body?: Record<string, unknown>
+  omitValues?: Record<string, Array<string | number | boolean>>
   files?: CustomProviderFileMapping[]
   taskIdPath?: string
   result?: CustomProviderResultMapping
@@ -61,16 +62,24 @@ export interface CustomProviderPollMapping {
   result: CustomProviderResultMapping
 }
 
+export type CustomProviderImageSize = { mode: 'pixels' } | {
+  mode: 'aspect-ratio'
+  ratios: string[]
+  resolutions: string[]
+}
+
 export interface CustomProviderDefinition {
   id: string
   name: string
   template?: CustomProviderTemplate
+  imageSize?: CustomProviderImageSize
   submit: CustomProviderSubmitMapping
   editSubmit?: CustomProviderSubmitMapping
   poll?: CustomProviderPollMapping
   /** 按顺序匹配模型 ID，支持 * 通配符；匹配后使用整套接口映射 */
   modelOverrides?: Array<{
     models: string[]
+    imageSize?: CustomProviderImageSize
     submit: CustomProviderSubmitMapping
     editSubmit?: CustomProviderSubmitMapping
     poll?: CustomProviderPollMapping
@@ -247,6 +256,17 @@ export interface TaskParams {
   /** 仅 GIF 输出 */
   frame_count: number
   frame_duration_ms: number
+}
+
+export interface ImageParameterControl {
+  type: 'string' | 'enum' | 'boolean' | 'integer'
+  visible: boolean
+  disabledReason?: string
+  options?: Array<{ label: string; value: string; disabledReason?: string }>
+  min?: number
+  max?: number
+  nullable?: boolean
+  hint?: string
 }
 
 export const DEFAULT_PARAMS: TaskParams = {

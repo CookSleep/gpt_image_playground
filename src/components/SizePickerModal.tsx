@@ -1,23 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { calculateImageSize, getSeedreamRatioSize, normalizeCodexCliImageSize, normalizeImageSize, normalizeSeedreamImageSize, parseRatio, SEEDREAM_RESOLUTIONS, type SizeTier } from '../lib/size'
+import { SIZE_TIERS as TIERS, SIZE_RATIOS as RATIOS, SIZE_LIMIT_TEXT, CODEX_CLI_SIZE_LIMIT_TEXT, SEEDREAM_SIZE_LIMIT_TEXT, calculateImageSize, getSeedreamRatioSize, normalizeCodexCliImageSize, normalizeImageSize, normalizeSeedreamImageSize, parseRatio, SEEDREAM_RESOLUTIONS, type SizeTier } from '../lib/size'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import ViewportTooltip from './ViewportTooltip'
 
-const TIERS: SizeTier[] = ['1K', '2K', '4K']
-const SIZE_LIMIT_TEXT = '由于模型限制，不符合要求的分辨率会被自动规整：\n宽高均为 16 的倍数，最大边长 3840px，宽高比不超过 3:1，总像素限制为 655360-8294400。'
-const CODEX_CLI_SIZE_LIMIT_TEXT = '由于模型和 Codex CLI 限制，不符合要求的分辨率会被自动规整：\n宽高均为 16 的倍数，宽高比不超过 3:1，分辨率不超过 1K。'
-const SEEDREAM_SIZE_LIMIT_TEXT = '由于模型限制，不符合要求的分辨率会被自动规整：\n宽高比不超过 16:1，总像素限制为 921600-4624220。'
 const CLAMPED_SIZE_TEXT = '由于模型限制，原始分辨率已被自动规整'
-const RATIOS = [
-  { label: '1:1', value: '1:1' },
-  { label: '3:2', value: '3:2' },
-  { label: '2:3', value: '2:3' },
-  { label: '16:9', value: '16:9' },
-  { label: '9:16', value: '9:16' },
-  { label: '4:3', value: '4:3' },
-  { label: '3:4', value: '3:4' },
-  { label: '21:9', value: '21:9' },
-]
 
 interface Props {
   currentSize: string

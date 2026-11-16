@@ -4,6 +4,7 @@ import { customProviderSupportsNativeTransparentBackground } from './customProvi
 import { getImageModelFamily, isGptImage26PlusModel, isVectorOrAnimatedFormat, supportsExtendedQuality, supportsGptImage26Params } from './imageModels'
 import { getImageModelParams, getSeedreamSize } from './imageModelParams'
 import { getImageSearchSupport, getImageThinkingSupport } from './imageSearch'
+import { resolveCustomProviderModel } from './imageProviderMappings'
 import { normalizeCodexCliImageSize, normalizeImageSize } from './size'
 
 export const DEFAULT_FAL_IMAGE_SIZE = '1360x1024'
@@ -36,6 +37,12 @@ export function normalizeParamsForSettings(
   options: { hasInputImages?: boolean; agent?: boolean } = {},
 ): TaskParams {
   const activeProfile = getActiveApiProfile(settings)
+  const provider = getCustomProviderDefinition(settings, activeProfile.provider)
+  const imageSize = provider ? resolveCustomProviderModel(provider, activeProfile.model).imageSize : undefined
+  const customModelParams = imageSize?.mode === 'aspect-ratio' ? getImageModelParams(activeProfile, params, imageSize) : undefined
+  const customSizeParams = customModelParams
+    ? { aspect_ratio: customModelParams.aspect_ratio, resolution: customModelParams.resolution, size: 'auto' }
+    : imageSize?.mode === 'pixels' ? { size: normalizeImageSize(params.size) || DEFAULT_PARAMS.size, aspect_ratio: undefined, resolution: undefined } : {}
   const outputImageLimit = getOutputImageLimitForSettings(settings)
   const nextParams: TaskParams = {
     ...params,
@@ -63,6 +70,7 @@ export function normalizeParamsForSettings(
         background, transparent_output: background === 'transparent',
         output_format: params.output_format === 'jpeg' && background !== 'transparent' ? 'jpeg' : 'png',
         output_compression: null, moderation: 'auto', complexity: 'auto',
+        ...customSizeParams,
       }
     }
     return {
@@ -71,6 +79,7 @@ export function normalizeParamsForSettings(
       image_search: search.imageSearch ? undefined : params.image_search,
       thinking_level: thinking.levels.includes(params.thinking_level ?? '') ? params.thinking_level : undefined,
       size: 'auto', quality: modelParams.quality ?? 'auto', output_format: 'png', output_compression: null, moderation: 'auto', complexity: 'auto',
+      ...customSizeParams,
     }
   }
 
@@ -99,7 +108,7 @@ export function normalizeParamsForSettings(
     nextParams.output_compression = DEFAULT_PARAMS.output_compression
   }
 
-  return nextParams
+  return { ...nextParams, ...customSizeParams }
 }
 
 /** 参数面板中不可选的项及原因；normalizeParamsForSettings 按同一结果清洗参数 */

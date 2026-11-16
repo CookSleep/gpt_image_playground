@@ -15,12 +15,16 @@ use serde_json::{json, Map, Value};
 
 const USAGE: &str = "用法：
   gpt-image-playground generate <提示词> [--prompt <提示词>]… [--image <图片>]… [--size <尺寸>]
+                                [--aspect-ratio <比例>] [--resolution <档位>]
                                 [--quality <质量>] [--complexity auto|low|medium|high] [-n <数量>]
                                 [--format png|jpeg|webp|svg|gif] [--frames <2-16>] [--frame-duration <20-2000>]
                                 [--compression <0-100>] [--moderation auto|low] [--transparent] [--output <目录>] [--json]
   gpt-image-playground history [<任务 ID>…] [--limit <数量>] [--offset <数量>] [--json]
   gpt-image-playground image <图片 ID 或任务 ID> [--output <目录>] [--json]
+  gpt-image-playground result delete <任务 ID> <结果序号> [--json]
   gpt-image-playground settings [--json]                  设置、生图参数、API 配置、自定义服务商与代理
+  gpt-image-playground parameters [--profile <配置 ID>] [--model <模型 ID>] [--all]
+                                  [--format <格式>] [--with-images] [--json]
   gpt-image-playground settings set <键> <值> [--json]
   gpt-image-playground profile use <配置 ID> [--json]      切换启用的 API 配置
   gpt-image-playground profile save <JSON> [--id <配置 ID>] [--activate | --no-activate] [--json]
@@ -32,6 +36,10 @@ const USAGE: &str = "用法：
   generate 用应用启用的 API 配置生图，提交后先输出任务 ID，全部任务结束后输出图片文件的路径；给出的参数会保存为应用的参数。
   多个 --prompt 按应用的批量提交方式一起提交。--image 为参考图：本机图片路径或历史记录中的图片 ID，可重复，数量上限按应用当前启用的模型确定；超限时返回错误，不创建任务。
   质量：auto、low、medium、high、xhigh、max。--output 把结果图片另外复制到该目录。history 给出任务 ID 时只列出这些任务。
+  --aspect-ratio、--resolution 的取值以当前配置为准，不与 --size 同时使用。history 的 outputs 列出真实尺寸和从 1 开始的结果序号。
+  result delete 删除一项图片或失败记录，最后一项不能单独删除；删除后请重新查看序号。
+  parameters 查询与参数面板一致的当前值、选项和禁用原因；默认查询当前配置，--all 列出全部配置和模型。
+  可用参数会随参考图和输出格式变化；parameters 加 --with-images 查询参考图编辑，加 --format 查询指定格式下的选项。
   settings set 的键：设置项名，params.<参数名>，proxy.mode、proxy.url；值按 JSON 解析，不是 JSON 时当作字符串。
   <JSON> 为 API 配置或服务商的字段，写 - 时从标准输入读取。profile save 不带 --id 时新建，新建的配置默认启用。
   --json 输出 JSON（非 ASCII 字符转义为 \\uXXXX）。
@@ -97,7 +105,7 @@ pub fn parse(
     let mut words = Vec::new();
     let mut opts: Vec<(String, Option<OsString>)> = Vec::new();
     let mut json = false;
-    const FLAGS: [&str; 3] = ["--transparent", "--activate", "--no-activate"];
+    const FLAGS: [&str; 5] = ["--transparent", "--activate", "--no-activate", "--all", "--with-images"];
     while let Some(arg) = args.next() {
         let flag = arg.to_string_lossy().into_owned();
         if flag == "--json" {
@@ -113,10 +121,24 @@ pub fn parse(
     }
     let allowed: &[&str] = match (cmd.as_str(), words.first().map(String::as_str)) {
         ("generate", _) => &[
-            "--prompt", "--image", "--size", "--quality", "--complexity", "-n", "--format", "--frames", "--frame-duration", "--compression",
-            "--moderation", "--transparent", "--output",
+            "--prompt",
+            "--image",
+            "--size",
+            "--aspect-ratio",
+            "--resolution",
+            "--quality",
+            "--complexity",
+            "-n",
+            "--format",
+            "--frames",
+            "--frame-duration",
+            "--compression",
+            "--moderation",
+            "--transparent",
+            "--output",
         ],
         ("history", _) => &["--limit", "--offset"],
+        ("parameters", _) => &["--profile", "--model", "--all", "--format", "--with-images"],
         ("image", _) => &["--output"],
         ("profile", Some("save")) => &["--id", "--activate", "--no-activate"],
         ("provider", Some("save")) => &["--id"],
@@ -141,6 +163,8 @@ pub fn parse(
             match flag.as_str() {
                 "--transparent" => a.insert("transparent_output".into(), true.into()),
                 "--activate" => a.insert("activate".into(), true.into()),
+                "--all" => a.insert("all".into(), true.into()),
+                "--with-images" => a.insert("has_input_images".into(), true.into()),
                 _ => a.insert("activate".into(), false.into()),
             };
             continue;
@@ -160,7 +184,11 @@ pub fn parse(
                 continue;
             }
             "--size" => ("size", value.into()),
+            "--aspect-ratio" => ("aspect_ratio", value.into()),
+            "--resolution" => ("resolution", value.into()),
             "--quality" => ("quality", value.into()),
+            "--profile" => ("profile_id", value.into()),
+            "--model" => ("model", value.into()),
             "--complexity" => ("complexity", value.into()),
             "--frames" => ("frame_count", int(&flag, &value, 2, 16)?.into()),
             "--frame-duration" => ("frame_duration_ms", int(&flag, &value, 20, 2000)?.into()),
@@ -189,6 +217,12 @@ pub fn parse(
             }
             "generate_image"
         }
+        "parameters" => {
+            if a.contains_key("all") && (a.contains_key("profile_id") || a.contains_key("model")) {
+                return Err("--all 不与 --profile、--model 同时使用".into());
+            }
+            "get_parameters"
+        }
         "history" => {
             let ids: Vec<String> = words.by_ref().collect();
             if !ids.is_empty() {
@@ -200,6 +234,16 @@ pub fn parse(
             let id = need(&mut words, "图片 ID 或任务 ID")?;
             a.insert(if is_image_id(&id) { "image_id" } else { "task_id" }.into(), id.into());
             "get_image"
+        }
+        "result" => {
+            let action = need(&mut words, "操作（delete）")?;
+            if action != "delete" {
+                return Err(format!("无法识别的操作：result {action}"));
+            }
+            a.insert("task_id".into(), need(&mut words, "任务 ID")?.into());
+            let index = need(&mut words, "结果序号")?;
+            a.insert("index".into(), int("结果序号", &index, 1, i32::MAX as i64)?.into());
+            "delete_task_result"
         }
         "settings" => match words.next().as_deref() {
             None => "get_settings",

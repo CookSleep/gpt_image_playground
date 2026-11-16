@@ -5,15 +5,16 @@ import { DEFAULT_PARAMS, type TaskRecord } from '../types'
 import { getInputImageLimit, getInputImageProfile } from '../lib/inputImageLimits'
 import { getActiveAgentRounds } from '../lib/agentConversationState'
 import { createSettingsForApiProfile, getCustomProviderDefinition, getActiveApiProfile, getAgentImageApiProfile, getApiProfileModelGroups } from '../lib/apiProfiles'
-import { getImageModelFamily, isVectorOrAnimatedFormat } from '../lib/imageModels'
+import { getImageModelFamily } from '../lib/imageModels'
 import { getImageSearchSupport, getImageThinkingSupport } from '../lib/imageSearch'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { toReferenceImage } from '../lib/inputImages'
 import { splitBatchPrompts } from '../lib/batchPrompts'
-import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, getMaskDisabledReason, getParamDisabledReasons, normalizeParamsForSettings, supportsTransparentOutput } from '../lib/paramCompatibility'
+import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, getMaskDisabledReason, normalizeParamsForSettings, supportsTransparentOutput } from '../lib/paramCompatibility'
 import { getAtImageQuery, getImageComments, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { normalizeCodexCliImageSize, normalizeImageSize } from '../lib/size'
 import { getSeedreamSize, getSeedreamSizeParams } from '../lib/imageModelParams'
+import { getImageParameterControls } from '../lib/imageParameterControls'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { getSafeBoundingClientRect } from '../lib/domRect'
 import { suppressGlobalClicks } from '../lib/clickSuppression'
@@ -25,7 +26,6 @@ import { useVisibleTasks } from '../hooks/usePrivacyMode'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getDownloadErrorMessage, getTaskOutputImageZipEntries, withSaveLocation } from '../lib/downloadImages'
 import { pickSaveDir } from '../lib/saveFile'
 import { isTauri } from '../lib/platform'
-import type { SelectOption } from './Select'
 import SizePickerModal from './SizePickerModal'
 import { CloseIcon, CollapseIcon, ExpandIcon, LinkIcon, SketchIcon } from './icons'
 import { CommentBadge } from './CommentMarks'
@@ -529,13 +529,14 @@ export default function InputBar() {
   const activeProvider = activeProfile.provider
   const isFalProvider = activeProvider === 'fal'
   const agentAutoImageCount = appMode === 'agent'
-  const moderationDisabled = isFalProvider
+  const parameterControls = getImageParameterControls(effectiveSettings, activeProfile, params, { hasInputImages: inputImages.length > 0, agent: appMode === 'agent' })
+  const moderationDisabled = Boolean(parameterControls.parameters.moderation.disabledReason)
   const transparentOutputAvailable = appMode === 'gallery'
   const showTransparentOutputControl = transparentOutputAvailable && supportsTransparentOutput(effectiveSettings, activeProfile, params.output_format)
   const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
-  const compressionDisabled = params.output_format === 'png' || isVectorOrAnimatedFormat(params.output_format) || isFalProvider
+  const compressionDisabled = Boolean(parameterControls.parameters.output_compression.disabledReason)
   // 不可用的参数和格式仍然显示，置灰并说明原因
-  const disabledReasons = getParamDisabledReasons(activeProfile, { hasInputImages: inputImages.length > 0, agent: appMode === 'agent' })
+  const disabledReasons = parameterControls.disabledReasons
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings, params.output_format)
   const nDraftValue = Number(nInput)
   const effectiveNValue = Number.isNaN(nDraftValue) ? params.n : nDraftValue
@@ -545,7 +546,8 @@ export default function InputBar() {
     : isFalProvider && params.output_format === 'svg'
       ? 'SVG 格式最多生成 1 张图片'
       : `最大请求数量为 ${outputImageLimit}`
-  const sizeFamily = getImageModelFamily(activeProfile)
+  const imageSize = parameterControls.imageSize
+  const sizeFamily = imageSize ? imageSize.mode === 'pixels' ? null : 'custom' : getImageModelFamily(activeProfile)
   const displaySize = sizeFamily === 'seedream'
     ? getSeedreamSize(activeProfile, params)
     : disabledReasons.autoSize && params.size === 'auto'
@@ -553,14 +555,7 @@ export default function InputBar() {
       : (activeProfile.codexCli ? normalizeCodexCliImageSize(params.size) : normalizeImageSize(params.size)) || DEFAULT_PARAMS.size
   const sizePickerCurrentSize = sizeFamily === 'seedream' ? displaySize : disabledReasons.autoSize && params.size === 'auto' ? DEFAULT_FAL_IMAGE_SIZE : params.size
 
-  const qualityOptions: SelectOption[] = [
-    { label: 'auto', value: 'auto', disabledReason: disabledReasons.autoQuality },
-    { label: 'low', value: 'low' },
-    { label: 'medium', value: 'medium' },
-    { label: 'high', value: 'high' },
-    { label: 'xhigh', value: 'xhigh', disabledReason: disabledReasons.extendedQuality },
-    { label: 'max', value: 'max', disabledReason: disabledReasons.extendedQuality },
-  ]
+  const qualityOptions = parameterControls.parameters.quality.options ?? []
   const inputImageLimit = getInputImageLimit(activeProfile)
   const uploadImageTooltipText = '添加图片'
   const transparentOutputHint = useHintTooltip()
@@ -1712,6 +1707,7 @@ export default function InputBar() {
       params={params}
       setParams={setParams}
       activeProfile={activeProfile}
+      imageSize={imageSize}
       searchSupport={getImageSearchSupport(activeProfile, getCustomProviderDefinition(settings, activeProfile.provider))}
       thinkingSupport={getImageThinkingSupport(activeProfile, getCustomProviderDefinition(settings, activeProfile.provider))}
       modelGroups={visibleModelGroups}
@@ -1722,6 +1718,7 @@ export default function InputBar() {
       isFalProvider={isFalProvider}
       displaySize={displaySize}
       qualityOptions={qualityOptions}
+      parameterControls={parameterControls.parameters}
       selectClass={selectClass}
       transparentOutputAvailable={transparentOutputAvailable}
       showTransparentOutputControl={showTransparentOutputControl}

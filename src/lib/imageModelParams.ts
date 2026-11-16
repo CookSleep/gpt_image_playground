@@ -1,8 +1,9 @@
-import type { ApiProfile, TaskParams } from '../types'
+import type { ApiProfile, CustomProviderImageSize, TaskParams } from '../types'
 import { getSeedreamRatioSize, normalizeSeedreamImageSize, SEEDREAM_RESOLUTIONS } from './size'
 import { getImageModelFamily, supportsGrokQuality, usesGrokSizeParams } from './imageModels'
 
-export function getImageModelOptions(profile: ApiProfile) {
+export function getImageModelOptions(profile: ApiProfile, imageSize?: CustomProviderImageSize) {
+  if (imageSize?.mode === 'aspect-ratio') return imageSize
   const family = getImageModelFamily(profile)
   const model = profile.model.toLowerCase()
   const ratios = ['auto', '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9']
@@ -26,17 +27,23 @@ export function getImageModelOptions(profile: ApiProfile) {
   }
 }
 
-export function getImageModelParams(profile: ApiProfile, params: TaskParams): { aspect_ratio: string; resolution: string | undefined; quality: TaskParams['quality'] | undefined } {
+export function getImageModelParams(profile: ApiProfile, params: TaskParams, imageSize?: CustomProviderImageSize): { aspect_ratio: string; resolution: string | undefined; quality: TaskParams['quality'] | undefined } {
   const family = getImageModelFamily(profile)
+  const quality = family === 'grok' && supportsGrokQuality(profile.model)
+    ? params.quality === 'low' || params.quality === 'medium' ? params.quality : 'auto'
+    : undefined
+  if (imageSize?.mode === 'aspect-ratio') return {
+    aspect_ratio: imageSize.ratios.includes(params.aspect_ratio ?? '') ? params.aspect_ratio! : imageSize.ratios[0],
+    resolution: imageSize.resolutions.includes(params.resolution?.toUpperCase() ?? '') ? params.resolution!.toUpperCase() : imageSize.resolutions[0],
+    quality: family ? quality : params.quality,
+  }
   const options = getImageModelOptions(profile)
   const aspectRatio = family === 'seedream' && params.aspect_ratio === 'custom' ? 'custom' : options.ratios.includes(params.aspect_ratio ?? '') ? params.aspect_ratio! : 'auto'
   const resolution = options.resolutions.includes(params.resolution?.toUpperCase() ?? '') ? params.resolution!.toUpperCase() : family === 'seedream' ? '2K' : '1K'
   return {
     aspect_ratio: aspectRatio,
     resolution: aspectRatio === 'custom' ? undefined : options.resolutions.length ? resolution : undefined,
-    quality: family === 'grok' && supportsGrokQuality(profile.model)
-      ? params.quality === 'low' || params.quality === 'medium' ? params.quality : 'auto'
-      : undefined,
+    quality,
   }
 }
 

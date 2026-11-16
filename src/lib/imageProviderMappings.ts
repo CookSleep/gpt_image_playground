@@ -21,5 +21,5 @@ export function resolveCustomProviderModel(provider: CustomProviderDefinition, m
     const escaped = pattern.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')
     return new RegExp(`^${escaped}$`, 'i').test(model)
   }))
-  return override ? { ...provider, submit: override.submit, editSubmit: override.editSubmit, poll: override.poll ?? provider.poll } : provider
+  return override ? { ...provider, imageSize: override.imageSize ?? provider.imageSize, submit: override.submit, editSubmit: override.editSubmit, poll: override.poll ?? provider.poll } : provider
 }

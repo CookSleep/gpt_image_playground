@@ -1,22 +1,28 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { GIF_FRAME_COUNT_RANGE, GIF_FRAME_DURATION_RANGE, IMAGE_COMPLEXITIES, OUTPUT_FORMATS, type ApiProfile, type AppSettings, type InputImage, type TaskParams } from '../types'
+import { GIF_FRAME_COUNT_RANGE, GIF_FRAME_DURATION_RANGE, IMAGE_COMPLEXITIES, OUTPUT_FORMATS, type ApiProfile, type AppSettings, type InputImage, type TaskParams, type TaskRecord } from '../types'
 import {
   createDefaultOpenAIProfile,
+  createSettingsForApiProfile,
   getActiveApiProfile,
   getCustomProviderDefinition,
   normalizeSettings,
+  resolveApiProfileModel,
   splitModelList,
   switchApiProfileProvider,
   validateApiProfile,
 } from './apiProfiles'
 import { requestBrowserNotificationPermission } from './browserNotification'
-import { ensureImageCached } from './imageCache'
+import { ensureImageCached, ensureImageDimensionsCached } from './imageCache'
 import { toReferenceImage } from './inputImages'
-import { assertInputImageLimit } from './inputImageLimits'
-import { normalizeParamsForSettings, supportsTransparentOutput } from './paramCompatibility'
+import { assertInputImageLimit, getInputImageLimit } from './inputImageLimits'
+import { getMaskDisabledReason, normalizeParamsForSettings, supportsTransparentOutput } from './paramCompatibility'
+import { getImageParameterControls } from './imageParameterControls'
 import { getImageModelFamily } from './imageModels'
-import { normalizeSeedreamImageSize, SEEDREAM_RESOLUTIONS } from './size'
+import { getImageModelOptions } from './imageModelParams'
+import { resolveCustomProviderModel } from './imageProviderMappings'
+import { getTaskOutputSlots } from './taskState'
+import { getActualRatioAndResolution, normalizeSeedreamImageSize, SEEDREAM_RESOLUTIONS } from './size'
 import { getProxySetting, setProxySetting } from './networkProxy'
 import { getPresetProfileIds, isPresetConfigOnlyEnabled, isPresetProfileLocked, isPresetProvider, isPresetProviderLocked } from './presetConfig'
 import {
@@ -28,7 +34,7 @@ import {
   removeApiProfile,
   removeCustomProvider,
 } from './settingsActions'
-import { createInputImageFromFile, submitTask, useStore, waitForTaskSettled } from '../store'
+import { createInputImageFromFile, removeTaskOutput, submitTask, useStore, waitForTaskSettled } from '../store'
 
 // 仅客户端：执行命令行发来的命令（Rust 侧见 src-tauri/src/cli.rs）。
 // 命令直接操作应用里的设置、参数和历史，与用户在界面上操作的效果相同，结果立即反映到界面
@@ -95,12 +101,21 @@ function describeProfile(settings: AppSettings, profile: ApiProfile) {
 }
 
 /** 校验并解析生图参数，只返回传入的字段 */
-function parseParams(args: Record<string, unknown>, profile = getActiveApiProfile(getSettings())) {
+function parseParams(args: Record<string, unknown>, settings = getSettings()) {
+  const profile = getActiveApiProfile(settings)
+  const provider = getCustomProviderDefinition(settings, profile.provider)
+  const imageSize = provider ? resolveCustomProviderModel(provider, profile.model).imageSize : undefined
+  const family = getImageModelFamily(profile)
+  const options = imageSize?.mode === 'pixels' || (!imageSize && !family) ? null : getImageModelOptions(profile, imageSize)
   const patch: Partial<TaskParams> = {}
+  if (args.size !== undefined && (args.aspect_ratio !== undefined || args.resolution !== undefined)) {
+    throw new Error('size 与 aspect_ratio、resolution 请分开设置')
+  }
   if (args.size !== undefined) {
     if (typeof args.size !== 'string' || !args.size.trim()) throw new Error('size 必须是非空字符串')
+    if (options && (family !== 'seedream' || imageSize?.mode === 'aspect-ratio')) throw new Error('当前配置使用比例和档位，请设置 aspect_ratio、resolution')
     patch.size = args.size.trim()
-    if (getImageModelFamily(profile) === 'seedream') {
+    if (family === 'seedream' && !imageSize) {
       const size = patch.size.toUpperCase()
       if (size === 'AUTO' || (SEEDREAM_RESOLUTIONS as readonly string[]).includes(size)) {
         patch.aspect_ratio = 'auto'
@@ -111,6 +126,17 @@ function parseParams(args: Record<string, unknown>, profile = getActiveApiProfil
         patch.resolution = undefined
       }
     }
+  }
+  if (args.aspect_ratio !== undefined) {
+    if (!options) throw new Error('当前配置使用具体宽高，请设置 size')
+    if (typeof args.aspect_ratio !== 'string' || !options.ratios.includes(args.aspect_ratio.trim())) throw new Error(`aspect_ratio 只能是 ${options.ratios.join('、')}`)
+    patch.aspect_ratio = args.aspect_ratio.trim()
+  }
+  if (args.resolution !== undefined) {
+    if (!options?.resolutions.length) throw new Error('当前配置不支持设置分辨率档位')
+    if (typeof args.resolution !== 'string' || !options.resolutions.includes(args.resolution.trim().toUpperCase())) throw new Error(`resolution 只能是 ${options.resolutions.join('、')}`)
+    patch.resolution = args.resolution.trim().toUpperCase()
+    if (family === 'seedream' && useStore.getState().params.aspect_ratio === 'custom' && patch.aspect_ratio === undefined) patch.aspect_ratio = 'auto'
   }
   if (args.quality !== undefined) {
     if (typeof args.quality !== 'string' || !QUALITIES.includes(args.quality)) throw new Error(`quality 只能是 ${QUALITIES.join('、')}`)
@@ -161,6 +187,18 @@ function parseParams(args: Record<string, unknown>, profile = getActiveApiProfil
     patch.background = args.background
     patch.transparent_output = args.background === 'transparent'
   }
+  const controls = getImageParameterControls(settings, profile, { ...useStore.getState().params, ...patch }).parameters
+  for (const key of ['google_search', 'image_search'] as const) {
+    if (args[key] === undefined) continue
+    if (typeof args[key] !== 'boolean') throw new Error(`${key} 必须是 true 或 false`)
+    if (controls[key].disabledReason) throw new Error(controls[key].disabledReason)
+    patch[key] = args[key]
+  }
+  if (args.thinking_level !== undefined) {
+    if (controls.thinking_level.disabledReason) throw new Error(controls.thinking_level.disabledReason)
+    if (!controls.thinking_level.options?.some((option) => option.value === args.thinking_level && !option.disabledReason)) throw new Error('当前配置不支持此思考等级，请用 parameters 查询可选值')
+    patch.thinking_level = args.thinking_level as TaskParams['thinking_level']
+  }
   const format = patch.output_format ?? useStore.getState().params.output_format
   if (patch.transparent_output && format === 'jpeg') {
     throw new Error('透明背景不支持 jpeg 格式')
@@ -176,6 +214,22 @@ async function imageFiles(ids: string[], fileNameBase: string) {
     const order = ids.length > 1 ? `-${String(idx + 1).padStart(2, '0')}` : ''
     return [{ path, name: `${fileNameBase}${order}${path.slice(path.lastIndexOf('.'))}` }]
   })
+}
+
+async function describeTaskOutputs(task: TaskRecord) {
+  return Promise.all(getTaskOutputSlots(task).map(async (slot) => {
+    if (!slot.imageId) return { index: slot.requestIndex + 1, error: slot.error }
+    const dimensions = await ensureImageDimensionsCached(slot.imageId)
+    const actual = getActualRatioAndResolution(dimensions ? `${dimensions.width}x${dimensions.height}` : undefined, task.params)
+    return {
+      index: slot.requestIndex + 1,
+      image_id: slot.imageId,
+      width: dimensions?.width ?? null,
+      height: dimensions?.height ?? null,
+      aspect_ratio: actual.aspect_ratio ?? null,
+      resolution: actual.resolution ?? null,
+    }
+  }))
 }
 
 async function generateImage(requestId: number, args: Record<string, unknown>): Promise<CliReply> {
@@ -243,7 +297,7 @@ async function generateImage(requestId: number, args: Record<string, unknown>): 
     files.push(...taskFiles)
     const failed = task.outputErrors?.length ? `；另有 ${task.outputErrors.length} 张失败` : ''
     lines.push(`${label}任务 ${task.id} 完成${failed}，图片：`, ...taskFiles.map((file) => `  ${file.path}`))
-    results.push({ task_id: task.id, status: 'done', image_ids: task.outputImages, files: taskFiles.map((file) => file.path), failed_images: task.outputErrors?.length ?? 0 })
+    results.push({ task_id: task.id, status: 'done', image_ids: task.outputImages, files: taskFiles.map((file) => file.path), failed_images: task.outputErrors?.length ?? 0, outputs: await describeTaskOutputs(task) })
   }
   if (taskIds.length < prompts.length) lines.push(`批量提交被停止，只开始了 ${taskIds.length} / ${prompts.length} 条`)
   if (!files.length) throw new Error(lines.join('\n'))
@@ -270,6 +324,7 @@ async function listHistory(args: Record<string, unknown>) {
       created_at: new Date(task.createdAt).toISOString(),
       reference_image_ids: task.inputImageIds,
       image_ids: task.outputImages,
+      outputs: await describeTaskOutputs(task),
       files: (await imageFiles(task.outputImages, `task-${task.id}`)).map((file) => file.path),
       error: task.error,
     }))),
@@ -285,6 +340,63 @@ async function getImage(args: Record<string, unknown>): Promise<CliReply> {
   const files = await imageFiles(ids, task ? `task-${task.id}` : `image-${imageId.slice(0, 12)}`)
   if (!files.length) throw new Error(imageId || !taskId ? '找不到这张图片' : '找不到这个任务，或它没有图片')
   return { text: files.map((file) => file.path).join('\n'), data: { image_ids: ids, files: files.map((file) => file.path) }, files }
+}
+
+async function deleteTaskResult(args: Record<string, unknown>) {
+  const task = useStore.getState().tasks.find((item) => item.id === args.task_id)
+  if (!task) throw new Error('找不到这个任务')
+  if (task.status !== 'done') throw new Error('只能删除已完成任务的结果')
+  if (typeof args.index !== 'number' || !Number.isSafeInteger(args.index) || args.index < 1) throw new Error('结果序号必须是从 1 开始的整数')
+  const outputs = getTaskOutputSlots(task)
+  const output = outputs.find((slot) => slot.requestIndex + 1 === args.index)
+  if (!output) throw new Error('找不到这个结果，请用 history 查看当前序号')
+  if (outputs.length <= 1) throw new Error('最后一项结果不能单独删除，请在应用中删除整个任务')
+  if (!await removeTaskOutput(task.id, output)) throw new Error('删除失败，请用 history 查看当前结果后重试')
+  return { text: '结果已删除', data: { task_id: task.id, deleted_index: args.index }, files: [] }
+}
+
+function describeParameters(args: Record<string, unknown>) {
+  const settings = getSettings()
+  if (args.all && (args.profile_id !== undefined || args.model !== undefined)) throw new Error('--all 不与 --profile、--model 同时使用')
+  if (args.output_format !== undefined && !OUTPUT_FORMATS.includes(args.output_format as TaskParams['output_format'])) throw new Error(`output_format 只能是 ${OUTPUT_FORMATS.join('、')}`)
+  const selected = settings.profiles.find((profile) => profile.id === (args.profile_id ?? settings.activeProfileId))
+  if (!args.all && !selected) throw new Error(`找不到 API 配置：${args.profile_id}`)
+  const context = { hasInputImages: args.has_input_images === true }
+  const profiles = args.all ? settings.profiles : [selected!]
+  return {
+    active_profile_id: settings.activeProfileId,
+    context: { has_input_images: context.hasInputImages, output_format: args.output_format ?? useStore.getState().params.output_format },
+    profiles: profiles.map((profile) => {
+      const provider = getCustomProviderDefinition(settings, profile.provider)
+      const models = args.all ? splitModelList(profile.model) : [args.model ?? resolveApiProfileModel(profile, undefined, provider).model]
+      if (models.some((model) => typeof model !== 'string' || !splitModelList(profile.model).includes(model))) throw new Error(`模型不在配置 ${profile.name} 中`)
+      return {
+        id: profile.id, name: profile.name, provider: profile.provider,
+        models: (models as string[]).map((model) => {
+          const resolved = resolveApiProfileModel(profile, model, provider)
+          const params = normalizeParamsForSettings({ ...useStore.getState().params, ...(args.output_format !== undefined ? { output_format: args.output_format as TaskParams['output_format'] } : {}) }, createSettingsForApiProfile(settings, resolved), context)
+          const controls = getImageParameterControls(settings, resolved, params, context)
+          const maskReason = getMaskDisabledReason(resolved, params.output_format)
+          return {
+            model, size_mode: controls.sizeMode,
+            parameters: Object.fromEntries((Object.keys(controls.parameters) as Array<keyof TaskParams>).map((key) => {
+              const control = controls.parameters[key]
+              return [key, {
+                type: control.type, value: params[key] ?? (control.type === 'boolean' ? false : key === 'thinking_level' ? 'auto' : null), visible: control.visible, enabled: !control.disabledReason,
+                ...(control.disabledReason ? { disabled_reason: control.disabledReason } : {}),
+                ...(control.options ? { options: control.options.map((option) => ({ value: option.value, label: option.label, enabled: !control.disabledReason && !option.disabledReason, ...(option.disabledReason ? { disabled_reason: option.disabledReason } : {}) })) } : {}),
+                ...(control.min !== undefined ? { min: control.min, max: control.max } : {}),
+                ...(control.nullable ? { nullable: true } : {}),
+                ...(control.hint ? { hint: control.hint } : {}),
+              }]
+            })),
+            reference_images: { max: getInputImageLimit(resolved) },
+            mask: { enabled: !maskReason, ...(maskReason ? { disabled_reason: maskReason } : {}) },
+          }
+        }),
+      }
+    }),
+  }
 }
 
 async function describeSettings() {
@@ -316,7 +428,7 @@ async function updateSettings(args: Record<string, unknown>) {
     if (!result.ok) throw new Error('系统没有允许通知，无法开启任务完成通知')
   }
   const params = isObject(args.params)
-    ? parseParams(args.params, getActiveApiProfile(normalizeSettings({ ...settings, activeProfileId: activeId ?? settings.activeProfileId })))
+    ? parseParams(args.params, normalizeSettings({ ...settings, activeProfileId: activeId ?? settings.activeProfileId }))
     : {}
   if (isObject(args.proxy)) {
     const proxy = { ...await getProxySetting(), ...args.proxy }
@@ -425,8 +537,12 @@ async function runTool(request: CliRequest): Promise<CliReply> {
       return listHistory(args)
     case 'get_image':
       return getImage(args)
+    case 'delete_task_result':
+      return deleteTaskResult(args)
     case 'get_settings':
       return json(await describeSettings())
+    case 'get_parameters':
+      return json(describeParameters(args))
     case 'update_settings':
       return updateSettings(args)
     case 'save_api_profile':

@@ -32,6 +32,48 @@ fn generate_parses_complexity_and_gif_flags() {
 }
 
 #[test]
+fn generate_parses_ratio_and_resolution() {
+    let cmd = run_parse(&["generate", "测试", "--aspect-ratio", "16:9", "--resolution", "2K"]).unwrap();
+    assert_eq!(cmd.arguments["aspect_ratio"], "16:9");
+    assert_eq!(cmd.arguments["resolution"], "2K");
+    assert!(run_parse(&["generate", "测试", "--resolution"]).is_err());
+}
+
+#[test]
+fn parameters_queries_profiles_without_changing_them() {
+    let cmd = run_parse(&["parameters", "--profile", "custom", "--model", "image-model", "--format", "webp", "--with-images", "--json"]).unwrap();
+    assert_eq!(cmd.tool, "get_parameters");
+    assert!(cmd.json);
+    assert_eq!(
+        cmd.arguments,
+        json!({ "profile_id": "custom", "model": "image-model", "output_format": "webp", "has_input_images": true }).as_object().unwrap().clone()
+    );
+    assert_eq!(run_parse(&["parameters", "--all"]).unwrap().arguments["all"], true);
+    assert!(run_parse(&["parameters"]).unwrap().arguments.is_empty());
+    assert!(run_parse(&["parameters", "--all", "--model", "image-model"]).is_err());
+    assert!(run_parse(&["parameters", "--all", "--profile", "custom"]).is_err());
+    assert!(run_parse(&["parameters", "extra"]).is_err());
+    assert!(run_parse(&["generate", "x", "--all"]).is_err());
+}
+
+#[test]
+fn result_delete_requires_task_and_positive_index() {
+    let cmd = run_parse(&["result", "delete", "task-1", "2", "--json"]).unwrap();
+    assert_eq!(cmd.tool, "delete_task_result");
+    assert_eq!(cmd.arguments, json!({ "task_id": "task-1", "index": 2 }).as_object().unwrap().clone());
+    assert!(cmd.json);
+    for args in [
+        vec!["result", "delete", "task-1"],
+        vec!["result", "delete", "task-1", "0"],
+        vec!["result", "delete", "task-1", "1.5"],
+        vec!["result", "delete", "task-1", "1", "extra"],
+        vec!["result", "clear", "task-1", "1"],
+    ] {
+        assert!(run_parse(&args).is_err());
+    }
+}
+
+#[test]
 fn reference_images_are_read_relative_to_cwd() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("ref.png"), [1u8, 2, 3]).unwrap();

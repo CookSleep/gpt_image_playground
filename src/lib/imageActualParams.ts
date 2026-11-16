@@ -11,6 +11,6 @@ export function getImageActualParams(task: TaskRecord, imageSize: string, actual
     size,
     aspect_ratio: undefined,
     resolution: undefined,
-    ...(family ? getActualRatioAndResolution(size, task.params) : {}),
+    ...(family || task.params.aspect_ratio || task.params.resolution ? getActualRatioAndResolution(size, task.params) : {}),
   }
 }

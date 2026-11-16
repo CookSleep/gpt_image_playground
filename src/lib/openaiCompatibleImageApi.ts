@@ -744,23 +744,24 @@ function buildTaskPath(path: string, taskId: string): string {
     .replace(/\{taskId\}/g, encodeURIComponent(taskId))
 }
 
-function resolveTemplateValue(value: unknown, context: Record<string, unknown>): unknown {
+function resolveTemplateValue(value: unknown, context: Record<string, unknown>, omitValues?: CustomProviderSubmitMapping['omitValues']): unknown {
   if (typeof value === 'string' && value.startsWith('$')) {
-    return getByPath(context, value.slice(1))
+    const resolved = getByPath(context, value.slice(1))
+    return omitValues?.[value]?.some((item) => item === resolved) ? undefined : resolved
   }
   if (Array.isArray(value)) {
-    return value.map((item) => resolveTemplateValue(item, context)).filter((item) => item !== undefined && item !== null)
+    return value.map((item) => resolveTemplateValue(item, context, omitValues)).filter((item) => item !== undefined && item !== null)
   }
   if (value && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
-      .map(([key, item]) => [key, resolveTemplateValue(item, context)] as const)
+      .map(([key, item]) => [key, resolveTemplateValue(item, context, omitValues)] as const)
       .filter(([, item]) => item !== undefined && item !== null && (!Array.isArray(item) || item.length > 0))
     return Object.fromEntries(entries)
   }
   return value
 }
 
-function createCustomProviderContext(opts: CallApiOptions, profile: ApiProfile) {
+function createCustomProviderContext(opts: CallApiOptions, profile: ApiProfile, imageSize?: CustomProviderDefinition['imageSize']) {
   const sizePrompt = profile.codexCli && !opts.skipCodexCliSizePrompt
     ? prependCodexCliSizePrompt(opts.prompt, opts.params.size)
     : opts.prompt
@@ -781,23 +782,27 @@ function createCustomProviderContext(opts: CallApiOptions, profile: ApiProfile) 
     ...(profile.codexCli ? { size: undefined, quality: undefined } : {}),
     ...(opts.nativeTransparentBackground ? { background: 'transparent' } : {}),
   }
-  const modelParams = getImageModelFamily(profile) ? getImageModelParams(profile, opts.params) : null
+  const familyParams = getImageModelFamily(profile) ? getImageModelParams(profile, opts.params) : null
+  const modelParams = imageSize?.mode === 'pixels' ? null
+    : imageSize?.mode === 'aspect-ratio' ? getImageModelParams(profile, opts.params, imageSize) : familyParams
   const seedreamParams = getImageModelFamily(profile) === 'seedream' ? {
     watermark: opts.params.watermark ?? false,
     background: opts.params.background === 'transparent' && profile.transparentBackgroundMethod === 'local' ? 'opaque' : opts.params.background ?? 'auto',
     aspect_ratio: modelParams?.aspect_ratio === 'custom' ? undefined : modelParams?.aspect_ratio,
-    size: getSeedreamSize(profile, opts.params),
+    size: imageSize ? params.size : getSeedreamSize(profile, opts.params),
     output_format: opts.params.output_format === 'jpeg' && opts.params.background !== 'transparent' ? 'jpeg' : 'png',
     quality: undefined, moderation: undefined, output_compression: undefined,
     google_search: undefined, image_search: undefined, thinking_level: undefined,
   } : null
 
   const inputImageUrls = opts.inputImageUrls?.filter(isHttpUrl) ?? []
+  const requestParams = { ...params, ...(modelParams ? { ...modelParams, size: modelParams.aspect_ratio } : {}), ...(familyParams ? { quality: familyParams.quality } : {}), ...seedreamParams }
 
   return {
     profile,
     prompt,
-    params: { ...params, ...(modelParams ? { ...modelParams, size: modelParams.aspect_ratio } : {}), ...seedreamParams },
+    params: requestParams,
+    size: { pixels: typeof requestParams.size === 'string' && /^[1-9]\d*x[1-9]\d*$/.test(requestParams.size) ? requestParams.size : undefined },
     mode: opts.inputImageDataUrls.length ? 'image-to-image' : 'text-to-image',
     resolution: modelParams?.resolution ? { upper: modelParams.resolution, lower: modelParams.resolution.toLowerCase() } : undefined,
     inputImages: {
@@ -812,10 +817,10 @@ function createCustomProviderContext(opts: CallApiOptions, profile: ApiProfile) 
   }
 }
 
-function renderQuery(query: Record<string, string> | undefined, context: Record<string, unknown>): Record<string, string> | undefined {
+function renderQuery(query: Record<string, string> | undefined, context: Record<string, unknown>, omitValues?: CustomProviderSubmitMapping['omitValues']): Record<string, string> | undefined {
   if (!query) return undefined
   const entries = Object.entries(query)
-    .map(([key, value]) => [key, resolveTemplateValue(value, context)] as const)
+    .map(([key, value]) => [key, resolveTemplateValue(value, context, omitValues)] as const)
     .filter(([, value]) => value !== undefined && value !== null && String(value) !== '')
     .map(([key, value]) => [key, String(value)] as const)
   return entries.length ? Object.fromEntries(entries) : undefined
@@ -823,7 +828,7 @@ function renderQuery(query: Record<string, string> | undefined, context: Record<
 
 async function createCustomMultipartBody(mapping: CustomProviderSubmitMapping, opts: CallApiOptions, context: Record<string, unknown>): Promise<FormData> {
   const formData = new FormData()
-  const body = resolveTemplateValue(mapping.body ?? {}, context)
+  const body = resolveTemplateValue(mapping.body ?? {}, context, mapping.omitValues)
   if (body && typeof body === 'object' && !Array.isArray(body)) {
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
       if (value === undefined || value === null) continue
@@ -897,11 +902,11 @@ async function extractCustomImages(payload: unknown, result: CustomProviderResul
   return { images, ...(rawImageUrls.length ? { rawImageUrls } : {}) }
 }
 
-async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: CallApiOptions, profile: ApiProfile, controller: AbortController, proxyConfig: ReturnType<typeof readClientDevProxyConfig>, useApiProxy: boolean): Promise<unknown> {
+async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: CallApiOptions, profile: ApiProfile, controller: AbortController, proxyConfig: ReturnType<typeof readClientDevProxyConfig>, useApiProxy: boolean, imageSize?: CustomProviderDefinition['imageSize']): Promise<unknown> {
   const requestHeaders = createRequestHeaders(profile)
-  const context = createCustomProviderContext(opts, profile)
-  // 只用链接传参考图时，不能把其余参考图静默丢掉；同时用其他方式传参考图时链接只是补充
+  const context = createCustomProviderContext(opts, profile, imageSize)
   const template = JSON.stringify([mapping.body, mapping.query])
+  // 只用链接传参考图时，不能把其余参考图静默丢掉；同时用其他方式传参考图时链接只是补充
   const linkOnly = template.includes('$inputImages.urls')
     && !template.includes('$inputImages.dataUrls')
     && !template.includes('$inputImages.base64')
@@ -912,7 +917,7 @@ async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: C
   }
   const method = mapping.method ?? 'POST'
   const contentType = mapping.contentType ?? 'json'
-  const path = appendQuery(mapping.path.replace(/\{model\}/g, encodeURIComponent(profile.model)), renderQuery(mapping.query, context))
+  const path = appendQuery(mapping.path.replace(/\{model\}/g, encodeURIComponent(profile.model)), renderQuery(mapping.query, context, mapping.omitValues))
   const headers: Record<string, string> = { ...requestHeaders }
   let body: BodyInit | undefined
 
@@ -929,7 +934,7 @@ async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: C
           (opts.maskDataUrl ? getDataUrlEncodedByteSize(opts.maskDataUrl) : 0),
       )
       headers['Content-Type'] = 'application/json'
-      const resolved = resolveTemplateValue(mapping.body ?? {}, context)
+      const resolved = resolveTemplateValue(mapping.body ?? {}, context, mapping.omitValues)
       if (shouldReturnBase64(profile) && resolved && typeof resolved === 'object' && !Array.isArray(resolved)) {
         (resolved as Record<string, unknown>).response_format = 'b64_json'
       }
@@ -1050,7 +1055,7 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
     if (useApiProxy && (submitMapping.taskIdPath || customProvider.poll)) {
       throw new Error('API 代理暂不支持使用异步任务的自定义服务商。请关闭 API 代理，或改用同步返回图片的自定义服务商配置。')
     }
-    const submitPayload = await submitCustomRequest(submitMapping, opts, profile, controller, proxyConfig, useApiProxy)
+    const submitPayload = await submitCustomRequest(submitMapping, opts, profile, controller, proxyConfig, useApiProxy, customProvider.imageSize)
     const taskIdValue = submitMapping.taskIdPath ? getByPath(submitPayload, submitMapping.taskIdPath) : undefined
     const taskId = typeof taskIdValue === 'string' ? taskIdValue.trim() : String(taskIdValue ?? '').trim()
     if (submitMapping.taskIdPath && !taskId) {

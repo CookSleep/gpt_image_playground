@@ -12,7 +12,7 @@
 
 **支持 GPT Image、Gemini（Nano Banana）、Grok 和 Seedream 5.5 的图片生成与编辑工具**
 
-提供 Web UI 和 Windows 客户端，支持官方接口、OpenAI 兼容接口、sub2api、fal.ai 与自定义 HTTP 供应商。<br>
+提供 Web UI 和 Windows 客户端，支持官方接口、OpenAI 兼容接口、sub2api 和 fal.ai，也可通过自定义供应商配置接入非标准 API。<br>
 支持文本生图、参考图编辑、画板标注、遮罩编辑与 Agent 多轮对话，图片和历史记录保存在本地。
 
 <br>
@@ -118,58 +118,14 @@
 
 ## ✨ 核心特性
 
-### 🎨 强大的图像生成与编辑
-- **参考图与遮罩**：支持剪贴板、拖拽和图片链接，提交数量上限按模型和服务商确定。超限图片保留并置灰，悬浮或长按可查看原因；切换模型不会删除图片，提交前需移除超限图片或切换模型。参考图区高度受限，图片较多时可上下滚动；移动端横向起拖可排序。内置遮罩编辑器，自动预处理以符合官方分辨率限制；不支持遮罩的模型或输出格式点击“编辑图片”会直接进入画板；已有遮罩图会置灰，悬浮或长按可查看原因，预览右侧可移除遮罩后继续编辑；SVG 和 GIF 作为参考图时转为 PNG（GIF 取第 1 帧）。
-- **画板标注**：在空白画布或参考图上用画笔、文字、图形和像素橡皮擦标注修改意图；画板与遮罩编辑器可缩放平移（Alt / Ctrl + 滚轮、Alt + 拖动、双指捏合）。GPT Image 2.5／2.6 的 OpenAI Images API 和 fal.ai 的 GPT Image 2.6 支持独立标注层；Agent、遮罩编辑及其他模型保存合成图。
-- **评论标注**：在画板中用评论工具点击图片添加评论，以“@图N 评论”插入提示词，发送时附上评论在图中的位置（如 `(X=52%, Y=41%)`），复用任务时可恢复。
-- **复杂度**：`auto`、`low`、`medium`、`high`，仅 GPT Image 2.6 及以上支持，在「更多」中设置；当前模型或模式不支持时选项置灰并说明原因。
-- **GIF 动图**：仅画廊模式，可设置帧数（2–16，默认 9）和每帧时长（20–2000 ms，默认 200），带参考图时也可用，但不能使用遮罩。
-- **SVG**：仅画廊模式，由文本模型编写，支持透明背景。OpenAI 支持文生图和参考图编辑；fal.ai 仅支持文生图，每次生成一张。可在 **「设置 → API 配置」** 中指定 SVG 编写模型，fal.ai 不提供 SVG 编写模型的推理强度设置。
-- **供应商支持**：OpenAI 兼容接口（含 Codex CLI 模式）支持上述功能，具体能力取决于所用接口；fal.ai 支持复杂度、GIF 和文生图 SVG；自定义供应商需在模板中映射对应的 `$params` 变量。
-- **批量与迭代**：支持单次多图生成；一键将满意结果转为参考图，无缝开启下一轮修改。
-- **多提示词批量提交**：在习惯配置中开启后，可一次粘贴多条提示词（以两个空行分隔），共用参考图和参数；支持排队或并发（默认上限 10），可随时查看进度或停止。
-- **流式生成预览**：`Images API` 与 `Responses API` 均可流式接收中间步骤图像，缓解连接超时问题。
-- **透明背景**：画廊模式下选择 PNG、WebP、SVG 或 GIF 后可开启，可在 API 配置页为每个配置分别选择 API 原生或本地后处理。
-
-  > - **API 原生**：直接请求模型返回透明通道，需接口和模型支持。接口返回“不支持透明背景”类错误时，应用会提示切换为本地后处理。
-  > - **本地后处理**：要求模型使用纯绿或纯洋红背景，结果返回后在浏览器中去除背景色，按所选格式保存。适合图标、贴纸、单主体素材；主体有复杂发丝、半透明材质、强反光或颜色接近背景色时，边缘可能残留或误抠。
-  > - **SVG 和 GIF**：只使用 API 原生方式；自定义供应商的生成和编辑请求未映射 `$params.background` 时不提供透明背景。
-
-### 🤖 Agent 多轮对话模式
-- **多轮对话与上下文记忆**：基于 Responses API，Agent 理解上下文并按需调用图像工具；可用 `@` 引用参考图或之前生成的图片，也会自动识别上下文中的图片。
-- **并发批量生成**：`generate_image_batch` 在一轮中并发生成多张关联图像，`continue_generation` 自动追加新一轮以处理依赖关系。
-- **分支与重新生成**：编辑重发或重新生成某轮消息会产生可切换的分支，图片引用只在当前分支内解析。
-- **画廊同步与隔离删除**：Agent 生成的图片同步到画廊；删除对话默认保留画廊记录，删除画廊任务时自动清理对话中的图片引用。
-- **可选 Web 搜索**：可开启 `web_search` 工具，Agent 会在需要时搜索网络信息并附带引用链接。
-
-### ⚙️ 精细化参数追踪
-- **智能尺寸控制**：提供 1K/2K/4K 预设，自定义宽高时自动规整到模型支持的范围。
-- **实际参数对比**：提取 API 响应中实际生效的尺寸、质量、耗时和**模型改写后的提示词**，与请求参数高亮对比。
-
-### 📁 高效历史管理 (纯本地)
-- **瀑布流与画廊**：历史任务自动保存，支持按状态过滤、全屏大图预览与快捷下载。
-- **多收藏夹管理**：同一任务可归入多个收藏夹；概览页显示封面和任务数，进入后可叠加搜索与状态筛选；支持拖拽排序、重命名、设为默认和按收藏夹打包下载 ZIP；在收藏夹页新建的任务自动归入当前收藏夹。
-- **失败任务重试**：重试方式可选新建任务或覆盖原任务（不限失败任务）；覆盖时保留创建时间和收藏，耗时重新计算。
-- **快捷批量操作**：桌面端支持拖拽框选、Ctrl/⌘ 连选，移动端支持侧滑多选，便于批量收藏与清理。
-- **图片查看与下载**：大图预览支持左右滑动切换，移动端可长按弹出操作菜单，支持快捷下载与批量下载。
-- **性能与隐私**：记录和图片只保存在本地（网页版为 IndexedDB，客户端为本机数据目录），自动去重压缩，不经过第三方服务器；可打包导出 ZIP 备份。
-
-### 🔌 多配置与供应商增强
-- **多配置管理**：保存多个 API 配置（供应商、API Key、模型等）并快速切换；可一键复制当前配置到列表底部，配置和供应商列表均可拖拽排序。
-- **多模型切换**：模型 ID 可用逗号分隔填写多个（如 `gpt-image-2.6-sunburst, gpt-image-2`），在首页切换，按配置分别记住；预置配置、URL 传参与导入导出均支持此写法。
-- **模型搜索与跨配置切换**：输入框模型列表按配置分组，支持按模型名、配置名或供应商搜索；在 **「设置 → API 配置」** 中开启“在输入框模型列表中展示”，即可在首页直接选择该配置的模型并切换配置。
-- **多供应商接入**：内置 OpenAI 兼容接口（`Images API` / `Responses API`）、Google、xAI、字节跳动、sub2api（异步）、fal.ai（队列），并可通过 JSON 导入自定义 HTTP 供应商（同步/异步任务）。
-- **Gemini / Grok / Seedream 5.5 图像生成**：支持官方接口、OpenAI Images 兼容接口和 fal.ai。可在 fal.ai 模型广场查看 [Gemini（Nano Banana）](https://fal.ai/explore/search?q=nano-banana)、[Grok](https://fal.ai/explore/search?q=grok-imagine-image) 和 [Seedream 5.5](https://fal.ai/explore/search?q=seedream) 的相关模型 ID，添加参考图后自动使用编辑接口。
-- **Google Search / Image Search**：部分 Gemini 模型支持网页和图片搜索，详情展示来源与搜索建议。
-- **Agent 模式独立 API 配置**：Agent 可使用原生（Responses API）或混合（Responses API + Images API）的独立配置，适配不支持 `image_generation` 工具的供应商或模型。
-- **API 代理**：OpenAI 兼容接口与 fal.ai 均可配置自定义代理；OpenAI 兼容接口还可走同源 `/api-proxy/`，由 Docker 或本地开发服务器转发，绕开浏览器 CORS 限制。
-- **Codex CLI 兼容模式**：上游为 Codex CLI 时，按其实际支持的参数发送请求，并把多图生成拆成并发单图。
-- **提示词防改写**：Responses API 始终在请求前加入防改写指令；开启 Codex CLI 模式后，Images API 也会加入。
-- **智能诊断提示**：检测到接口异常改写或缺少常规参数时，提示开启相应的兼容模式。
-- **外观配置**：颜色模式（跟随系统、浅色、深色）、界面字体与代码字体。
-- **习惯配置**：提交后清空输入、重启后保留输入、临时复用历史任务的 API 配置、重试方式、关闭提示词防改写、附加图像生成提示词、系统通知、自动检查更新、隐私模式快捷键等。
-- **版本更新**：启动时检查新版本并展示更新说明；客户端可直接下载并安装更新。
-- **CLI 与 Skill**：Claude Code、Codex 等本机 AI 工具可通过客户端的 CLI 生图、读取历史和修改设置，见 [Windows 桌面客户端](#desktop-client)。
+- **多模型、多供应商**：支持 GPT Image、Gemini、Grok 和 Seedream 5.5，可保存多套配置并快速搜索、切换模型。
+- **非标准 API 也能接入**：通过[自定义供应商](#custom-provider-config)配置请求参数和结果读取方式，无需修改代码；可借助外部 AI 根据接口文档生成配置。
+- **从生成到精修**：支持多张参考图、局部遮罩、画板与评论标注，生成结果可直接用于下一轮修改；可按模型能力生成透明背景图片、SVG 和 GIF。
+- **批量生成与实时预览**：一次生成多张图片，也可批量提交多条提示词，排队或并发执行；支持流式预览、进度查看和失败重试。
+- **Agent 多轮创作**：通过对话连续生成和修改图片，引用历史结果、切换对话分支，按需搜索网络；生成图片同步到画廊。
+- **参数与结果清晰可见**：灵活选择比例、分辨率档位或自定义宽高，查看真实图片尺寸、耗时和改写后的提示词，高亮对比请求与结果的差异。
+- **本地画廊与收藏**：记录和图片保存在本地，支持搜索筛选、多收藏夹、批量下载与备份，也可单独删除任务中的图片或失败记录。
+- **桌面与移动端都顺手**：支持粘贴、拖拽、框选和移动端侧滑多选，提供主题、字体与操作习惯设置；Windows 客户端还支持应用内更新和本机 AI 工具调用。
 
 ---
 
@@ -178,6 +134,8 @@
 Windows 用户可以直接安装桌面客户端；网页版可以部署到 Vercel、GitHub Pages、Cloudflare Workers、Docker 或任意静态文件服务器。
 
 部署时可以通过环境变量 `VITE_DEFAULT_API_URL` 提供**预置配置**：部署端预先加入用户配置列表的 API 配置，格式与用户自建的配置相同，用户打开页面通常只需补充 API Key。
+
+预置配置也可包含自定义供应商，让用户直接使用部署者配置好的非标准 API。
 
 完整写法见 [预置配置](#preset-config)，其余变量见 [环境变量](#env-vars)。
 
@@ -196,13 +154,11 @@ Windows 用户可以直接安装桌面客户端；网页版可以部署到 Verce
 - 安装到普通文件夹（如 `D:\Apps\GPT Image Playground`）。装到 `C:\Program Files` 等需要管理员权限写入的位置会导致无法保存数据。
 - 数据默认保存在 `<安装目录>\data` 中，可在 **「设置 → 数据管理」** 中更改。
 
-**CLI 与 Skill**
+**接入 AI 工具**
 
-Claude Code、Codex 等本机 AI 工具可以通过 CLI `gpt-image-playground` 调用客户端：生成和编辑图片、读取历史记录、查看和修改全部设置（API Key 只能写入）。
+Claude Code、Codex 等本机 AI 工具可通过客户端生成和编辑图片、读取历史记录及管理配置。
 
-- `generate --image` 可重复指定参考图，按应用当前启用的模型校验数量；超限时返回错误，不创建任务。
-- 安装时勾选“添加到 PATH”即可直接运行；使用时客户端需要保持打开，用法见 `gpt-image-playground --help`。
-- 在 **「设置 → Skill」** 中安装随附的 Skill，AI 工具就知道何时、如何调用它；客户端启动时会自动把已安装的 Skill 更新到当前版本。
+安装时勾选“添加到 PATH”，再到 **「设置 → Skill」** 安装随附 Skill，AI 工具即可了解调用方式。使用时保持客户端打开，已安装的 Skill 会随客户端自动更新。调用细节见 [CLI 参考](skills/gpt-image-playground/references/cli.md)。
 
 **自行构建**
 
@@ -500,7 +456,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 顶层字段：
 
 - **`profiles`**（数组）：预置的 API 配置列表，每项对应用户配置列表中的一个配置。
-- **`customProviders`**（可选数组）：自定义供应商定义，见下文 [自定义供应商](#custom-provider-config)。只使用内置供应商时可省略。
+- **`customProviders`**（可选数组）：配置非标准 API 的请求参数、任务查询和结果读取方式，见 [自定义供应商](#custom-provider-config)。只使用内置供应商时可省略。
 - **`agent`**（可选对象）：Agent 的独立 API 模式及文本、图像配置选择，见下方示例。
 
 `profiles` 中每项的字段：
@@ -619,75 +575,17 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 - 文本配置须使用 OpenAI 兼容的 Responses API；图像配置可使用任意支持的供应商。
 - `agent` 及其三个字段都可省略，随部署更新和锁定的规则与预置配置相同。
 
-完整示例见 [`gpt-image-config.agent.example.json`](gpt-image-config.agent.example.json)。
-
 ---
 
 <a id="custom-provider-config"></a>
 ## 🔌 自定义供应商
 
-API 不是标准 OpenAI 格式时，在预置 JSON 的 `customProviders` 中定义请求和响应结构。每个供应商需有唯一的 `id`，由 `profiles` 中的 `provider` 字段引用。
+支持接入非标准的图像生成接口，包括同步请求和异步任务。可以通过以下两种方式让 AI 根据提示词和第三方 API 文档生成配置：
 
-接口不在 `/v1` 路径下时，将 `baseUrl` 设为以 `/` 结尾。例如 `baseUrl` 为 `https://api.example.com/`、`submit.path` 为 `api/image-tasks` 时，实际请求地址为 `https://api.example.com/api/image-tasks`。
+- **作为用户在网页/应用中添加**：进入 **「设置 → API 配置 → 供应商类型 → 创建自定义供应商」**，点击“复制生成提示词”，将提示词和 API 文档发给 AI；复制返回的 JSON，再回到网页或应用点击“从剪贴板粘贴并导入”。
+- **作为部署者配置预置供应商**：将 [文档中的提示词](docs/custom-provider-llm-prompt.md) 和 API 文档发给 AI，获取完整配置 JSON，再按 [预置配置](#preset-config) 的说明用于部署。
 
-`modelOverrides` 可按模型 ID（支持 `*` 通配符）配置不同接口，路径支持 `{model}` 占位符。完整字段见 [自定义供应商 LLM 提示词](docs/custom-provider-llm-prompt.md)。
-
-**获取供应商定义**
-
-- **AI 生成**：在 [Vercel 在线体验](https://gpt-image-playground.cooksleep.dev) 或 [GitHub Pages 在线体验](https://cooksleep.github.io/gpt_image_playground) 的 **「设置 → API 配置 → 供应商类型 → 创建自定义供应商 → AI 一键生成与导入」** 中粘贴第三方 API 文档生成配置，再复制该配置的导入链接作为预置值。
-- **手动生成**：将 [自定义供应商 LLM 提示词](docs/custom-provider-llm-prompt.md) 和第三方 API 文档发给任意 LLM，获取完整 JSON。
-
-**完整 JSON 示例（异步任务供应商）**
-
-```json
-{
-  "customProviders": [
-    {
-      "id": "custom-example-task",
-      "name": "示例异步任务供应商",
-      "submit": {
-        "path": "images/generations",
-        "method": "POST",
-        "contentType": "json",
-        "body": {
-          "model": "$profile.model",
-          "prompt": "$prompt",
-          "size": "$params.size",
-          "quality": "$params.quality",
-          "output_format": "$params.output_format",
-          "output_compression": "$params.output_compression",
-          "n": "$params.n",
-          "image_urls": "$inputImages.dataUrls"
-        },
-        "taskIdPath": "data.0.task_id"
-      },
-      "poll": {
-        "path": "tasks/{task_id}",
-        "method": "GET",
-        "intervalSeconds": 5,
-        "statusPath": "data.status",
-        "successValues": ["completed"],
-        "failureValues": ["failed", "cancelled"],
-        "errorPath": "data.error.message",
-        "result": {
-          "imageUrlPaths": ["data.result.images.*.url.*"],
-          "b64JsonPaths": []
-        }
-      }
-    }
-  ],
-  "profiles": [
-    {
-      "id": "example-profile",
-      "name": "示例异步任务供应商",
-      "provider": "custom-example-task",
-      "baseUrl": "https://api.example.com/v1",
-      "model": "gpt-image-2.6-sunburst",
-      "apiMode": "images"
-    }
-  ]
-}
-```
+完整配置方法、字段说明、参数示例及可复制给 AI 的提示词，见 [自定义供应商配置文档](docs/custom-provider-llm-prompt.md)。
 
 ---
 

@@ -988,7 +988,7 @@ export default function DetailModal() {
               </div>
             )}
             <div className="grid grid-cols-2 gap-2 text-xs mb-4 min-w-0">
-              {modelFamily && task.params.aspect_ratio && task.params.aspect_ratio !== 'custom' && (
+              {task.params.aspect_ratio && task.params.aspect_ratio !== 'custom' && (
                 <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
                   <span className="text-gray-400 dark:text-gray-500">比例</span>
                   <br />
@@ -997,7 +997,7 @@ export default function DetailModal() {
                   </div>
                 </div>
               )}
-              {modelFamily && task.params.resolution && (
+              {task.params.resolution && (
                 <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
                   <span className="text-gray-400 dark:text-gray-500">分辨率</span>
                   <br />
@@ -1006,7 +1006,7 @@ export default function DetailModal() {
                   </div>
                 </div>
               )}
-              {(!modelFamily || (modelFamily === 'seedream' && task.params.aspect_ratio === 'custom')) && (
+              {(!task.params.aspect_ratio || task.params.aspect_ratio === 'custom') && (
                 <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
                   <span className="text-gray-400 dark:text-gray-500">尺寸</span>
                   <br />
