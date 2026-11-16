@@ -348,9 +348,13 @@ impl Storage {
             .collect()
     }
 
-    pub fn image_ids(&self) -> Result<Vec<String>> {
+    pub fn image_ids(&self, include_thumbnails: bool) -> Result<Vec<String>> {
         let conn = self.lock();
-        let mut stmt = conn.prepare("SELECT id FROM images ORDER BY id")?;
+        let mut stmt = conn.prepare(if include_thumbnails {
+            "SELECT id FROM images UNION SELECT id FROM thumbnails ORDER BY id"
+        } else {
+            "SELECT id FROM images ORDER BY id"
+        })?;
         let ids = stmt
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<Vec<String>>>()?;
@@ -560,14 +564,28 @@ mod tests {
         let (got, got_bytes) = storage.get_file(Kind::Thumbnail, ID).unwrap().unwrap();
         assert_eq!(got, thumb);
         assert_eq!(got_bytes, b"thumb");
-        assert_eq!(storage.image_ids().unwrap(), vec![ID.to_string()]);
+        assert_eq!(storage.image_ids(false).unwrap(), vec![ID.to_string()]);
 
         storage.delete_image(ID).unwrap();
         assert!(storage.get_file(Kind::Image, ID).unwrap().is_none());
         assert!(storage.get_file(Kind::Thumbnail, ID).unwrap().is_none());
         assert!(!image_path.exists());
         assert!(!thumb_path.exists());
-        assert!(storage.image_ids().unwrap().is_empty());
+        assert!(storage.image_ids(false).unwrap().is_empty());
+    }
+
+    #[test]
+    fn cleanup_candidates_include_thumbnails_without_originals() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).unwrap();
+        storage
+            .put_file(Kind::Thumbnail, &meta(ID, "image/webp"), b"thumb")
+            .unwrap();
+        assert!(storage.image_ids(false).unwrap().is_empty());
+        assert_eq!(storage.image_ids(true).unwrap(), vec![ID.to_string()]);
+        storage.delete_image(ID).unwrap();
+        assert!(storage.image_ids(true).unwrap().is_empty());
+        assert!(storage.get_file(Kind::Thumbnail, ID).unwrap().is_none());
     }
 
     #[test]
@@ -647,7 +665,7 @@ mod tests {
             .path()
             .join(format!("images/{}/{stem}.png", &stem[2..4]))
             .is_file());
-        assert_eq!(storage.image_ids().unwrap(), vec![id.to_string()]);
+        assert_eq!(storage.image_ids(false).unwrap(), vec![id.to_string()]);
         assert_eq!(storage.get_file(Kind::Image, id).unwrap().unwrap().1, b"x");
         // 孤儿清理按路径核对，不会误删哈希命名的文件
         assert_eq!(storage.cleanup_orphans().unwrap(), 0);
@@ -736,7 +754,7 @@ mod tests {
                 .unwrap();
         }
         storage.clear_images().unwrap();
-        assert!(storage.image_ids().unwrap().is_empty());
+        assert!(storage.image_ids(false).unwrap().is_empty());
         assert!(storage
             .get_file(
                 Kind::Thumbnail,

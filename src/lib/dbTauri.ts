@@ -238,8 +238,8 @@ export async function getAllImages(): Promise<StoredImage[]> {
   return images
 }
 
-export function getAllImageIds(): Promise<string[]> {
-  return call('image_ids')
+export function getAllImageIds(opts?: { includeThumbnails?: boolean }): Promise<string[]> {
+  return call('image_ids', opts?.includeThumbnails ? { includeThumbnails: true } : undefined)
 }
 
 export async function putImage(image: StoredImage): Promise<IDBValidKey> {

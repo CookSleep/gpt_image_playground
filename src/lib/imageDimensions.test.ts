@@ -103,11 +103,21 @@ describe('图片真实宽高', () => {
       toDataURL: () => 'generated-thumbnail',
     }) })
     backend.putImageThumbnail.mockRejectedValue(new Error('storage full'))
-    backend.putImage.mockRejectedValue(new Error('storage full'))
+    backend.updateImageDimensions.mockRejectedValue(new Error('storage full'))
     expect(await getImageThumbnail('image')).toMatchObject({ thumbnailDataUrl: 'generated-thumbnail', width: 2496, height: 1664 })
     expect(decode).toHaveBeenCalledOnce()
     expect(warn).toHaveBeenCalledTimes(2)
     warn.mockRestore()
+  })
+
+  it('缩略图重建期间原图被删除时不写回原图', async () => {
+    vi.stubGlobal('document', { createElement: () => ({
+      getContext: () => ({ drawImage: vi.fn() }),
+      toDataURL: () => 'generated-thumbnail',
+    }) })
+    backend.updateImageDimensions.mockResolvedValue(false)
+    expect(await getImageThumbnail('image')).toBeUndefined()
+    expect(backend.putImage).not.toHaveBeenCalled()
   })
 
   it('原图损坏时所有并发调用都返回空值，后续可重试', async () => {

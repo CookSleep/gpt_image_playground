@@ -70,7 +70,7 @@ export function getPrivacySnapshotImageIds(privacy: PrivacyModeState | null) {
   if (!privacy) return []
   const snapshot = privacy.inputSnapshot
   return [snapshot, snapshot.galleryInputDraft, ...Object.values(snapshot.agentInputDrafts)]
-    .flatMap((draft) => draft?.inputImages.map((img) => img.id) ?? [])
+    .flatMap((draft) => draft?.inputImages.flatMap((img) => img.markupImageId ? [img.id, img.markupImageId] : [img.id]) ?? [])
 }
 
 /** 退出隐私模式时的输入框：恢复进入前的草稿，丢弃隐私模式中未提交的输入 */

@@ -30,7 +30,7 @@ describe('db 门面（网页版）', () => {
     const put = vi.spyOn(indexedDbBackend, 'putTask').mockResolvedValue('old')
     const source: TaskRecord = {
       id: 'old', params: DEFAULT_PARAMS,
-      prompt: '', inputImageIds: [], outputImages: [], status: 'done', error: null, createdAt: 0, finishedAt: 1, elapsed: 1,
+      prompt: '', inputImageIds: [], outputImages: ['image'], status: 'done', error: null, createdAt: 0, finishedAt: 1, elapsed: 1,
       actualParams: { size: '2K', resolution: '2K', quality: 'high' },
       actualParamsByImage: { image: { size: '1024x1024', aspect_ratio: '1:1', output_format: 'png' } },
     }

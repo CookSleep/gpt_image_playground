@@ -54,6 +54,16 @@ function sourceState() {
 describe('privacy mode visibility', () => {
   const privacy = createPrivacyModeState(sourceState(), 100)
 
+  it('快照保留当前输入和草稿中的标注图引用', () => {
+    const source = sourceState()
+    const snapshot = createPrivacyModeState({
+      ...source,
+      inputImages: [{ ...imageA, markupImageId: 'markup-a' }],
+      agentInputDrafts: { 'c-old': { ...source.agentInputDrafts['c-old'], inputImages: [{ ...imageB, markupImageId: 'markup-b' }] } },
+    }, 100)
+    expect(getPrivacySnapshotImageIds(snapshot)).toEqual(['image-a', 'markup-a', 'image-b', 'markup-b'])
+  })
+
   it('hides nothing when privacy mode is off', () => {
     expect(isPrivacyHiddenTask(null, task())).toBe(false)
     expect(isPrivacyHiddenConversation(null, conversation())).toBe(false)

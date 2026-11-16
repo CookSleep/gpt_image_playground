@@ -130,10 +130,10 @@ export async function getAllImages(): Promise<StoredImage[]> {
   return images.filter((image): image is StoredImage => image != null)
 }
 
-export function getAllImageIds(): Promise<string[]> {
-  return dbTransaction(STORE_IMAGES, 'readonly', (s) => s.getAllKeys()).then((keys) =>
-    keys.map(String),
-  )
+export async function getAllImageIds(opts?: { includeThumbnails?: boolean }): Promise<string[]> {
+  const stores = opts?.includeThumbnails ? [STORE_IMAGES, STORE_THUMBNAILS] : [STORE_IMAGES]
+  const keys = await Promise.all(stores.map((store) => dbTransaction(store, 'readonly', (s) => s.getAllKeys())))
+  return [...new Set(keys.flat().map(String))]
 }
 
 export function putImage(image: StoredImage): Promise<IDBValidKey> {

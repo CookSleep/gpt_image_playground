@@ -23,7 +23,7 @@ type ImageDimensions = { width: number; height: number }
 const imageCache = new Map<string, string>()
 const thumbnailCache = new Map<string, ImageThumbnail>()
 const thumbnailBackfillIds = new Map<string, 'visible' | 'background'>()
-const thumbnailBackfillRunningIds = new Set<string>()
+const thumbnailBackfillRunningIds = new Map<string, { cancelled: boolean }>()
 const thumbnailSubscribers = new Map<string, Set<(thumbnail: ImageThumbnail) => void>>()
 const dimensionsWaiters = new Map<string, Array<(size: ImageDimensions | undefined) => void>>()
 // 正在显示某张缩略图的组件数（以订阅计）。使用中的缓存项不淘汰，其 Blob URL 被替换或删除时推迟到无人使用再撤销，
@@ -110,6 +110,8 @@ export function deleteImageCacheEntry(id: string) {
   imageCache.delete(id)
   deleteCachedThumbnail(id)
   thumbnailBackfillIds.delete(id)
+  const running = thumbnailBackfillRunningIds.get(id)
+  if (running) running.cancelled = true
   thumbnailSubscribers.delete(id)
   dimensionsWaiters.get(id)?.forEach((resolve) => resolve(undefined))
   dimensionsWaiters.delete(id)
@@ -119,6 +121,7 @@ export function clearImageCaches() {
   imageCache.clear()
   for (const id of [...thumbnailCache.keys()]) deleteCachedThumbnail(id)
   thumbnailBackfillIds.clear()
+  for (const running of thumbnailBackfillRunningIds.values()) running.cancelled = true
   for (const waiters of dimensionsWaiters.values()) waiters.forEach((resolve) => resolve(undefined))
   dimensionsWaiters.clear()
 }
@@ -286,7 +289,7 @@ async function getNextThumbnailBackfillBatch() {
     return { width: meta?.width ?? undefined, height: meta?.height ?? undefined }
   }))
   const concurrency = getThumbnailConcurrencyForBatch(sizes)
-  const selected = candidates.slice(0, concurrency)
+  const selected = candidates.slice(0, concurrency).filter((id) => thumbnailBackfillIds.has(id))
   for (const id of selected) thumbnailBackfillIds.delete(id)
   return selected
 }
@@ -314,14 +317,15 @@ function getThumbnailConcurrencyForBatch(sizes: Array<{ width?: number; height?:
 }
 
 async function startThumbnailBackfill(id: string) {
-  thumbnailBackfillRunningIds.add(id)
+  const running = { cancelled: false }
+  thumbnailBackfillRunningIds.set(id, running)
 
   try {
     const cached = getCachedThumbnail(id)
     if (hasImageDimensions(cached)) return
     if (cached) {
       const size = await getImageDimensions(id)
-      if (!size) return
+      if (!size || running.cancelled) return
       const thumbnail = { ...cached, ...size }
       cacheThumbnail(id, thumbnail)
       thumbnailSubscribers.get(id)?.forEach((callback) => callback(thumbnail))
@@ -329,7 +333,7 @@ async function startThumbnailBackfill(id: string) {
     }
 
     const stored = await getImageThumbnail(id)
-    if (!stored?.thumbnailDataUrl) return
+    if (!stored?.thumbnailDataUrl || running.cancelled) return
     const thumbnail = {
       src: stored.thumbnailDataUrl,
       width: stored.width,

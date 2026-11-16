@@ -3,7 +3,7 @@ import { DEFAULT_PARAMS } from '../types'
 import type { TaskParams, TaskRecord } from '../types'
 import {
   normalizeActualParams,
-  normalizeTaskActualParams,
+  normalizeTaskImageMetadata,
   createTaskDonePatch,
   createTaskErrorPatch,
   deriveAgentImageActualParams,
@@ -89,16 +89,30 @@ describe('task lifecycle patches', () => {
 describe('task actual params', () => {
   it('清理尺寸类响应字段，保留请求参数和其他响应属性', () => {
     const source = task({
+      outputImages: ['a', 'b'],
       actualParams: { size: '2K', aspect_ratio: '1:1', resolution: '2K', quality: 'high' },
       actualParamsByImage: { a: { size: '1024x1024' }, b: { resolution: '1K', output_format: 'png' } },
     })
-    const result = normalizeTaskActualParams(source)
+    const result = normalizeTaskImageMetadata(source)
     expect(result.actualParams).toEqual({ quality: 'high' })
     expect(result.actualParamsByImage).toEqual({ b: { output_format: 'png' } })
     expect(result.params).toBe(source.params)
     expect(source.actualParams?.size).toBe('2K')
-    expect(normalizeTaskActualParams(result)).toBe(result)
+    expect(normalizeTaskImageMetadata(result)).toBe(result)
     expect(normalizeActualParams({ size: '2K' })).toBeUndefined()
+  })
+
+  it('清理不属于剩余输出的逐图参数和提示词，保留同图的其他槽位', () => {
+    const source = task({
+      outputImages: ['a', 'a'],
+      actualParamsByImage: { a: { quality: 'high' }, deleted: { quality: 'low' } },
+      revisedPromptByImage: { a: 'A', deleted: 'Deleted' },
+    })
+    const result = normalizeTaskImageMetadata(source)
+    expect(result.actualParamsByImage).toEqual({ a: { quality: 'high' } })
+    expect(result.revisedPromptByImage).toEqual({ a: 'A' })
+    expect(normalizeTaskImageMetadata(result)).toBe(result)
+    expect(source.revisedPromptByImage?.deleted).toBe('Deleted')
   })
 
   it('maps only non-empty actual params to matching output ids', () => {

@@ -2,7 +2,7 @@ import { DEFAULT_PARAMS, type StoredImage, type StoredImageThumbnail, type TaskR
 import * as indexedDbBackend from './dbIndexedDb'
 import * as tauriBackend from './dbTauri'
 import { isTauri } from './platform'
-import { normalizeTaskActualParams } from './taskState'
+import { normalizeTaskImageMetadata } from './taskState'
 import { hasImageDimensions } from './size'
 
 const THUMBNAIL_MAX_SIZE = 720
@@ -37,7 +37,7 @@ export const {
 } = backend
 
 export function putTask(task: TaskRecord): Promise<IDBValidKey> {
-  return backend.putTask(normalizeTaskActualParams(task))
+  return backend.putTask(normalizeTaskImageMetadata(task))
 }
 
 /** 旧任务记录没有 GPT Image 2.6 参数，帧参数也可能为 null，读出时补全，之后使用的任务参数都是完整的 */
@@ -97,9 +97,7 @@ export async function getImageThumbnail(id: string): Promise<StoredImageThumbnai
   if (existingThumbnail?.thumbnailVersion === THUMBNAIL_VERSION) {
     const size = await getImageDimensions(id)
     if (size && (existingThumbnail.width !== size.width || existingThumbnail.height !== size.height)) {
-      const thumbnail = { ...existingThumbnail, ...size }
-      await saveImageDimensions(id, size)
-      return thumbnail
+      return { ...existingThumbnail, ...size }
     }
     return existingThumbnail
   }
@@ -138,11 +136,7 @@ export async function getImageThumbnail(id: string): Promise<StoredImageThumbnai
     console.warn('保存缩略图失败', id, err)
   }
   if (metadata.width && metadata.height && (image.width !== metadata.width || image.height !== metadata.height)) {
-    try {
-      await putImage({ ...image, width: metadata.width, height: metadata.height })
-    } catch (err) {
-      console.warn('保存图片尺寸失败', id, err)
-    }
+    if (!await saveImageDimensions(id, { width: metadata.width, height: metadata.height })) return undefined
   }
   return thumbnail
 }

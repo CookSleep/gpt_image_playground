@@ -180,8 +180,14 @@ pub async fn images_clear(state: State<'_, StorageState>) -> Result<()> {
 }
 
 #[tauri::command]
-pub async fn image_ids(state: State<'_, StorageState>) -> Result<Vec<String>> {
-    run(state, |s| s.image_ids()).await
+pub async fn image_ids(
+    state: State<'_, StorageState>,
+    include_thumbnails: Option<bool>,
+) -> Result<Vec<String>> {
+    run(state, move |s| {
+        s.image_ids(include_thumbnails.unwrap_or(false))
+    })
+    .await
 }
 
 #[tauri::command]

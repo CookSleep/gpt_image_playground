@@ -81,15 +81,21 @@ export function normalizeActualParams(params: ActualParams | undefined): ActualP
   return hasActualParams(actual) ? actual : undefined
 }
 
-export function normalizeTaskActualParams(task: TaskRecord): TaskRecord {
+export function normalizeTaskImageMetadata(task: TaskRecord): TaskRecord {
   const actualParams = normalizeActualParams(task.actualParams)
+  const outputIds = new Set(task.outputImages)
   const entries = Object.entries(task.actualParamsByImage ?? {})
-  const changed = entries.some(([, params]) => normalizeActualParams(params) !== params)
+  const changed = entries.some(([id, params]) => !outputIds.has(id) || normalizeActualParams(params) !== params)
+  const kept = entries.filter(([id]) => outputIds.has(id))
   const actualParamsByImage = changed
-    ? mapActualParamsByImage(entries.map(([id]) => id), entries.map(([, params]) => params))
+    ? mapActualParamsByImage(kept.map(([id]) => id), kept.map(([, params]) => params))
     : task.actualParamsByImage
-  if (actualParams === task.actualParams && actualParamsByImage === task.actualParamsByImage) return task
-  return { ...task, actualParams, actualParamsByImage }
+  const prompts = Object.entries(task.revisedPromptByImage ?? {})
+  const revisedPromptByImage = prompts.some(([id]) => !outputIds.has(id))
+    ? mapRevisedPromptsByImage(task.outputImages, task.outputImages.map((id) => task.revisedPromptByImage?.[id]))
+    : task.revisedPromptByImage
+  if (actualParams === task.actualParams && actualParamsByImage === task.actualParamsByImage && revisedPromptByImage === task.revisedPromptByImage) return task
+  return { ...task, actualParams, actualParamsByImage, revisedPromptByImage }
 }
 
 export function deriveAgentImageActualParams(params: ActualParams | undefined): ActualParams {
