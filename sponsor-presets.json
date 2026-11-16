@@ -35,6 +35,72 @@
           "b64JsonPaths": []
         }
       }
+    },
+    {
+      "id": "custom-apixo",
+      "name": "APIXO AI",
+      "submit": {
+        "path": "generateTask/{model}",
+        "method": "POST",
+        "contentType": "json",
+        "omitValues": { "$params.quality": ["auto"] },
+        "body": {
+          "request_type": "async",
+          "input": {
+            "mode": "$mode",
+            "prompt": "$prompt",
+            "size": "$size.pixels",
+            "quality": "$params.quality",
+            "complexity": "$params.complexity",
+            "output_format": "$params.output_format",
+            "frame_count": "$params.frame_count",
+            "frame_duration_ms": "$params.frame_duration_ms",
+            "image_urls": "$inputImages.urls"
+          }
+        },
+        "taskIdPath": "data.taskId"
+      },
+      "poll": {
+        "path": "statusTask/{model}",
+        "method": "GET",
+        "query": {
+          "taskId": "{task_id}"
+        },
+        "intervalSeconds": 5,
+        "statusPath": "data.state",
+        "successValues": ["success"],
+        "failureValues": ["failed"],
+        "errorPath": "data.failMsg",
+        "result": {
+          "imageUrlPaths": ["data.resultJson.resultUrls.*"],
+          "b64JsonPaths": []
+        }
+      },
+      "modelOverrides": [
+        {
+          "models": ["seedream-5-5"],
+          "submit": {
+            "path": "generateTask/{model}",
+            "method": "POST",
+            "contentType": "json",
+            "body": {
+              "request_type": "async",
+              "input": {
+                "mode": "$mode",
+                "prompt": "$prompt",
+                "size": "$size.pixels",
+                "aspect_ratio": "$params.aspect_ratio",
+                "resolution": "$resolution.lower",
+                "background": "$params.background",
+                "output_format": "$params.output_format",
+                "watermark": "$params.watermark",
+                "image_urls": "$inputImages.urls"
+              }
+            },
+            "taskIdPath": "data.taskId"
+          }
+        }
+      ]
     }
   ],
   "profiles": [
@@ -91,6 +157,15 @@
       "provider": "sb2api-async",
       "baseUrl": "https://api.sublyx.org/v1",
       "model": "gpt-image2.5-flare",
+      "apiMode": "images"
+    },
+    {
+      "id": "apixo-ai",
+      "name": "APIXO AI",
+      "description": "[APIXO AI](https://apixo.ai/zh?utm_source=github&utm_medium=sponsorship&utm_campaign=gpt_image_playground&utm_content=brand_mention) 是一站式 AI 视频制作与多模态创作平台，支持 Seedream 5.5 生图与参考图编辑，提供在线创作、API 和 [MCP 接入](https://apixo.ai/zh/mcp?utm_source=github&utm_medium=sponsorship&utm_campaign=gpt_image_playground&utm_content=mcp_page)。[Seedream 5.5 生图 API](https://apixo.ai/zh/models/seedream-5-5?utm_source=github&utm_medium=sponsorship&utm_campaign=gpt_image_playground&utm_content=seedream_5_5) 限时七折，输出图像 $0.014/张起（按输出规格计费，输入图像另计）。",
+      "provider": "custom-apixo",
+      "baseUrl": "https://api.apixo.ai/api/v1",
+      "model": "gpt-image-2.6-sunburst, gpt-image-2.6-flare, seedream-5-5",
       "apiMode": "images"
     }
   ]

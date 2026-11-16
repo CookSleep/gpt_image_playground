@@ -62,6 +62,12 @@
 </td>
 <td valign="middle"><b><a href="https://api.sublyx.org/register?aff=U62PAZERCHEA">Sublyx</a></b>&nbsp;是一家稳定高效的 AI API 聚合网关，支持 OpenAI、Claude、Grok、Codex、gpt-image-2 等主流模型，兼容 OpenAI SDK、Claude Code、Codex、Cherry Studio 等常用工具。通过<a href="https://api.sublyx.org/register?aff=U62PAZERCHEA">链接注册</a>并使用优惠码 <code>IMG2</code>，可额外领取 10 刀额度。<a href="https://img2.icedit.ai">生图工作台</a></td>
 </tr>
+<tr>
+<td width="180" align="center" valign="middle">
+  <a href="https://apixo.ai/zh?utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gpt_image_playground&amp;utm_content=logo">APIXO AI</a>
+</td>
+<td valign="middle"><b><a href="https://apixo.ai/zh?utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gpt_image_playground&amp;utm_content=brand_mention">APIXO AI</a></b>&nbsp;是一站式 AI 视频制作与多模态创作平台，支持 Seedream 5.5 生图与参考图编辑，提供在线创作、API 和 <a href="https://apixo.ai/zh/mcp?utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gpt_image_playground&amp;utm_content=mcp_page">MCP 接入</a>。<a href="https://apixo.ai/zh/models/seedream-5-5?utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gpt_image_playground&amp;utm_content=seedream_5_5">Seedream 5.5 生图 API</a> 限时七折，输出图像 $0.014/张起（按输出规格计费，输入图像另计）。</td>
+</tr>
 </table>
 
 ---
