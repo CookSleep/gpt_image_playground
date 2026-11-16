@@ -1,12 +1,14 @@
 import {
   CURRENT_THUMBNAIL_VERSION,
   getImage,
+  getImageDimensions,
   getImageMeta,
   getImageThumbnail,
 } from './db'
 import { getImageStats, getThumbnailFile, payloadToDataUrl, RAW_DATA_URL_MIME } from './dbTauri'
 import { getFreshThumbnailIds, getThumbnailSource } from './imageBlob'
 import { isTauri } from './platform'
+import { hasImageDimensions } from './size'
 
 /** 从存储读出的 src 是 Blob URL（旧格式记录为 dataUrl），生成或导入时缓存的仍是 dataUrl */
 type ImageThumbnail = {
@@ -16,16 +18,20 @@ type ImageThumbnail = {
   thumbnailVersion?: number
 }
 
+type ImageDimensions = { width: number; height: number }
+
 const imageCache = new Map<string, string>()
 const thumbnailCache = new Map<string, ImageThumbnail>()
 const thumbnailBackfillIds = new Map<string, 'visible' | 'background'>()
 const thumbnailBackfillRunningIds = new Set<string>()
 const thumbnailSubscribers = new Map<string, Set<(thumbnail: ImageThumbnail) => void>>()
+const dimensionsWaiters = new Map<string, Array<(size: ImageDimensions | undefined) => void>>()
 // 正在显示某张缩略图的组件数（以订阅计）。使用中的缓存项不淘汰，其 Blob URL 被替换或删除时推迟到无人使用再撤销，
 // 避免撤销仍在页面上的图片
 const thumbnailUsers = new Map<string, number>()
 const pendingRevokeSrcs = new Map<string, string[]>()
 let thumbnailBackfillScheduled = false
+let thumbnailBackfillProcessing = false
 
 const MAX_IMAGE_CACHE_ENTRIES = 8
 const MAX_THUMBNAIL_CACHE_ENTRIES = 200
@@ -104,14 +110,17 @@ export function deleteImageCacheEntry(id: string) {
   imageCache.delete(id)
   deleteCachedThumbnail(id)
   thumbnailBackfillIds.delete(id)
-  thumbnailBackfillRunningIds.delete(id)
   thumbnailSubscribers.delete(id)
+  dimensionsWaiters.get(id)?.forEach((resolve) => resolve(undefined))
+  dimensionsWaiters.delete(id)
 }
 
 export function clearImageCaches() {
   imageCache.clear()
   for (const id of [...thumbnailCache.keys()]) deleteCachedThumbnail(id)
   thumbnailBackfillIds.clear()
+  for (const waiters of dimensionsWaiters.values()) waiters.forEach((resolve) => resolve(undefined))
+  dimensionsWaiters.clear()
 }
 
 export async function ensureImageCached(id: string): Promise<string | undefined> {
@@ -127,7 +136,10 @@ export async function ensureImageCached(id: string): Promise<string | undefined>
 
 export async function ensureImageThumbnailCached(id: string): Promise<ImageThumbnail | undefined> {
   const cached = getCachedThumbnail(id)
-  if (cached) return cached
+  if (cached) {
+    if (!hasImageDimensions(cached)) scheduleThumbnailBackfill([id], 'visible')
+    return cached
+  }
 
   const thumbnail = isTauri ? await readTauriThumbnail(id) : await getThumbnailSource(id, CURRENT_THUMBNAIL_VERSION)
   if (!thumbnail) {
@@ -142,7 +154,31 @@ export async function ensureImageThumbnailCached(id: string): Promise<ImageThumb
     return raced
   }
   cacheThumbnail(id, thumbnail)
+  if (!hasImageDimensions(thumbnail)) scheduleThumbnailBackfill([id], 'visible')
   return thumbnail
+}
+
+/** 元数据读取无需排队；原图解码与缩略图重建共用补全队列。 */
+export async function ensureImageDimensionsCached(id: string): Promise<ImageDimensions | undefined> {
+  try {
+    const cached = getCachedThumbnail(id)
+    if (hasImageDimensions(cached)) return { width: cached.width, height: cached.height }
+    const meta = await getImageMeta(id)
+    if (!meta) return undefined
+    if (hasImageDimensions(meta)) return { width: meta.width, height: meta.height }
+    await ensureImageThumbnailCached(id)
+    const thumbnail = getCachedThumbnail(id)
+    if (hasImageDimensions(thumbnail)) return { width: thumbnail.width, height: thumbnail.height }
+    return new Promise((resolve) => {
+      const waiters = dimensionsWaiters.get(id)
+      if (waiters) waiters.push(resolve)
+      else dimensionsWaiters.set(id, [resolve])
+      scheduleThumbnailBackfill([id], 'visible')
+    })
+  } catch (err) {
+    console.warn('读取图片尺寸失败', id, err)
+    return undefined
+  }
 }
 
 /** 客户端直接用文件二进制生成 Blob URL，省去 base64 编码和超长 dataUrl 字符串 */
@@ -188,7 +224,8 @@ export function subscribeImageThumbnail(id: string, callback: (thumbnail: ImageT
 
 export function scheduleThumbnailBackfill(ids: Iterable<string>, priority: 'visible' | 'background' = 'background') {
   for (const id of ids) {
-    if (getCachedThumbnail(id) || thumbnailBackfillRunningIds.has(id)) continue
+    const cached = getCachedThumbnail(id)
+    if (hasImageDimensions(cached) || thumbnailBackfillRunningIds.has(id)) continue
     const currentPriority = thumbnailBackfillIds.get(id)
     if (!currentPriority || priority === 'visible') thumbnailBackfillIds.set(id, priority)
   }
@@ -228,22 +265,24 @@ function scheduleThumbnailBackfillTick() {
 }
 
 async function processNextThumbnailBackfill() {
-  if (thumbnailBackfillRunningIds.size > 0) return
-
-  const ids = await getNextThumbnailBackfillBatch()
-  for (const id of ids) void startThumbnailBackfill(id)
-
-  if (thumbnailBackfillIds.size > 0) scheduleThumbnailBackfillTick()
+  if (thumbnailBackfillProcessing || thumbnailBackfillRunningIds.size > 0) return
+  thumbnailBackfillProcessing = true
+  try {
+    const ids = await getNextThumbnailBackfillBatch()
+    for (const id of ids) void startThumbnailBackfill(id)
+  } finally {
+    thumbnailBackfillProcessing = false
+    if (thumbnailBackfillRunningIds.size === 0) scheduleThumbnailBackfillTick()
+  }
 }
 
 async function getNextThumbnailBackfillBatch() {
   const candidates = getOrderedThumbnailBackfillIds().slice(0, MAX_THUMBNAIL_BACKFILL_CONCURRENT)
   if (candidates.length === 0) return []
 
-  // 只需宽高：客户端查数据库记录（不读文件），网页版取记录元数据；查询失败时按尺寸未知处理（并发 1）
-  const stats = isTauri ? new Map((await getImageStats().catch(() => [])).map((stat) => [stat.id, stat])) : undefined
+  // 只查询候选图片的元数据，尺寸未知时按并发 1 处理。
   const sizes = await Promise.all(candidates.map(async (id) => {
-    const meta = stats ? stats.get(id) : await getImageMeta(id)
+    const meta = await getImageMeta(id).catch(() => undefined)
     return { width: meta?.width ?? undefined, height: meta?.height ?? undefined }
   }))
   const concurrency = getThumbnailConcurrencyForBatch(sizes)
@@ -264,9 +303,9 @@ function getOrderedThumbnailBackfillIds() {
 
 function getThumbnailConcurrencyForBatch(sizes: Array<{ width?: number; height?: number }>) {
   let maxMegapixels = 0
-  for (const { width, height } of sizes) {
-    if (!width || !height) return 1
-    maxMegapixels = Math.max(maxMegapixels, (width * height) / 1_000_000)
+  for (const size of sizes) {
+    if (!hasImageDimensions(size)) return 1
+    maxMegapixels = Math.max(maxMegapixels, (size.width * size.height) / 1_000_000)
   }
   if (maxMegapixels >= 8) return 1
   if (maxMegapixels >= 4) return 2
@@ -278,25 +317,34 @@ async function startThumbnailBackfill(id: string) {
   thumbnailBackfillRunningIds.add(id)
 
   try {
-    if (getCachedThumbnail(id)) return
-
-    const thumbnail = await getImageThumbnail(id)
-    if (thumbnail?.thumbnailDataUrl) {
-      cacheThumbnail(id, {
-        src: thumbnail.thumbnailDataUrl,
-        width: thumbnail.width,
-        height: thumbnail.height,
-        thumbnailVersion: thumbnail.thumbnailVersion,
-      })
-      thumbnailSubscribers.get(id)?.forEach((callback) => callback({
-        src: thumbnail.thumbnailDataUrl,
-        width: thumbnail.width,
-        height: thumbnail.height,
-      }))
+    const cached = getCachedThumbnail(id)
+    if (hasImageDimensions(cached)) return
+    if (cached) {
+      const size = await getImageDimensions(id)
+      if (!size) return
+      const thumbnail = { ...cached, ...size }
+      cacheThumbnail(id, thumbnail)
+      thumbnailSubscribers.get(id)?.forEach((callback) => callback(thumbnail))
+      return
     }
-  } catch {
-    // 缩略图生成失败时保留占位图，后续仍可再次补全。
+
+    const stored = await getImageThumbnail(id)
+    if (!stored?.thumbnailDataUrl) return
+    const thumbnail = {
+      src: stored.thumbnailDataUrl,
+      width: stored.width,
+      height: stored.height,
+      thumbnailVersion: stored.thumbnailVersion,
+    }
+    cacheThumbnail(id, thumbnail)
+    thumbnailSubscribers.get(id)?.forEach((callback) => callback(thumbnail))
+  } catch (err) {
+    console.warn('补全图片信息失败', id, err)
   } finally {
+    const thumbnail = getCachedThumbnail(id)
+    const size = hasImageDimensions(thumbnail) ? { width: thumbnail.width, height: thumbnail.height } : undefined
+    dimensionsWaiters.get(id)?.forEach((resolve) => resolve(size))
+    dimensionsWaiters.delete(id)
     thumbnailBackfillRunningIds.delete(id)
     scheduleThumbnailBackfillTick()
   }

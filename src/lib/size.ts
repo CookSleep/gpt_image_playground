@@ -1,3 +1,5 @@
+import type { TaskParams } from '../types'
+
 const SIZE_PATTERN = /^\s*(\d+)\s*[xX×]\s*(\d+)\s*$/
 const RATIO_PATTERN = /^\s*(\d+(?:\.\d+)?)\s*[:xX×]\s*(\d+(?:\.\d+)?)\s*$/
 const SIZE_MULTIPLE = 16
@@ -220,6 +222,52 @@ export function formatImageRatio(width: number, height: number) {
   return friendlyNearest && friendlyNearest.delta <= 0.04 ? `≈${friendlyNearest.label}` : simplified
 }
 
+/** 各模型可选比例的并集，用于给实际像素对应比例名 */
+const MODEL_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9', '1:2', '2:1', '5:2', '1:4', '4:1', '1:8', '8:1', '1:16', '16:1', '9:19.5', '19.5:9', '9:20', '20:9'].map((label) => {
+  const [width, height] = label.split(':').map(Number)
+  return { label, value: width / height }
+})
+
+/** 分辨率档位的基准边长，档位按总像素的平方根划分 */
+const RESOLUTION_TIERS = [
+  { label: '512', side: 512 },
+  { label: '1K', side: 1024 },
+  { label: '1.5K', side: 1536 },
+  { label: '2K', side: 2048 },
+  { label: '3K', side: 3072 },
+  { label: '4K', side: 4096 },
+]
+
+// 容差按对数差计，覆盖各家取整（Gemini 的 4:3 实际为 1184x864，约差 3%）。
+const RATIO_TOLERANCE = 0.04
+
+/**
+ * 由实际像素推算比例和分辨率档位，供按比例和分辨率出图的模型与请求值对比，这类接口一般不回传这两项。
+ * 比例在取整误差内沿用请求值，档位由像素决定。
+ */
+export function getActualRatioAndResolution(size: string | undefined, requested: Pick<TaskParams, 'aspect_ratio' | 'resolution'>): Pick<TaskParams, 'aspect_ratio' | 'resolution'> {
+  const match = size?.match(SIZE_PATTERN)
+  if (!match) return {}
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) return {}
+
+  // 按对数比较，放大和缩小相同倍数算作相同差距
+  const distance = (a: number, b: number) => Math.abs(Math.log(a / b))
+  const ratio = width / height
+  const side = Math.sqrt(width * height)
+  const requestedRatio = parseRatio(requested.aspect_ratio ?? '')
+  const closestRatio = MODEL_RATIOS.reduce((best, item) => distance(ratio, item.value) < distance(ratio, best.value) ? item : best)
+  const closestTier = RESOLUTION_TIERS.reduce((best, tier) => distance(side, tier.side) < distance(side, best.side) ? tier : best)
+
+  return {
+    aspect_ratio: requestedRatio && distance(ratio, requestedRatio.width / requestedRatio.height) <= RATIO_TOLERANCE
+      ? requested.aspect_ratio
+      : distance(ratio, closestRatio.value) <= RATIO_TOLERANCE ? closestRatio.label : formatImageRatio(width, height),
+    resolution: requested.resolution?.toUpperCase() === closestTier.label ? requested.resolution : closestTier.label,
+  }
+}
+
 /**
  * 每个档位的像素预算上限。
  * 在该预算内、满足所有 OpenAI 约束的前提下，选取总像素最大的候选尺寸。
@@ -323,4 +371,8 @@ export function calculateImageSize(tier: SizeTier, ratio: string) {
 
   if (bestPixels === 0) return null
   return `${bestWidth}x${bestHeight}`
+}
+
+export function hasImageDimensions(size: { width?: number; height?: number } | undefined): size is { width: number; height: number } {
+  return typeof size?.width === 'number' && typeof size.height === 'number' && Number.isSafeInteger(size.width) && Number.isSafeInteger(size.height) && size.width > 0 && size.height > 0
 }

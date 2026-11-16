@@ -3,8 +3,9 @@ import { useStore, reuseConfig, editOutputs, removeTask, removeTaskOutput, showC
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
-import { ensureImageCached, getCachedImage } from '../lib/imageCache'
+import { ensureImageCached, ensureImageDimensionsCached, getCachedImage } from '../lib/imageCache'
 import { formatImageRatio } from '../lib/size'
+import { getImageActualParams } from '../lib/imageActualParams'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyImageSourceToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
@@ -166,6 +167,17 @@ export default function DetailModal() {
   const currentOutputPreviewSrc = currentOutputImageId ? outputPreviewSrcs[currentOutputImageId] || '' : ''
 
   useEffect(() => {
+    if (!currentOutputImageId) return
+    let cancelled = false
+    ensureImageDimensionsCached(currentOutputImageId).then((size) => {
+      if (cancelled || !size) return
+      setImageRatios((prev) => ({ ...prev, [currentOutputImageId]: formatImageRatio(size.width, size.height) }))
+      setImageSizes((prev) => ({ ...prev, [currentOutputImageId]: `${size.width}×${size.height}` }))
+    })
+    return () => { cancelled = true }
+  }, [currentOutputImageId])
+
+  useEffect(() => {
     const outputImageIds = task?.outputImages ?? []
     if (outputImageIds.length === 0) {
       setOutputPreviewSrcs({})
@@ -226,9 +238,7 @@ export default function DetailModal() {
   const baseActualParams = currentOutputImageId
     ? task.actualParamsByImage?.[currentOutputImageId] ?? task.actualParams
     : task.actualParams
-  const currentActualParams = (baseActualParams?.size || !currentImageSize)
-    ? baseActualParams
-    : { ...(baseActualParams ?? {}), size: currentImageSize.replace('×', 'x') }
+  const currentActualParams = getImageActualParams(task, currentImageSize, baseActualParams)
   const currentRevisedPrompt = currentOutputImageId ? task.revisedPromptByImage?.[currentOutputImageId]?.trim() : ''
   // 将 @图N 等 mention 标记和透明背景追加提示词都按实际请求内容比较，
   // 避免仅由本地请求预处理导致的不一致被当作“API 改写”。
@@ -529,19 +539,6 @@ export default function DetailModal() {
                 src={currentOutputPreviewSrc}
                 data-image-id={currentOutputImageId}
                 className="saveable-image max-w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] object-contain cursor-pointer"
-                onLoad={(e) => {
-                  const image = e.currentTarget
-                  if (currentOutputImageId && image.naturalWidth > 0 && image.naturalHeight > 0) {
-                    setImageRatios((prev) => ({
-                      ...prev,
-                      [currentOutputImageId]: formatImageRatio(image.naturalWidth, image.naturalHeight),
-                    }))
-                    setImageSizes((prev) => ({
-                      ...prev,
-                      [currentOutputImageId]: `${image.naturalWidth}×${image.naturalHeight}`,
-                    }))
-                  }
-                }}
                 onClick={() =>
                   setLightboxImageId(currentOutputImageId, task.outputImages)
                 }
@@ -996,7 +993,7 @@ export default function DetailModal() {
                   <span className="text-gray-400 dark:text-gray-500">比例</span>
                   <br />
                   <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                    <DetailParamValue task={task} paramKey="aspect_ratio" className="font-medium" actualParams={currentActualParams} />
+                    <DetailParamValue task={task} paramKey="aspect_ratio" className="font-medium" actualParams={currentActualParams} tooltip="图片实际值" />
                   </div>
                 </div>
               )}
@@ -1005,7 +1002,7 @@ export default function DetailModal() {
                   <span className="text-gray-400 dark:text-gray-500">分辨率</span>
                   <br />
                   <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                    <DetailParamValue task={task} paramKey="resolution" className="font-medium" actualParams={currentActualParams} />
+                    <DetailParamValue task={task} paramKey="resolution" className="font-medium" actualParams={currentActualParams} tooltip="图片实际值" />
                   </div>
                 </div>
               )}
@@ -1014,7 +1011,7 @@ export default function DetailModal() {
                   <span className="text-gray-400 dark:text-gray-500">尺寸</span>
                   <br />
                   <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                    <DetailParamValue task={task} paramKey="size" className="font-medium" actualParams={currentActualParams} />
+                    <DetailParamValue task={task} paramKey="size" className="font-medium" actualParams={currentActualParams} tooltip="图片实际值" />
                   </div>
                 </div>
               )}

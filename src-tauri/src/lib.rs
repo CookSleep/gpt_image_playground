@@ -63,6 +63,8 @@ pub fn run() {
             storage::commands::conversations_clear,
             storage::commands::conversations_replace,
             storage::commands::image_get,
+            storage::commands::image_meta,
+            storage::commands::image_dimensions_update,
             storage::commands::image_put,
             storage::commands::image_delete,
             storage::commands::images_clear,

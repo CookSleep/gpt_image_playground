@@ -2,6 +2,8 @@ import { DEFAULT_PARAMS, type StoredImage, type StoredImageThumbnail, type TaskR
 import * as indexedDbBackend from './dbIndexedDb'
 import * as tauriBackend from './dbTauri'
 import { isTauri } from './platform'
+import { normalizeTaskActualParams } from './taskState'
+import { hasImageDimensions } from './size'
 
 const THUMBNAIL_MAX_SIZE = 720
 const THUMBNAIL_QUALITY = 0.9
@@ -9,11 +11,12 @@ const THUMBNAIL_VERSION = 2
 
 export const CURRENT_THUMBNAIL_VERSION = THUMBNAIL_VERSION
 
+const imageDimensionsPending = new Map<string, Promise<{ width: number; height: number } | undefined>>()
+
 // 底层存取按平台转发：网页版用 IndexedDB，客户端用 Rust 侧的 SQLite 与图片文件；标注类型以约束两套实现接口一致
 const backend: typeof indexedDbBackend = isTauri ? tauriBackend : indexedDbBackend
 
 export const {
-  putTask,
   deleteTask,
   commitTaskDeletion,
   clearTasks,
@@ -23,6 +26,7 @@ export const {
   replaceAgentConversations,
   getImage,
   getImageMeta,
+  updateImageDimensions,
   getStoredImageThumbnail,
   putImageThumbnail,
   getAllImages,
@@ -31,6 +35,10 @@ export const {
   deleteImage,
   clearImages,
 } = backend
+
+export function putTask(task: TaskRecord): Promise<IDBValidKey> {
+  return backend.putTask(normalizeTaskActualParams(task))
+}
 
 /** 旧任务记录没有 GPT Image 2.6 参数，帧参数也可能为 null，读出时补全，之后使用的任务参数都是完整的 */
 export async function getAllTasks(): Promise<TaskRecord[]> {
@@ -47,14 +55,51 @@ export async function getAllTasks(): Promise<TaskRecord[]> {
 
 // ===== Thumbnails =====
 
+async function saveImageDimensions(id: string, size: { width: number; height: number }) {
+  try {
+    return await updateImageDimensions(id, size.width, size.height) ? size : undefined
+  } catch (err) {
+    console.warn('保存图片尺寸失败', id, err)
+    return size
+  }
+}
+
+/** 优先复用原图元数据；旧记录缺失时按需补全，同一张图片的并发读取共用一次解析。 */
+export async function getImageDimensions(id: string): Promise<{ width: number; height: number } | undefined> {
+  const pending = imageDimensionsPending.get(id)
+  if (pending) return pending
+  const request = (async () => {
+    const meta = await getImageMeta(id)
+    if (!meta) return undefined
+    if (hasImageDimensions(meta)) return { width: meta.width, height: meta.height }
+    const thumbnail = await getStoredImageThumbnail(id)
+    if (hasImageDimensions(thumbnail)) {
+      return saveImageDimensions(id, { width: thumbnail.width, height: thumbnail.height })
+    }
+    const image = await getImage(id)
+    if (!image) return undefined
+    const decoded = await loadImage(image.dataUrl)
+    const size = { width: decoded.naturalWidth, height: decoded.naturalHeight }
+    if (!hasImageDimensions(size)) return undefined
+    return saveImageDimensions(id, size)
+  })().catch((err) => {
+    console.warn('读取图片尺寸失败', id, err)
+    return undefined
+  }).finally(() => {
+    imageDimensionsPending.delete(id)
+  })
+  imageDimensionsPending.set(id, request)
+  return request
+}
+
 export async function getImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
   const existingThumbnail = await getStoredImageThumbnail(id)
   if (existingThumbnail?.thumbnailVersion === THUMBNAIL_VERSION) {
-    // 先只查元数据，确实缺宽高时才读出整张原图写回
-    const meta = await getImageMeta(id)
-    if (meta && (!meta.width || !meta.height) && existingThumbnail.width && existingThumbnail.height) {
-      const image = await getImage(id)
-      if (image) await putImage({ ...image, width: existingThumbnail.width, height: existingThumbnail.height })
+    const size = await getImageDimensions(id)
+    if (size && (existingThumbnail.width !== size.width || existingThumbnail.height !== size.height)) {
+      const thumbnail = { ...existingThumbnail, ...size }
+      await saveImageDimensions(id, size)
+      return thumbnail
     }
     return existingThumbnail
   }
@@ -62,7 +107,7 @@ export async function getImageThumbnail(id: string): Promise<StoredImageThumbnai
   const image = await getImage(id)
   if (!image) return undefined
   const legacyImage = image as StoredImage & Partial<StoredImageThumbnail>
-  if (legacyImage.thumbnailDataUrl && legacyImage.thumbnailVersion === THUMBNAIL_VERSION) {
+  if (legacyImage.thumbnailDataUrl && legacyImage.thumbnailVersion === THUMBNAIL_VERSION && hasImageDimensions(legacyImage)) {
     const thumbnail: StoredImageThumbnail = {
       id,
       thumbnailDataUrl: legacyImage.thumbnailDataUrl,
@@ -70,9 +115,10 @@ export async function getImageThumbnail(id: string): Promise<StoredImageThumbnai
       height: legacyImage.height,
       thumbnailVersion: THUMBNAIL_VERSION,
     }
-    await putImageThumbnail(thumbnail)
-    if ((!image.width || !image.height) && thumbnail.width && thumbnail.height) {
-      await putImage({ ...image, width: thumbnail.width, height: thumbnail.height })
+    try {
+      await putImageThumbnail(thumbnail)
+    } catch (err) {
+      console.warn('保存缩略图失败', id, err)
     }
     return thumbnail
   }
@@ -86,9 +132,17 @@ export async function getImageThumbnail(id: string): Promise<StoredImageThumbnai
     height: metadata.height,
     thumbnailVersion: THUMBNAIL_VERSION,
   }
-  await putImageThumbnail(thumbnail)
+  try {
+    await putImageThumbnail(thumbnail)
+  } catch (err) {
+    console.warn('保存缩略图失败', id, err)
+  }
   if (metadata.width && metadata.height && (image.width !== metadata.width || image.height !== metadata.height)) {
-    await putImage({ ...image, width: metadata.width, height: metadata.height })
+    try {
+      await putImage({ ...image, width: metadata.width, height: metadata.height })
+    } catch (err) {
+      console.warn('保存图片尺寸失败', id, err)
+    }
   }
   return thumbnail
 }
@@ -179,7 +233,7 @@ export async function storeImageWithSize(dataUrl: string, source: NonNullable<St
     }
     return { id, width, height }
   }
-  return { id, width: existing.width, height: existing.height }
+  return { id, ...await getImageDimensions(id) }
 }
 
 function loadImage(dataUrl: string): Promise<HTMLImageElement> {

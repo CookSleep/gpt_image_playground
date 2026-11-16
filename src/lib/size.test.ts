@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateImageSize, normalizeCodexCliImageSize, prependCodexCliSizePrompt, stripInjectedCodexCliSizePrompt } from './size'
+import { calculateImageSize, getActualRatioAndResolution, normalizeCodexCliImageSize, prependCodexCliSizePrompt, stripInjectedCodexCliSizePrompt } from './size'
 
 describe('calculateImageSize', () => {
   it('uses common 16:9 display resolutions for the built-in tiers', () => {
@@ -44,5 +44,40 @@ describe('Codex CLI size compatibility', () => {
     expect(stripInjectedCodexCliSizePrompt('Generate at 2048x2048 resolution. Draw a cat.', 'Draw a cat.', '1024x1024')).toBe('Generate at 2048x2048 resolution. Draw a cat.')
     expect(stripInjectedCodexCliSizePrompt('Generate at 1024x1024 resolution. Draw a cat.', 'Generate at 1024x1024 resolution. Draw a cat.', '1024x1024')).toBe('Generate at 1024x1024 resolution. Draw a cat.')
     expect(stripInjectedCodexCliSizePrompt('Generate at 1024x1024 resolution. Draw a cat.', 'Draw a cat.', 'auto')).toBe('Generate at 1024x1024 resolution. Draw a cat.')
+  })
+})
+
+describe('getActualRatioAndResolution', () => {
+  it('reports the ratio and tier a model actually returned', () => {
+    // Seedream 5.0 把 1K 请求提升到 2K，自动比例实际出图为 4:3
+    expect(getActualRatioAndResolution('2304x1728', { aspect_ratio: 'auto', resolution: '1K' })).toEqual({ aspect_ratio: '4:3', resolution: '2K' })
+    expect(getActualRatioAndResolution('5504x3072', { aspect_ratio: '16:9', resolution: '2K' })).toEqual({ aspect_ratio: '16:9', resolution: '4K' })
+  })
+
+  it('keeps requested values within rounding differences', () => {
+    expect(getActualRatioAndResolution('1184x864', { aspect_ratio: '4:3', resolution: '1K' })).toEqual({ aspect_ratio: '4:3', resolution: '1K' })
+    expect(getActualRatioAndResolution('2730x1536', { aspect_ratio: '16:9', resolution: '2K' })).toEqual({ aspect_ratio: '16:9', resolution: '2K' })
+    expect(getActualRatioAndResolution('1773x1330', { aspect_ratio: '4:3', resolution: '1.5K' })).toEqual({ aspect_ratio: '4:3', resolution: '1.5K' })
+    expect(getActualRatioAndResolution('2048x2048', { aspect_ratio: '1:1', resolution: '2k' })).toEqual({ aspect_ratio: '1:1', resolution: '2k' })
+  })
+
+  it('names exact ratios with the labels offered in settings', () => {
+    expect(getActualRatioAndResolution('2048x1024', { aspect_ratio: 'auto' }).aspect_ratio).toBe('2:1')
+    expect(getActualRatioAndResolution('1280x1024', { aspect_ratio: '16:9' }).aspect_ratio).toBe('5:4')
+    expect(getActualRatioAndResolution('768x1664', { aspect_ratio: 'auto' }).aspect_ratio).toBe('9:19.5')
+  })
+
+  it('returns nothing without a measurable size', () => {
+    expect(getActualRatioAndResolution(undefined, { resolution: '1K' })).toEqual({})
+    expect(getActualRatioAndResolution('2k', { resolution: '1K' })).toEqual({})
+    expect(getActualRatioAndResolution('0x1024', {})).toEqual({})
+    expect(getActualRatioAndResolution('9999999999999999999999x1024', {})).toEqual({})
+  })
+
+  it('同一像素尺寸的档位不随请求档位改变', () => {
+    for (const resolution of ['1K', '1.5K', '2K', '4K']) {
+      expect(getActualRatioAndResolution('1770x1770', { resolution }).resolution).toBe('1.5K')
+      expect(getActualRatioAndResolution('2496x1664', { resolution }).resolution).toBe('2K')
+    }
   })
 })

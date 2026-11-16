@@ -190,17 +190,21 @@ export async function getImage(id: string): Promise<StoredImage | undefined> {
   }
 }
 
-/** 只取元数据（宽高等），不把图片编码成 dataUrl */
+/** 只查询数据库中的元数据，不读取图片文件。 */
 export async function getImageMeta(id: string): Promise<Omit<StoredImage, 'dataUrl'> | undefined> {
-  const file = await getImageFile(id)
-  if (!file) return undefined
+  const meta = await call<FileMeta | null>('image_meta', { id })
+  if (!meta) return undefined
   return {
     id,
-    createdAt: file.meta.createdAt ?? undefined,
-    source: file.meta.source ?? undefined,
-    width: file.meta.width ?? undefined,
-    height: file.meta.height ?? undefined,
+    createdAt: meta.createdAt ?? undefined,
+    source: meta.source ?? undefined,
+    width: meta.width ?? undefined,
+    height: meta.height ?? undefined,
   }
+}
+
+export function updateImageDimensions(id: string, width: number, height: number): Promise<boolean> {
+  return call('image_dimensions_update', { id, width, height })
 }
 
 export async function getStoredImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {

@@ -287,6 +287,48 @@ impl Storage {
         }
     }
 
+    pub fn image_meta(&self, id: &str) -> Result<Option<FileMeta>> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT mime, width, height, source, created_at FROM images WHERE id = ?1",
+                [id],
+                |row| {
+                    Ok(FileMeta {
+                        id: id.to_string(),
+                        mime: row.get(0)?,
+                        width: row.get(1)?,
+                        height: row.get(2)?,
+                        source: row.get(3)?,
+                        created_at: row.get(4)?,
+                        thumbnail_version: None,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// 只更新仍存在的图片，避免异步解析完成后恢复已删除的记录。
+    pub fn update_image_dimensions(&self, id: &str, width: i64, height: i64) -> Result<bool> {
+        if width <= 0 || height <= 0 {
+            return Err(StorageError::new("invalid", "图片尺寸无效"));
+        }
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let updated = tx.execute(
+            "UPDATE images SET width = ?2, height = ?3 WHERE id = ?1",
+            params![id, width, height],
+        )? > 0;
+        if updated {
+            tx.execute(
+                "UPDATE thumbnails SET width = ?2, height = ?3 WHERE id = ?1",
+                params![id, width, height],
+            )?;
+        }
+        tx.commit()?;
+        Ok(updated)
+    }
+
     /// 各图片文件的完整路径，供 CLI 交给 AI 工具直接读取；没有记录或文件缺失时为 None
     pub fn image_paths(&self, ids: &[String]) -> Result<Vec<Option<String>>> {
         let conn = self.lock();
@@ -296,7 +338,10 @@ impl Storage {
                 let file: Option<String> = stmt.query_row([id], |row| row.get(0)).optional()?;
                 // 库中的相对路径以 / 分隔，逐段拼接成本机的写法
                 Ok(file
-                    .map(|file| file.split('/').fold(self.root.clone(), |path, part| path.join(part)))
+                    .map(|file| {
+                        file.split('/')
+                            .fold(self.root.clone(), |path, part| path.join(part))
+                    })
                     .filter(|path| path.is_file())
                     .map(|path| path.to_string_lossy().into_owned()))
             })
@@ -523,6 +568,33 @@ mod tests {
         assert!(!image_path.exists());
         assert!(!thumb_path.exists());
         assert!(storage.image_ids().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dimensions_update_preserves_files_and_does_not_restore_deleted_images() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).unwrap();
+        storage
+            .put_file(Kind::Image, &meta(ID, "image/png"), b"original")
+            .unwrap();
+        storage
+            .put_file(Kind::Thumbnail, &meta(ID, "image/webp"), b"thumbnail")
+            .unwrap();
+        assert!(storage.update_image_dimensions(ID, 2496, 1664).unwrap());
+        let image = storage.image_meta(ID).unwrap().unwrap();
+        assert_eq!(image.width, Some(2496));
+        assert_eq!(image.height, Some(1664));
+        assert_eq!(image.source, meta(ID, "image/png").source);
+        assert_eq!(
+            storage.get_file(Kind::Image, ID).unwrap().unwrap().1,
+            b"original"
+        );
+        let (thumbnail, bytes) = storage.get_file(Kind::Thumbnail, ID).unwrap().unwrap();
+        assert_eq!(thumbnail.width, Some(2496));
+        assert_eq!(bytes, b"thumbnail");
+        storage.delete_image(ID).unwrap();
+        assert!(!storage.update_image_dimensions(ID, 2496, 1664).unwrap());
+        assert!(storage.image_meta(ID).unwrap().is_none());
     }
 
     #[test]
