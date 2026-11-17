@@ -295,6 +295,8 @@ export default function InputParamsPanel({
   const resolutionHint = useHintTooltip({ enabled: () => !modelOptionsForImage.resolutions.length })
   const thinkingHint = useHintTooltip({ enabled: () => Boolean(thinkingSupport.reason) })
   const qualityDisabled = Boolean(parameterControls.quality.disabledReason)
+  const formatDisabled = Boolean(parameterControls.output_format.disabledReason)
+  const formatHint = useHintTooltip({ enabled: () => formatDisabled })
   const thinkingValue = thinkingSupport.levels.includes(params.thinking_level ?? '') ? params.thinking_level! : 'auto'
   const isGif = params.output_format === 'gif'
   const moreSummary = (
@@ -644,12 +646,21 @@ export default function InputParamsPanel({
                   text={disabledReasons.complexity}
                 />
               </div>
-              <div className={ROW_CLASS}>
+              <div
+                className={ROW_CLASS}
+                onMouseEnter={formatHint.show}
+                onMouseLeave={formatHint.hide}
+                onTouchStart={formatHint.startTouch}
+                onTouchEnd={formatHint.clearTimer}
+                onTouchCancel={formatHint.hide}
+                onClick={formatHint.show}
+              >
                 <span className={ROW_LABEL_CLASS}>格式</span>
                 <div className="w-28">
                   <Select
-                    value={params.output_format}
+                    value={formatDisabled ? 'png' : params.output_format}
                     onChange={(val) => {
+                      if (formatDisabled) return
                       setParams({
                         output_format: val as TaskParams['output_format'],
                         ...(val === 'png' || val === 'svg' || val === 'gif' ? { output_compression: null } : {}),
@@ -657,9 +668,11 @@ export default function InputParamsPanel({
                       })
                     }}
                     options={parameterControls.output_format.options ?? []}
-                    className={selectClass}
+                    disabled={formatDisabled}
+                    className={formatDisabled ? CONTROL_DISABLED_CLASS : selectClass}
                   />
                 </div>
+                <ButtonTooltip visible={formatDisabled && formatHint.visible} text={parameterControls.output_format.disabledReason} />
               </div>
               {isGif && (
                 <>
@@ -745,7 +758,7 @@ export default function InputParamsPanel({
                   />
                   <ButtonTooltip
                     visible={compressionHint.visible}
-                    text={isFalProvider ? 'fal.ai 不支持压缩率参数' : '仅 JPEG 和 WebP 支持压缩率'}
+                    text={parameterControls.output_compression.disabledReason}
                   />
                 </label>
               )}
@@ -775,7 +788,7 @@ export default function InputParamsPanel({
                 </div>
                 <ButtonTooltip
                   visible={moderationDisabled && moderationHint.visible}
-                  text="fal.ai 不支持审核参数"
+                  text={parameterControls.moderation.disabledReason}
                 />
               </div>
             </>

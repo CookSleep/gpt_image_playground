@@ -1,9 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
 import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, getActiveApiProfile, normalizeSettings } from './apiProfiles'
-import { getOutputImageLimitForSettings, getParamDisabledReasons, getTaskParamSupport, normalizeParamsForSettings } from './paramCompatibility'
+import { getMaskDisabledReason, getOutputImageLimitForSettings, getParamDisabledReasons, getTaskParamSupport, normalizeParamsForSettings } from './paramCompatibility'
+import { getImageParameterControls } from './imageParameterControls'
 
 describe('parameter compatibility', () => {
+  it.each(['images', 'responses'] as const)('normalizes stale Codex CLI parameters and disables their controls on %s', (apiMode) => {
+    const profile = createDefaultOpenAIProfile({ codexCli: true, apiMode, imageGenerationModel: 'gpt-image-2.6-sunburst' })
+    const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id })
+    const params = { ...DEFAULT_PARAMS, output_format: 'webp' as const, output_compression: 10, moderation: 'low' as const, complexity: 'high' as const, transparent_output: true }
+    expect(normalizeParamsForSettings(params, settings)).toMatchObject({ output_format: 'png', output_compression: null, moderation: 'auto', complexity: 'auto', transparent_output: true })
+    const controls = getImageParameterControls(settings, profile, params).parameters
+    for (const key of ['output_format', 'output_compression', 'moderation', 'complexity'] as const) {
+      expect(controls[key].disabledReason).toContain('Codex CLI')
+    }
+    expect(getTaskParamSupport(settings, profile).complexity).toBe(false)
+    expect(getMaskDisabledReason(profile)).toBe('Codex CLI 不支持遮罩编辑')
+    expect(getMaskDisabledReason({ ...profile, codexCli: false })).toBeUndefined()
+    expect(getParamDisabledReasons({ ...profile, codexCli: false }).complexity).toBeUndefined()
+  })
   it.each(['google/nano-banana-2.1', 'xai/grok-imagine-image/v2.0/text-to-image', 'bytedance/seedream/v5.5/text-to-image'])('allows automatic ratios for fal.ai %s', (model) => {
     expect(getParamDisabledReasons(createDefaultFalProfile({ model })).autoSize).toBeUndefined()
   })
@@ -134,9 +149,12 @@ describe('parameter compatibility', () => {
       }],
     })
 
-    expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: '2048x2048', quality: 'high' }, settings)).toMatchObject({
+    expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: '2048x2048', quality: 'high', output_format: 'gif', complexity: 'high', moderation: 'low' }, settings)).toMatchObject({
       size: '1024x1024',
       quality: DEFAULT_PARAMS.quality,
+      output_format: 'png',
+      complexity: 'auto',
+      moderation: 'auto',
     })
   })
 

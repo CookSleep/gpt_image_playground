@@ -88,9 +88,9 @@ describe('GPT Image 2.6 parameter compatibility', () => {
     expect(normalizeParamsForSettings(params, settings25)).toMatchObject({ quality: 'max', complexity: 'auto', output_format: 'png' })
   })
 
-  it('keeps 2.6 params in Codex CLI mode', () => {
+  it('applies Codex CLI restrictions to 2.6 params', () => {
     const next = normalizeParamsForSettings(params, createSettings({ model: 'gpt-image-2.6-flare', codexCli: true }))
-    expect(next).toMatchObject({ quality: 'auto', complexity: 'low', output_format: 'svg' })
+    expect(next).toMatchObject({ quality: 'auto', complexity: 'auto', output_format: 'png' })
   })
 
   it('uses default image capabilities when the Responses image model is omitted', () => {

@@ -64,7 +64,7 @@ export function supportsExtendedQuality(profile: ApiProfile) {
   return isGptImage25PlusModel(model)
 }
 
-/** complexity、SVG 和 GIF：OpenAI 的 Images API、Responses 图像工具（含 Codex CLI）、fal.ai 的 2.6 端点和自定义服务商（由模板决定发送哪些）都支持 */
+/** 模型级 complexity、SVG 和 GIF 能力；接口兼容限制由 paramCompatibility 处理 */
 export function supportsGptImage26Params(profile: ApiProfile) {
   return isGptImage26PlusModel(getEffectiveImageGenerationModel(profile))
 }

@@ -61,7 +61,7 @@ export function getImageParameterControls(settings: AppSettings, profile: ApiPro
     },
     output_format: {
       type: 'enum', visible: !family || family === 'seedream',
-      disabledReason: family === 'gemini' || family === 'grok' ? '当前模型的输出格式固定为 PNG' : undefined,
+      disabledReason: family === 'gemini' || family === 'grok' ? '当前模型的输出格式固定为 PNG' : disabled.outputFormat,
       options: family ? (family === 'seedream' ? ['png', 'jpeg'] : ['png']).map((value) => ({ label: value.toUpperCase(), value })) : [
         { label: 'PNG', value: 'png' }, { label: 'JPEG', value: 'jpeg' }, { label: 'WebP', value: 'webp' },
         { label: 'SVG', value: 'svg', disabledReason: disabled.svg }, { label: 'GIF', value: 'gif', disabledReason: disabled.gif },
@@ -71,9 +71,9 @@ export function getImageParameterControls(settings: AppSettings, profile: ApiPro
     complexity: { type: 'enum', visible: !family, options: IMAGE_COMPLEXITIES.map((value) => ({ label: value, value })), disabledReason: family ? '当前模型不使用复杂度参数' : disabled.complexity },
     output_compression: {
       type: 'integer', visible: !family && !showTransparent, min: 0, max: 100, nullable: true,
-      disabledReason: family ? '当前模型不使用压缩率参数' : fal ? 'fal.ai 不支持压缩率参数' : !['jpeg', 'webp'].includes(params.output_format) ? '仅 JPEG 和 WebP 支持压缩率' : undefined,
+      disabledReason: family ? '当前模型不使用压缩率参数' : fal ? 'fal.ai 不支持压缩率参数' : disabled.outputFormat ? 'Codex CLI 不支持压缩率参数' : !['jpeg', 'webp'].includes(params.output_format) ? '仅 JPEG 和 WebP 支持压缩率' : undefined,
     },
-    moderation: { type: 'enum', visible: !family, options: ['auto', 'low'].map((value) => ({ label: value, value })), disabledReason: family ? '当前模型不使用审核参数' : fal ? 'fal.ai 不支持审核参数' : undefined },
+    moderation: { type: 'enum', visible: !family, options: ['auto', 'low'].map((value) => ({ label: value, value })), disabledReason: family ? '当前模型不使用审核参数' : fal ? 'fal.ai 不支持审核参数' : disabled.moderation },
     transparent_output: { type: 'boolean', visible: family !== 'seedream' && showTransparent, disabledReason: transparentReason, hint: family === 'gemini' || family === 'grok' ? '使用本地后处理生成透明背景' : undefined },
     background: {
       type: 'enum', visible: family === 'seedream' && !context.agent,

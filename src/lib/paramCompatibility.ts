@@ -13,6 +13,7 @@ export const MAX_OPENAI_OUTPUT_IMAGES = 10
 
 export function getMaskDisabledReason(profile: ApiProfile, format?: TaskParams['output_format']) {
   if (getImageModelFamily(profile)) return '当前模型不支持遮罩编辑'
+  if (profile.codexCli && profile.provider !== 'fal') return 'Codex CLI 不支持遮罩编辑'
   if (format === 'gif') return 'GIF 不支持遮罩编辑'
   return undefined
 }
@@ -21,7 +22,7 @@ export function getTaskParamSupport(settings: AppSettings, profile: ApiProfile) 
   const provider = getCustomProviderDefinition(settings, profile.provider)
   return {
     thinking: getImageThinkingSupport(profile, provider).levels.length > 0,
-    complexity: !getImageModelFamily(profile) && supportsGptImage26Params(profile),
+    complexity: !getImageModelFamily(profile) && !getParamDisabledReasons(profile).complexity,
   }
 }
 
@@ -86,6 +87,10 @@ export function normalizeParamsForSettings(
   if (isOpenAICompatibleProvider(settings, activeProfile.provider) && activeProfile.codexCli) {
     nextParams.size = normalizeCodexCliImageSize(nextParams.size)
     nextParams.quality = DEFAULT_PARAMS.quality
+    nextParams.output_format = DEFAULT_PARAMS.output_format
+    nextParams.output_compression = DEFAULT_PARAMS.output_compression
+    nextParams.complexity = DEFAULT_PARAMS.complexity
+    nextParams.moderation = DEFAULT_PARAMS.moderation
   }
 
   if (activeProfile.provider === 'fal') {
@@ -114,16 +119,19 @@ export function normalizeParamsForSettings(
 /** 参数面板中不可选的项及原因；normalizeParamsForSettings 按同一结果清洗参数 */
 export function getParamDisabledReasons(profile: ApiProfile, options: { hasInputImages?: boolean; agent?: boolean } = {}): ParamDisabledReasons {
   const isFal = profile.provider === 'fal'
+  const codexCli = profile.codexCli && !isFal && !getImageModelFamily(profile)
   // Responses API 的能力取决于 image_generation 工具的图像模型，而不是首页选择的文本模型
   const isResponses = profile.provider === 'openai' && profile.apiMode === 'responses'
   const gptImage26 = supportsGptImage26Params(profile)
-  const gif = options.agent
-    // Agent 的图片会进入对话上下文继续编辑，只用位图格式
-    ? 'Agent 模式只能输出位图格式'
+  const outputFormat = codexCli ? 'Codex CLI 的输出格式固定为 PNG' : undefined
+  // Agent 的图片会进入对话上下文继续编辑，只用位图格式
+  const gif = outputFormat ?? (options.agent ? 'Agent 模式只能输出位图格式'
     : gptImage26 ? undefined
-    : isResponses ? '当前图像模型不支持此格式' : '当前模型不支持此格式'
+    : isResponses ? '当前图像模型不支持此格式' : '当前模型不支持此格式')
   return {
-    complexity: gptImage26 ? undefined
+    outputFormat,
+    moderation: codexCli ? 'Codex CLI 不支持审核参数' : undefined,
+    complexity: codexCli ? 'Codex CLI 不支持复杂度参数' : gptImage26 ? undefined
       : isResponses ? '当前图像模型不支持复杂度参数' : '当前模型不支持复杂度参数',
     gif,
     svg: gif ?? (isFal && options.hasInputImages ? 'fal.ai 的参考图编辑不支持 SVG' : undefined),

@@ -1,4 +1,4 @@
-import { shouldReturnBase64 } from './apiProfiles'
+import { createSettingsForApiProfile, shouldReturnBase64 } from './apiProfiles'
 import { DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type CustomProviderDefinition, type CustomProviderPollMapping, type CustomProviderResultMapping, type CustomProviderSubmitMapping, type ImageApiResponse, type ImageResponseItem, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
 import { assertInputImageLimit } from './inputImageLimits'
 import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
@@ -35,6 +35,7 @@ import { getImageRequestExecution } from './imageRequestExecution'
 import { apiFetch, FetchConnectError } from './platform'
 import { isEventStreamResponse, readJsonServerSentEvents } from './serverSentEvents'
 import { prependCodexCliSizePrompt } from './size'
+import { getMaskDisabledReason, normalizeParamsForSettings } from './paramCompatibility'
 
 function getStreamPartialImages(profile: ApiProfile): number {
   return profile.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES
@@ -146,22 +147,20 @@ function createResponsesImageTool(
     type: 'image_generation',
     action: isEdit ? 'edit' : 'generate',
     output_format: params.output_format,
-    moderation: params.moderation,
   }
   const imageModel = getImageGenerationModel(profile)
   if (imageModel) tool.model = imageModel
 
   if (!profile.codexCli) {
     tool.size = params.size
+    tool.quality = params.quality
+    tool.moderation = params.moderation
   }
 
   if (profile.streamImages && !isVectorOrAnimatedFormat(params.output_format)) {
     tool.partial_images = getStreamPartialImages(profile)
   }
 
-  if (!profile.codexCli) {
-    tool.quality = params.quality
-  }
   applyGptImage26Params(tool, params, profile)
 
   if (params.output_format !== 'png' && params.output_compression != null) {
@@ -447,6 +446,11 @@ async function parseResponsesApiStreamResponse(
 export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile: ApiProfile, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
   assertInputImageLimit(profile, opts.inputImageDataUrls.length)
   const family = getImageModelFamily(profile)
+  if (profile.codexCli && !family) {
+    const maskReason = getMaskDisabledReason(profile)
+    if (opts.maskDataUrl && maskReason) throw new Error(`${maskReason}，请使用参考图和提示词描述修改内容`)
+    opts = { ...opts, params: normalizeParamsForSettings(opts.params, createSettingsForApiProfile(opts.settings, profile)) }
+  }
   if (family) {
     if (opts.maskDataUrl) throw new Error('此模型不支持遮罩编辑，请使用参考图和提示词描述修改内容')
     if (family !== 'seedream') opts = { ...opts, nativeTransparentBackground: false }
@@ -563,16 +567,14 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
       formData.append('prompt', prompt)
       if (!profile.codexCli) {
         formData.append('size', params.size)
+        formData.append('quality', params.quality)
+        formData.append('moderation', params.moderation)
       }
       formData.append('output_format', params.output_format)
-      formData.append('moderation', params.moderation)
       if (opts.nativeTransparentBackground) {
         formData.append('background', 'transparent')
       }
 
-      if (!profile.codexCli) {
-        formData.append('quality', params.quality)
-      }
       const gptImage26Params: Record<string, unknown> = {}
       applyGptImage26Params(gptImage26Params, params, profile)
       // 表单只能传字符串，嵌套的 svg 字段展开为 svg[model]、svg[reasoning][effort]
@@ -644,7 +646,6 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
         model: profile.model,
         prompt,
         output_format: params.output_format,
-        moderation: params.moderation,
       }
 
       if (opts.nativeTransparentBackground) {
@@ -653,10 +654,8 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
 
       if (!profile.codexCli) {
         body.size = params.size
-      }
-
-      if (!profile.codexCli) {
         body.quality = params.quality
+        body.moderation = params.moderation
       }
       applyGptImage26Params(body, params, profile)
 
@@ -1103,7 +1102,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
       model: profile.model,
       input: createResponsesInput(requestPrompt, inputImageDataUrls, opts.settings.allowPromptRewrite),
       tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, profile, opts.maskDataUrl, opts.nativeTransparentBackground)],
-      tool_choice: 'required',
+      tool_choice: profile.codexCli ? 'auto' : 'required',
     }
     if (profile.reasoningEffort) body.reasoning = { effort: profile.reasoningEffort }
     if (profile.streamImages) {

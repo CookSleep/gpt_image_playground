@@ -40,6 +40,23 @@ describe('callBatchImageSingle', () => {
     vi.restoreAllMocks()
   })
 
+  it.each([false, true])('selects the batch image tool with Codex CLI mode %s', async (codexCli) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      output: [{ type: 'image_generation_call', id: 'ig_test', result: 'aW1hZ2U=' }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const result = await callBatchImageSingle({
+      profile: createDefaultOpenAIProfile({ apiKey: 'test-key', apiMode: 'responses', codexCli, reasoningEffort: 'high' }),
+      params: DEFAULT_PARAMS,
+      batchItemId: 'image_1',
+      prompt: 'prompt',
+      referenceImageDataUrls: [],
+    })
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+    expect(body.tool_choice).toBe(codexCli ? 'auto' : 'required')
+    expect(body.reasoning).toEqual({ effort: 'high' })
+    expect(result.image).not.toBeNull()
+  })
+
   it('reports the image tool error without a misleading streaming hint', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       error: { message: "Tool choice 'required' must be specified with 'tools' parameter." },
@@ -232,6 +249,8 @@ describe('callAgentResponsesApi', () => {
     const [, init] = fetchMock.mock.calls[0]
     const body = JSON.parse(String((init as RequestInit).body))
     expect(body.tools[0].size).toBeUndefined()
+    expect(body.tools[0].quality).toBeUndefined()
+    expect(body.tools[0].moderation).toBeUndefined()
     expect(body.instructions).toContain('Start every image prompt with exactly "Generate at 1024x1024 resolution." followed by a space.')
   })
 

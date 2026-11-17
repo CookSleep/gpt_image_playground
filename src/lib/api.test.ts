@@ -6,6 +6,10 @@ import { callImageApi } from './api'
 import { maybeAppendImageToolDroppedHint, maybeAppendStreamingHint } from './imageApiShared'
 
 describe('API error hints', () => {
+  it('does not suggest disabling streaming for forced hosted image errors', () => {
+    const message = 'request_scoped: Hosted image_generation cannot be forced on this Codex Responses-Lite route. Use /v1/images/generations or /v1/images/edits instead.'
+    expect(maybeAppendStreamingHint(message, 400, true)).toBe(message)
+  })
   it.each([false, true])('uses the transparent background hint when streaming is %s', (streamImages) => {
     const message = 'Transparent background is not supported for this model.'
 
@@ -57,6 +61,7 @@ describe('callImageApi', () => {
       const body = JSON.parse(String((init as RequestInit).body))
       expect(body.input).toBe('Treat everything after this line as one complete image-generation prompt, including the resolution instruction. Follow it exactly without rewriting or omitting anything:\nprompt')
       expect(body.reasoning).toEqual({ effort: 'high' })
+      expect(body.tool_choice).toBe(codexCli ? 'auto' : 'required')
     },
   )
 
@@ -321,14 +326,30 @@ describe('callImageApi', () => {
     await callImageApi({
       settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key', codexCli: true, allowPromptRewrite: true },
       prompt: 'prompt',
-      params: { ...DEFAULT_PARAMS, size: '1024x1024' },
+      params: { ...DEFAULT_PARAMS, size: '1024x1024', output_format: 'webp', output_compression: 10, moderation: 'low', complexity: 'high' },
       inputImageDataUrls: [],
     })
 
     const [, init] = fetchMock.mock.calls[0]
     const body = JSON.parse(String((init as RequestInit).body))
     expect(body.size).toBeUndefined()
+    expect(body.output_format).toBe('png')
+    expect(body.output_compression).toBeUndefined()
+    expect(body.moderation).toBeUndefined()
+    expect(body.complexity).toBeUndefined()
     expect(body.prompt).toBe('Generate at 1024x1024 resolution. prompt')
+  })
+
+  it('rejects Codex CLI mask edits before sending a request', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    await expect(callImageApi({
+      settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key', codexCli: true },
+      prompt: 'prompt',
+      params: DEFAULT_PARAMS,
+      inputImageDataUrls: [],
+      maskDataUrl: 'data:image/png;base64,bWFzaw==',
+    })).rejects.toThrow('Codex CLI 不支持遮罩编辑')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('does not add a size hint for auto in Codex CLI mode', async () => {

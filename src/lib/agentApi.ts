@@ -115,16 +115,16 @@ function createImageTool(params: TaskParams, profile: ApiProfile, maskDataUrl?: 
     type: 'image_generation',
     action: 'auto',
     output_format: params.output_format,
-    moderation: params.moderation,
   }
   const imageModel = getImageGenerationModel(profile)
   if (imageModel) tool.model = imageModel
 
   if (!profile.codexCli) {
     tool.size = params.size
+    tool.quality = params.quality
+    tool.moderation = params.moderation
   }
 
-  tool.quality = params.quality
   applyGptImage26Params(tool, params, profile)
 
   if (params.output_format !== 'png' && params.output_compression != null) {
@@ -780,18 +780,17 @@ export async function callBatchImageSingle(opts: {
       input = guardedPrompt
     }
 
-    // Build image_generation tool with current params
     const tool: Record<string, unknown> = {
       type: 'image_generation',
       action: referenceImageDataUrls.length > 0 ? 'auto' : 'generate',
       output_format: params.output_format,
-      moderation: params.moderation,
-      quality: params.quality,
     }
     const imageModel = getImageGenerationModel(profile)
     if (imageModel) tool.model = imageModel
     if (!profile.codexCli) {
       tool.size = params.size
+      tool.quality = params.quality
+      tool.moderation = params.moderation
     }
     applyGptImage26Params(tool, params, profile)
     if (params.output_format !== 'png' && params.output_compression != null) {
@@ -805,7 +804,7 @@ export async function callBatchImageSingle(opts: {
       model: profile.model,
       input,
       tools: [tool],
-      tool_choice: 'required',
+      tool_choice: profile.codexCli ? 'auto' : 'required',
     }
     if (profile.reasoningEffort) body.reasoning = { effort: profile.reasoningEffort }
     if (profile.streamImages) {

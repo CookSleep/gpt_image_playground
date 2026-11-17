@@ -13,6 +13,7 @@ export const MIME_MAP: Record<string, string> = {
 
 /** GPT Image 2.6 的 complexity、SVG 和 GIF 字段；Images API 生成请求和 Responses 图像工具格式相同 */
 export function applyGptImage26Params(target: Record<string, unknown>, params: TaskParams, profile: ApiProfile) {
+  if (profile.codexCli && profile.provider !== 'fal') return
   if (params.complexity !== 'auto') target.complexity = params.complexity
   if (params.output_format === 'svg') {
     const model = profile.svgModel?.trim() || (target.type === 'image_generation' ? undefined : DEFAULT_SVG_MODEL)
@@ -172,6 +173,7 @@ export function maybeAppendStreamingHint(message: string, status: number, stream
   const transparentMessage = maybeAppendTransparentBackgroundHint(message)
   if (transparentMessage !== message) return transparentMessage
   if (IMAGE_TOOL_DROPPED_ERROR.test(message)) return message
+  if (/hosted image_generation cannot be forced/i.test(message)) return message
   if (!streamImages) return message
   if (status === 401 || status === 403 || status === 404 || status === 408 || status === 429 || status >= 500) {
     return message
