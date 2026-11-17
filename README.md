@@ -64,7 +64,7 @@
 </tr>
 <tr>
 <td width="180" align="center" valign="middle">
-  <a href="https://apixo.ai/zh?utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gpt_image_playground&amp;utm_content=logo">APIXO AI</a>
+  <a href="https://apixo.ai/zh?utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gpt_image_playground&amp;utm_content=logo"><img src="https://github.com/user-attachments/assets/61e8ddf0-fc22-416b-9252-8614c2dcdfc9" alt="APIXO AI" width="150"></a>
 </td>
 <td valign="middle"><b><a href="https://apixo.ai/zh?utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gpt_image_playground&amp;utm_content=brand_mention">APIXO AI</a></b>&nbsp;是一站式 AI 视频制作与多模态创作平台，支持 Seedream 5.5 生图与参考图编辑，提供在线创作、API 和 <a href="https://apixo.ai/zh/mcp?utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gpt_image_playground&amp;utm_content=mcp_page">MCP 接入</a>。<a href="https://apixo.ai/zh/models/seedream-5-5?utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gpt_image_playground&amp;utm_content=seedream_5_5">Seedream 5.5 生图 API</a> 限时七折，输出图像 $0.014/张起（按输出规格计费，输入图像另计）。</td>
 </tr>
