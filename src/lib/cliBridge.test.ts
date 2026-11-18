@@ -141,6 +141,37 @@ describe('CLI 比例与档位', () => {
   })
 })
 
+describe('CLI 透明背景', () => {
+  it.each([{ transparent_output: true }, { background: 'transparent' }])('拒绝同时指定 JPEG 和透明背景：%o', async (args) => {
+    const reply = await send('generate_image', { prompt: '测试', output_format: 'jpeg', ...args })
+    expect(reply.error).toContain('JPEG 不支持透明背景')
+    expect(mocks.submitTask).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { model: 'gpt-image-2.6-sunburst', output_format: 'svg', args: { transparent_output: true }, blocked: true },
+    { model: 'gpt-image-2.6-sunburst', output_format: 'gif', args: { background: 'transparent' }, blocked: true },
+    { model: 'gpt-image-2', output_format: 'svg', args: { background: 'transparent' }, blocked: false },
+    { model: 'gpt-image-2', output_format: 'gif', args: { transparent_output: true }, blocked: false },
+  ])('按最终格式校验未映射背景的 $model 请求：$output_format', async ({ model, output_format, args, blocked }) => {
+    state.settings = normalizeSettings({
+      profiles: [createDefaultOpenAIProfile({ id: 'custom', provider: 'custom-test', model, apiKey: 'test-key', transparentBackgroundMethod: 'local' })],
+      activeProfileId: 'custom',
+      customProviders: [{ id: 'custom-test', name: '测试', submit: { path: 'generate', body: { prompt: '$prompt' } } }],
+    })
+    const reply = await send('generate_image', { prompt: '测试', output_format, n: 3, output_compression: 75, ...args })
+    if (blocked) {
+      expect(reply.error).toContain('未映射 $params.background')
+      expect(mocks.submitTask).not.toHaveBeenCalled()
+    } else {
+      expect(mocks.submitTask).toHaveBeenCalledOnce()
+      expect(normalizeParamsForSettings(state.params, state.settings)).toMatchObject({
+        output_format: 'png', background: 'transparent', transparent_output: true, n: 3, output_compression: null,
+      })
+    }
+  })
+})
+
 describe('CLI 参数查询', () => {
   it('返回当前配置的可用选项、范围和默认值，不改变配置或参数', async () => {
     const original = structuredClone({ settings: state.settings, params: state.params })

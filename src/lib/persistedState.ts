@@ -103,7 +103,7 @@ function normalizeParams(value: unknown, fallback: TaskParams): TaskParams {
     n: typeof value.n === 'number' && Number.isFinite(value.n) ? value.n : fallback.n,
     transparent_output: typeof value.transparent_output === 'boolean' ? value.transparent_output : fallback.transparent_output,
     watermark: typeof value.watermark === 'boolean' ? value.watermark : undefined,
-    background: value.background === 'auto' || value.background === 'transparent' || value.background === 'opaque' ? value.background : undefined,
+    background: value.background === 'auto' || value.background === 'transparent' || value.background === 'opaque' ? value.background : fallback.background,
     frame_count: normalizeGifParam(value.frame_count, GIF_FRAME_COUNT_RANGE, fallback.frame_count),
     frame_duration_ms: normalizeGifParam(value.frame_duration_ms, GIF_FRAME_DURATION_RANGE, fallback.frame_duration_ms),
   }

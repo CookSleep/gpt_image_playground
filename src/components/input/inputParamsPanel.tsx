@@ -187,7 +187,6 @@ export default function InputParamsPanel({
   selectClass,
   transparentOutputAvailable,
   showTransparentOutputControl,
-  transparentOutputEnabled,
   transparentOutputHint,
   onTransparentOutputMenuOpenChange,
   compressionHint,
@@ -246,7 +245,6 @@ export default function InputParamsPanel({
   selectClass: string
   transparentOutputAvailable: boolean
   showTransparentOutputControl: boolean
-  transparentOutputEnabled: boolean
   transparentOutputHint: HintTooltipState
   onTransparentOutputMenuOpenChange: (open: boolean) => void
   compressionHint: HintTooltipState
@@ -299,6 +297,22 @@ export default function InputParamsPanel({
   const formatHint = useHintTooltip({ enabled: () => formatDisabled })
   const thinkingValue = thinkingSupport.levels.includes(params.thinking_level ?? '') ? params.thinking_level! : 'auto'
   const isGif = params.output_format === 'gif'
+  const background = params.background ?? 'auto'
+  const backgroundProps = {
+    value: background,
+    options: parameterControls.background.options ?? [],
+    onChange: (val: string) => setParams({ background: val as TaskParams['background'], transparent_output: val === 'transparent' }),
+    onOpenChange: onTransparentOutputMenuOpenChange,
+  }
+  const backgroundHintEvents = {
+    onMouseEnter: transparentOutputHint.show,
+    onMouseLeave: transparentOutputHint.hide,
+    onTouchStart: transparentOutputHint.startTouch,
+    onTouchEnd: transparentOutputHint.clearTimer,
+    onTouchCancel: transparentOutputHint.hide,
+    onClick: transparentOutputHint.show,
+  }
+  const backgroundHint = parameterControls.background.hint && <ButtonTooltip visible={transparentOutputHint.visible} text={parameterControls.background.hint} />
   const moreSummary = (
     family === 'gemini'
       ? [
@@ -311,9 +325,8 @@ export default function InputParamsPanel({
           disabledReasons.complexity ? null : `复杂度 ${params.complexity}`,
           params.output_format.toUpperCase(),
           isGif ? `${params.frame_count} 帧` : null,
-          showTransparentOutputControl
-            ? `透明 ${transparentOutputEnabled}`
-            : compressionDisabled ? null : `压缩 ${outputCompressionInput || '默认'}`,
+          transparentOutputAvailable ? `背景 ${backgroundProps.options.find((option) => option.value === background)?.label ?? '自动'}` : null,
+          showTransparentOutputControl || compressionDisabled ? null : `压缩 ${outputCompressionInput || '默认'}`,
           moderationDisabled ? null : `审核 ${params.moderation}`,
         ]
   ).filter(Boolean).join(' · ')
@@ -500,15 +513,9 @@ export default function InputParamsPanel({
             />
           </div>
           {transparentOutputAvailable && (
-            <div className="max-sm:flex-auto sm:shrink-0">
-              <Select
-                value={params.background ?? 'auto'}
-                onChange={(val) => setParams({ background: val as TaskParams['background'], transparent_output: val === 'transparent' })}
-                options={parameterControls.background.options ?? []}
-                prefix={prefix('背景')}
-                className={CHIP_CLASS}
-                onOpenChange={onTransparentOutputMenuOpenChange}
-              />
+            <div className="relative max-sm:flex-auto sm:shrink-0" {...backgroundHintEvents}>
+              <Select {...backgroundProps} prefix={prefix('背景')} className={CHIP_CLASS} />
+              {backgroundHint}
             </div>
           )}
           <div className="max-sm:flex-auto sm:shrink-0">
@@ -664,7 +671,7 @@ export default function InputParamsPanel({
                       setParams({
                         output_format: val as TaskParams['output_format'],
                         ...(val === 'png' || val === 'svg' || val === 'gif' ? { output_compression: null } : {}),
-                        ...(val === 'jpeg' ? { transparent_output: false } : {}),
+                        ...(val === 'jpeg' && background === 'transparent' ? { transparent_output: false, background: 'opaque' } : {}),
                       })
                     }}
                     options={parameterControls.output_format.options ?? []}
@@ -694,40 +701,13 @@ export default function InputParamsPanel({
                   </label>
                 </>
               )}
-              {showTransparentOutputControl && (
-                <div
-                  className={ROW_CLASS}
-                  onMouseEnter={transparentOutputHint.show}
-                  onMouseLeave={transparentOutputHint.hide}
-                  onTouchStart={transparentOutputHint.startTouch}
-                  onTouchEnd={transparentOutputHint.clearTimer}
-                  onTouchCancel={transparentOutputHint.hide}
-                  onClick={transparentOutputHint.show}
-                >
-                  <span className={ROW_LABEL_CLASS}>透明背景</span>
+              {transparentOutputAvailable && (
+                <div className={ROW_CLASS} {...backgroundHintEvents}>
+                  <span className={ROW_LABEL_CLASS}>背景</span>
                   <div className="w-28">
-                    <Select
-                      value={transparentOutputEnabled ? 'on' : 'off'}
-                      onChange={(val) => {
-                        if (!transparentOutputAvailable) return
-                        setParams({
-                          transparent_output: val === 'on',
-                          ...(params.output_format === 'png' ? { output_compression: null } : {}),
-                        })
-                      }}
-                      options={[
-                        { label: 'false', value: 'off' },
-                        { label: 'true', value: 'on' },
-                      ]}
-                      className={selectClass}
-                      onOpenChange={onTransparentOutputMenuOpenChange}
-                    />
+                    <Select {...backgroundProps} className={selectClass} />
                   </div>
-                  {/* SVG 和 GIF 只能用接口原生透明背景，没有可选的实现方式 */}
-                  <ButtonTooltip
-                    visible={transparentOutputHint.visible && params.output_format !== 'svg' && !isGif}
-                    text={<>实现方式可在<strong className="font-semibold">「设置 → API 配置」</strong>中选择</>}
-                  />
+                  {backgroundHint}
                 </div>
               )}
               {!showTransparentOutputControl && (

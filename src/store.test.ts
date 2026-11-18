@@ -582,7 +582,7 @@ describe('task retry', () => {
       appMode: 'gallery',
       prompt: 'prompt',
       inputImages: [],
-      params: { ...DEFAULT_PARAMS, output_format: 'png', transparent_output: true },
+      params: { ...DEFAULT_PARAMS, output_format: 'png', background: 'transparent', transparent_output: true },
       dismissedCodexCliPrompts: [],
       setConfirmDialog,
     })
@@ -821,6 +821,7 @@ describe('mask draft lifecycle in store actions', () => {
         ...DEFAULT_PARAMS,
         output_format: 'png',
         output_compression: null,
+        background: 'transparent',
         transparent_output: true,
       },
     })
@@ -867,6 +868,7 @@ describe('mask draft lifecycle in store actions', () => {
         ...DEFAULT_PARAMS,
         output_format: 'webp',
         output_compression: 25,
+        background: 'transparent',
         transparent_output: true,
       },
     })
@@ -907,6 +909,7 @@ describe('mask draft lifecycle in store actions', () => {
       params: {
         ...DEFAULT_PARAMS,
         output_format: 'png',
+        background: 'transparent',
         transparent_output: true,
       },
     })
@@ -946,6 +949,7 @@ describe('mask draft lifecycle in store actions', () => {
         ...DEFAULT_PARAMS,
         output_format: 'png',
         output_compression: null,
+        background: 'transparent',
         transparent_output: true,
       },
     })
@@ -987,6 +991,7 @@ describe('mask draft lifecycle in store actions', () => {
       params: {
         ...DEFAULT_PARAMS,
         output_format: 'png',
+        background: 'transparent',
         transparent_output: true,
       },
     })
@@ -1666,6 +1671,7 @@ describe('fal task recovery', () => {
       params: {
         ...DEFAULT_PARAMS,
         output_format: 'png',
+        background: 'transparent',
         transparent_output: true,
       },
       transparentOutput: true,
@@ -4662,7 +4668,7 @@ describe('task deletion', () => {
       },
       appMode: 'gallery',
       prompt: 'prompt',
-      params: { ...DEFAULT_PARAMS, output_format: 'png', transparent_output: true },
+      params: { ...DEFAULT_PARAMS, output_format: 'png', background: 'transparent', transparent_output: true },
     })
 
     await submitTask()

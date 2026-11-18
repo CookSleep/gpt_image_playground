@@ -1,14 +1,27 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
 import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, getActiveApiProfile, normalizeSettings } from './apiProfiles'
-import { getMaskDisabledReason, getOutputImageLimitForSettings, getParamDisabledReasons, getTaskParamSupport, normalizeParamsForSettings } from './paramCompatibility'
+import { getMaskDisabledReason, getImageOutputOptions, getParamDisabledReasons, getTaskParamSupport, normalizeParamsForSettings } from './paramCompatibility'
 import { getImageParameterControls } from './imageParameterControls'
 
 describe('parameter compatibility', () => {
+  it.each([false, true])('复用旧任务时保留背景开关的含义：%s', (transparent_output) => {
+    const params = { ...DEFAULT_PARAMS, background: undefined, transparent_output }
+    expect(normalizeParamsForSettings(params, DEFAULT_SETTINGS).background).toBe(transparent_output ? 'transparent' : 'auto')
+  })
+
+  it.each(['gpt-image-2', 'seedream-5.5'])('仅在本地模式下提示背景设置入口：%s', (model) => {
+    for (const method of ['api', 'local'] as const) {
+      const profile = createDefaultOpenAIProfile({ model, transparentBackgroundMethod: method })
+      const control = getImageParameterControls(DEFAULT_SETTINGS, profile, DEFAULT_PARAMS).parameters.background
+      expect(control.hint).toBe(method === 'local' ? '当前基于本地后处理，可在「设置 → API 配置」中更改' : undefined)
+    }
+  })
+
   it.each(['images', 'responses'] as const)('normalizes stale Codex CLI parameters and disables their controls on %s', (apiMode) => {
     const profile = createDefaultOpenAIProfile({ codexCli: true, apiMode, imageGenerationModel: 'gpt-image-2.6-sunburst' })
     const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id })
-    const params = { ...DEFAULT_PARAMS, output_format: 'webp' as const, output_compression: 10, moderation: 'low' as const, complexity: 'high' as const, transparent_output: true }
+    const params = { ...DEFAULT_PARAMS, output_format: 'webp' as const, output_compression: 10, moderation: 'low' as const, complexity: 'high' as const, background: 'transparent' as const, transparent_output: true }
     expect(normalizeParamsForSettings(params, settings)).toMatchObject({ output_format: 'png', output_compression: null, moderation: 'auto', complexity: 'auto', transparent_output: true })
     const controls = getImageParameterControls(settings, profile, params).parameters
     for (const key of ['output_format', 'output_compression', 'moderation', 'complexity'] as const) {
@@ -43,7 +56,7 @@ describe('parameter compatibility', () => {
     const profile = createDefaultFalProfile({ model })
     const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id })
     const params = normalizeParamsForSettings({ ...DEFAULT_PARAMS, n: 8, resolution: '2K', aspect_ratio: '16:9', google_search: true, thinking_level: 'medium', complexity: 'high' }, settings)
-    expect(getOutputImageLimitForSettings(settings)).toBe(count)
+    expect(getImageOutputOptions(settings, getActiveApiProfile(settings), DEFAULT_PARAMS).limit).toBe(count)
     expect(params).toMatchObject({ n: count, aspect_ratio: '16:9', resolution: '2K', complexity: 'auto' })
     expect(getActiveApiProfile(settings).transparentBackgroundMethod).toBe(method)
     expect(params.google_search).toBe(family === 'gemini' ? true : undefined)
@@ -71,7 +84,7 @@ describe('parameter compatibility', () => {
       activeProfileId: openAIProfile.id,
     })
 
-    expect(getOutputImageLimitForSettings(settings)).toBe(10)
+    expect(getImageOutputOptions(settings, getActiveApiProfile(settings), DEFAULT_PARAMS).limit).toBe(10)
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, n: 12 }, settings).n).toBe(10)
   })
 
@@ -83,7 +96,7 @@ describe('parameter compatibility', () => {
       activeProfileId: falProfile.id,
     })
 
-    expect(getOutputImageLimitForSettings(settings)).toBe(4)
+    expect(getImageOutputOptions(settings, getActiveApiProfile(settings), DEFAULT_PARAMS).limit).toBe(4)
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, n: 8 }, settings).n).toBe(4)
   })
 
@@ -91,10 +104,15 @@ describe('parameter compatibility', () => {
     const profile = createDefaultFalProfile({ model: 'openai/gpt-image-2.6/sunburst' })
     const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id })
 
+    const params = { ...DEFAULT_PARAMS, output_format: 'svg' as const, n: 4 }
+    const controls = getImageParameterControls(settings, profile, params, { hasInputImages: true })
+    expect(controls.output.format).toBe('png')
+    expect(controls.parameters.n.max).toBe(4)
+    expect(controls.parameters.frame_count.visible).toBe(false)
     expect(getParamDisabledReasons(profile).svg).toBeUndefined()
     expect(getParamDisabledReasons(profile, { hasInputImages: true }).svg).toBe('fal.ai 的参考图编辑不支持 SVG')
-    expect(getOutputImageLimitForSettings(settings, 'svg')).toBe(1)
-    expect(getOutputImageLimitForSettings(settings, 'png')).toBe(4)
+    expect(getImageOutputOptions(settings, getActiveApiProfile(settings), { ...DEFAULT_PARAMS, output_format: 'svg' }).limit).toBe(1)
+    expect(getImageOutputOptions(settings, getActiveApiProfile(settings), { ...DEFAULT_PARAMS, output_format: 'png' }).limit).toBe(4)
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, output_format: 'svg', n: 4 }, settings)).toMatchObject({ output_format: 'svg', n: 1 })
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, output_format: 'svg', n: 4 }, settings, { hasInputImages: true })).toMatchObject({ output_format: 'png', n: 4 })
   })

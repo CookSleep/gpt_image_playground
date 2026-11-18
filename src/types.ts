@@ -280,6 +280,7 @@ export const DEFAULT_PARAMS: TaskParams = {
   moderation: 'auto',
   n: 1,
   transparent_output: false,
+  background: 'auto',
   frame_count: 9,
   frame_duration_ms: 200,
 }

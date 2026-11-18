@@ -73,7 +73,7 @@ body 与提交 query 可用的模板变量：
 - $params.output_format、$params.output_compression、$params.moderation：用户选择的输出格式、压缩质量与审核等级。
 - $params.n：用户选择的生成数量。
 - $params.complexity、$params.frame_count、$params.frame_duration_ms、$params.svg：GPT Image 2.6 参数，只在模型 ID 为 GPT Image 2.6 及以上时可用；复杂度选 auto 时省略 complexity，帧参数只在输出 GIF 时传入，svg 只在输出 SVG 时传入，值为 {"model":"SVG 编写模型 ID"}；配置了 SVG 推理强度时另含 "reasoning":{"effort":"推理强度"}。
-- $params.background：Seedream 5.5 为 auto（默认）、transparent 或 opaque；选择本地后处理且开启透明背景时为 opaque。其他模型仅在启用 API 原生透明背景时为 transparent，否则省略。
+- $params.background：GPT Image 和 Seedream 5.5 支持 auto、transparent 或 opaque。透明背景使用本地后处理时传 opaque。
 - $inputImages.dataUrls：参考图 data URL 数组；没有参考图时会自动省略该字段。
 - $inputImages.base64：参考图 base64 数组，不含 `data:image/png;base64,` 前缀；没有参考图时会自动省略该字段。
 - $inputImages.urls：参考图链接数组，只包含在输入框「+ → 添加链接」中添加的参考图；没有时会自动省略该字段。配置只用它传参考图时，如果有参考图不是通过链接添加的，提交会报错。

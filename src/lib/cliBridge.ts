@@ -16,7 +16,7 @@ import { requestBrowserNotificationPermission } from './browserNotification'
 import { ensureImageCached, ensureImageDimensionsCached } from './imageCache'
 import { toReferenceImage } from './inputImages'
 import { assertInputImageLimit, getInputImageLimit } from './inputImageLimits'
-import { getMaskDisabledReason, normalizeParamsForSettings, supportsTransparentOutput } from './paramCompatibility'
+import { getMaskDisabledReason, normalizeParamsForSettings } from './paramCompatibility'
 import { getImageParameterControls } from './imageParameterControls'
 import { getImageModelFamily } from './imageModels'
 import { getImageModelOptions } from './imageModelParams'
@@ -101,7 +101,7 @@ function describeProfile(settings: AppSettings, profile: ApiProfile) {
 }
 
 /** 校验并解析生图参数，只返回传入的字段 */
-function parseParams(args: Record<string, unknown>, settings = getSettings()) {
+function parseParams(args: Record<string, unknown>, settings = getSettings(), hasInputImages?: boolean) {
   const profile = getActiveApiProfile(settings)
   const provider = getCustomProviderDefinition(settings, profile.provider)
   const imageSize = provider ? resolveCustomProviderModel(provider, profile.model).imageSize : undefined
@@ -176,32 +176,32 @@ function parseParams(args: Record<string, unknown>, settings = getSettings()) {
   if (args.transparent_output !== undefined) {
     if (typeof args.transparent_output !== 'boolean') throw new Error('transparent_output 必须是 true 或 false')
     patch.transparent_output = args.transparent_output
-    if (getImageModelFamily(profile) === 'seedream') patch.background = args.transparent_output ? 'transparent' : 'opaque'
+    if (!family || family === 'seedream') patch.background = args.transparent_output ? 'transparent' : 'opaque'
   }
-  if (args.watermark !== undefined && getImageModelFamily(profile) === 'seedream') {
+  if (args.watermark !== undefined && family === 'seedream') {
     if (typeof args.watermark !== 'boolean') throw new Error('watermark 必须是 true 或 false')
     patch.watermark = args.watermark
   }
-  if (args.background !== undefined && getImageModelFamily(profile) === 'seedream') {
+  if (args.background !== undefined && (!family || family === 'seedream')) {
     if (args.background !== 'auto' && args.background !== 'transparent' && args.background !== 'opaque') throw new Error('background 只能是 auto、transparent、opaque')
     patch.background = args.background
     patch.transparent_output = args.background === 'transparent'
   }
-  const controls = getImageParameterControls(settings, profile, { ...useStore.getState().params, ...patch }).parameters
+  if (patch.output_format === 'jpeg' && patch.transparent_output) throw new Error('JPEG 不支持透明背景')
+  const controls = getImageParameterControls(settings, profile, { ...useStore.getState().params, ...patch }, { hasInputImages })
   for (const key of ['google_search', 'image_search'] as const) {
     if (args[key] === undefined) continue
     if (typeof args[key] !== 'boolean') throw new Error(`${key} 必须是 true 或 false`)
-    if (controls[key].disabledReason) throw new Error(controls[key].disabledReason)
+    if (controls.parameters[key].disabledReason) throw new Error(controls.parameters[key].disabledReason)
     patch[key] = args[key]
   }
   if (args.thinking_level !== undefined) {
-    if (controls.thinking_level.disabledReason) throw new Error(controls.thinking_level.disabledReason)
-    if (!controls.thinking_level.options?.some((option) => option.value === args.thinking_level && !option.disabledReason)) throw new Error('当前配置不支持此思考等级，请用 parameters 查询可选值')
+    if (controls.parameters.thinking_level.disabledReason) throw new Error(controls.parameters.thinking_level.disabledReason)
+    if (!controls.parameters.thinking_level.options?.some((option) => option.value === args.thinking_level && !option.disabledReason)) throw new Error('当前配置不支持此思考等级，请用 parameters 查询可选值')
     patch.thinking_level = args.thinking_level as TaskParams['thinking_level']
   }
-  const format = patch.output_format ?? useStore.getState().params.output_format
-  if (patch.transparent_output && format === 'jpeg') {
-    throw new Error('透明背景不支持 jpeg 格式')
+  if (controls.output.transparent && controls.output.transparentReason && (hasInputImages !== undefined || patch.transparent_output)) {
+    throw new Error(controls.output.transparentReason)
   }
   return patch
 }
@@ -246,13 +246,7 @@ async function generateImage(requestId: number, args: Record<string, unknown>): 
 
   const references = Array.isArray(args.reference_images) ? args.reference_images : []
   assertInputImageLimit(getActiveApiProfile(getSettings()), references.length)
-  const params = parseParams(args)
-  // 与 submitTask 相同：按提交时的配置规范化后再检查，不支持 SVG 的模型会自动改用 PNG
-  const settings = getSettings()
-  const finalParams = normalizeParamsForSettings({ ...useStore.getState().params, ...params }, settings, { hasInputImages: references.length > 0 })
-  if (finalParams.transparent_output && !supportsTransparentOutput(settings, getActiveApiProfile(settings), finalParams.output_format)) {
-    throw new Error('当前自定义服务商未映射 $params.background，SVG 和 GIF 无法使用透明背景，请关闭透明背景或换用 PNG、WebP')
-  }
+  const params = parseParams(args, getSettings(), references.length > 0)
   const inputImages: InputImage[] = []
   for (const item of references) {
     if (typeof item !== 'string') throw new Error('参考图中有无法识别的项')

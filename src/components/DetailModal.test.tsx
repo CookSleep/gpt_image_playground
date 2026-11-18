@@ -123,10 +123,15 @@ describe('任务详情参数', () => {
     expect(text.includes('复杂度auto')).toBe(complexity)
   })
 
+  it.each([false, true])('显示旧任务的背景开关：%s', (transparent_output) => {
+    const text = renderTask({ apiProvider: 'openai', params: { ...DEFAULT_PARAMS, background: undefined, transparent_output } })
+    expect(text).toContain(transparent_output ? '背景透明' : '背景自动')
+  })
+
   it.each(['png', 'jpeg', 'webp', 'svg', 'gif'] as const)('按格式展示压缩率、透明背景和动画参数：%s', (output_format) => {
     const text = renderTask({ apiProvider: 'openai', params: { ...DEFAULT_PARAMS, output_format } })
     expect(text.includes('压缩率未设置')).toBe(output_format === 'jpeg' || output_format === 'webp')
-    expect(text.includes('透明背景false')).toBe(output_format !== 'jpeg')
+    expect(text).toContain('背景自动')
     expect(text.includes('帧数')).toBe(output_format === 'gif')
     expect(text.includes('每帧时长')).toBe(output_format === 'gif')
   })

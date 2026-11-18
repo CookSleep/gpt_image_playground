@@ -61,7 +61,7 @@ import { toApiInputImageDataUrl, validateMaskMatchesImage } from './lib/canvasIm
 import { persistTaskInputImages, toReferenceImage } from './lib/inputImages'
 import { getInputImageLimitError, getInputImageProfile } from './lib/inputImageLimits'
 import { orderInputImagesForMask } from './lib/mask'
-import { getChangedParams, getTaskParamSupport, getMaskDisabledReason, normalizeParamsForSettings, supportsTransparentOutput } from './lib/paramCompatibility'
+import { getChangedParams, getTaskParamSupport, getMaskDisabledReason, normalizeParamsForSettings } from './lib/paramCompatibility'
 import { getImageRequestExecution } from './lib/imageRequestExecution'
 import { isVectorOrAnimatedFormat } from './lib/imageModels'
 import { runWithConcurrency, splitBatchPrompts } from './lib/batchPrompts'
@@ -1853,10 +1853,9 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     return []
   }
 
-  const shouldUseTransparentOutput = normalizedParams.transparent_output && supportsTransparentOutput(requestSettings, activeProfile, normalizedParams.output_format)
-  const taskParams = shouldUseTransparentOutput
+  const taskParams = normalizedParams.transparent_output
     ? getTransparentRequestParams(normalizedParams)
-    : { ...normalizedParams, transparent_output: false }
+    : normalizedParams
   const normalizedParamPatch = getChangedParams(params, taskParams)
   if (Object.keys(normalizedParamPatch).length) {
     useStore.getState().setParams(normalizedParamPatch)
@@ -4124,10 +4123,9 @@ export async function retryTask(task: TaskRecord) {
     state.showToast(`${maskDisabledReason}，请移除遮罩或切换模型／格式`, 'error')
     return
   }
-  const shouldUseTransparentOutput = normalizedParams.transparent_output && supportsTransparentOutput(settings, activeProfile, normalizedParams.output_format)
-  const taskParams = shouldUseTransparentOutput
+  const taskParams = normalizedParams.transparent_output
     ? getTransparentRequestParams(normalizedParams)
-    : { ...normalizedParams, transparent_output: false }
+    : normalizedParams
   const transparentMeta = taskParams.transparent_output && activeProfile.transparentBackgroundMethod === 'local' && !isVectorOrAnimatedFormat(taskParams.output_format)
     ? createTransparentOutputMeta(source.prompt.trim())
     : null

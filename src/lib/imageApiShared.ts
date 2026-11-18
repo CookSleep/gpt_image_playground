@@ -11,6 +11,12 @@ export const MIME_MAP: Record<string, string> = {
   gif: 'image/gif',
 }
 
+export function getRequestBackground(params: TaskParams, nativeTransparentBackground?: boolean) {
+  if (nativeTransparentBackground) return 'transparent'
+  if (params.background === 'transparent') return 'opaque'
+  return params.background
+}
+
 /** GPT Image 2.6 的 complexity、SVG 和 GIF 字段；Images API 生成请求和 Responses 图像工具格式相同 */
 export function applyGptImage26Params(target: Record<string, unknown>, params: TaskParams, profile: ApiProfile) {
   if (profile.codexCli && profile.provider !== 'fal') return

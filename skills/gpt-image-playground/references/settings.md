@@ -22,7 +22,7 @@
 | `output_compression` | 0–100，jpeg、webp 的压缩质量；`null` 为不指定 |
 | `moderation` | `auto`、`low` |
 | `n` | 每个任务生成的张数，上限取决于当前配置 |
-| `background` | Seedream 的背景选项；透明背景使用 PNG 输出，可选值见 `parameters.background.options` |
+| `background` | GPT Image 和 Seedream 的背景选项，可选值见 `parameters.background.options` |
 | `watermark` | Seedream 的水印开关，布尔值，默认 `false` |
 | `transparent_output` | 透明背景，不支持 jpeg；自定义供应商未映射 `$params.background` 时 svg、gif 也不支持 |
 

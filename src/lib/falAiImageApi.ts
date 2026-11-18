@@ -19,6 +19,7 @@ import {
   mergeActualParams,
   MIME_MAP,
   normalizeBase64Image,
+  getRequestBackground,
 } from './imageApiShared'
 
 const DEFAULT_FAL_IMAGE_SIZE = { width: 1360, height: 1024 }
@@ -77,7 +78,7 @@ async function createFalRequestInput(opts: CallApiOptions, profile: ApiProfile):
       const size = getSeedreamSize(profile, opts.params)
       input.image_size = size.includes('x') ? await mapFalImageSize(size) : `auto_${size}`
       input.watermark = opts.params.watermark ?? false
-      input.background = opts.nativeTransparentBackground ? 'transparent' : opts.params.background === 'opaque' ? 'opaque' : 'auto'
+      input.background = getRequestBackground(opts.params, opts.nativeTransparentBackground) ?? 'auto'
       return input
     }
     input.aspect_ratio = params.aspect_ratio
@@ -100,7 +101,7 @@ async function createFalRequestInput(opts: CallApiOptions, profile: ApiProfile):
     output_format: opts.params.output_format,
   }
 
-  if (opts.nativeTransparentBackground) input.background = 'transparent'
+  input.background = getRequestBackground(opts.params, opts.nativeTransparentBackground)
 
   // fal.ai 把 complexity 叫作 reasoning_effort；实测只接受 low / medium / high
   if (opts.params.complexity !== 'auto') input.reasoning_effort = opts.params.complexity

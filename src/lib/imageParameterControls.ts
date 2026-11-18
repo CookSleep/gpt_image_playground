@@ -1,10 +1,12 @@
 import { GIF_FRAME_COUNT_RANGE, GIF_FRAME_DURATION_RANGE, IMAGE_COMPLEXITIES, type ApiProfile, type AppSettings, type ImageParameterControl, type TaskParams } from '../types'
-import { createSettingsForApiProfile, getCustomProviderDefinition } from './apiProfiles'
+import { getCustomProviderDefinition } from './apiProfiles'
+import { customProviderSupportsNativeTransparentBackground } from './customProviderCapabilities'
 import { getImageModelFamily, supportsGrokQuality } from './imageModels'
 import { getImageModelOptions } from './imageModelParams'
 import { resolveCustomProviderModel } from './imageProviderMappings'
 import { getImageSearchSupport, getImageThinkingSupport } from './imageSearch'
-import { getOutputImageLimitForSettings, getParamDisabledReasons, supportsTransparentOutput } from './paramCompatibility'
+import { getImageOutputOptions } from './paramCompatibility'
+import { isPresetProfileLocked } from './presetConfig'
 import { calculateImageSize, SIZE_TIERS, SIZE_RATIOS, SIZE_LIMIT_TEXT, CODEX_CLI_SIZE_LIMIT_TEXT, SEEDREAM_SIZE_LIMIT_TEXT } from './size'
 
 /** 参数面板和 CLI 共用的选项；上下文只影响查询结果，不修改配置。 */
@@ -14,13 +16,18 @@ export function getImageParameterControls(settings: AppSettings, profile: ApiPro
   const imageSize = provider ? resolveCustomProviderModel(provider, profile.model).imageSize : undefined
   const sizeMode = imageSize?.mode ?? (family === 'seedream' ? 'seedream' : family ? 'aspect-ratio' : 'pixels')
   const modelOptions = getImageModelOptions(profile, imageSize)
-  const disabled = getParamDisabledReasons(profile, context)
+  const output = getImageOutputOptions(settings, profile, params, context)
+  const disabled = output.disabled
   const search = getImageSearchSupport(profile, provider)
   const thinking = getImageThinkingSupport(profile, provider)
   const fal = profile.provider === 'fal'
-  const transparentReason = context.agent ? 'Agent 模式不提供透明背景选项'
-    : params.output_format === 'jpeg' ? 'JPEG 不支持透明背景'
-    : !supportsTransparentOutput(settings, profile, params.output_format) ? '当前服务商未映射透明背景参数' : undefined
+  const transparentReason = output.transparentReason
+  const hasBackground = !family || family === 'seedream'
+  const localBackground = profile.transparentBackgroundMethod === 'local' && (output.format === 'png' || output.format === 'webp')
+  const localBackgroundHint = !localBackground ? undefined
+    : !isPresetProfileLocked(profile.id) && (!provider || customProviderSupportsNativeTransparentBackground(provider, profile.model))
+      ? '当前基于本地后处理，可在「设置 → API 配置」中更改'
+      : '当前基于本地后处理'
   const showTransparent = !transparentReason
   const resolutions = imageSize?.mode === 'aspect-ratio' ? imageSize.resolutions
     : family === 'seedream' ? modelOptions.resolutions
@@ -67,18 +74,18 @@ export function getImageParameterControls(settings: AppSettings, profile: ApiPro
         { label: 'SVG', value: 'svg', disabledReason: disabled.svg }, { label: 'GIF', value: 'gif', disabledReason: disabled.gif },
       ],
     },
-    n: { type: 'integer', visible: true, min: 1, max: getOutputImageLimitForSettings(createSettingsForApiProfile(settings, profile), params.output_format), disabledReason: context.agent ? 'Agent 模式下数量由模型根据提示词自动决定' : undefined },
+    n: { type: 'integer', visible: true, min: 1, max: output.limit, disabledReason: context.agent ? 'Agent 模式下数量由模型根据提示词自动决定' : undefined },
     complexity: { type: 'enum', visible: !family, options: IMAGE_COMPLEXITIES.map((value) => ({ label: value, value })), disabledReason: family ? '当前模型不使用复杂度参数' : disabled.complexity },
     output_compression: {
       type: 'integer', visible: !family && !showTransparent, min: 0, max: 100, nullable: true,
-      disabledReason: family ? '当前模型不使用压缩率参数' : fal ? 'fal.ai 不支持压缩率参数' : disabled.outputFormat ? 'Codex CLI 不支持压缩率参数' : !['jpeg', 'webp'].includes(params.output_format) ? '仅 JPEG 和 WebP 支持压缩率' : undefined,
+      disabledReason: output.compressionReason,
     },
     moderation: { type: 'enum', visible: !family, options: ['auto', 'low'].map((value) => ({ label: value, value })), disabledReason: family ? '当前模型不使用审核参数' : fal ? 'fal.ai 不支持审核参数' : disabled.moderation },
-    transparent_output: { type: 'boolean', visible: family !== 'seedream' && showTransparent, disabledReason: transparentReason, hint: family === 'gemini' || family === 'grok' ? '使用本地后处理生成透明背景' : undefined },
+    transparent_output: { type: 'boolean', visible: !hasBackground && showTransparent, disabledReason: transparentReason, hint: family === 'gemini' || family === 'grok' ? '使用本地后处理生成透明背景' : undefined },
     background: {
-      type: 'enum', visible: family === 'seedream' && !context.agent,
-      disabledReason: family !== 'seedream' ? '当前配置通过 transparent_output 设置透明背景' : context.agent ? 'Agent 模式不提供背景选项' : undefined,
-      options: (['auto', 'transparent', 'opaque'] as const).filter((value) => params.output_format !== 'jpeg' || value !== 'transparent').map((value) => ({ label: value === 'auto' ? '自动' : value === 'transparent' ? '透明' : '不透明', value })),
+      type: 'enum', visible: hasBackground && !context.agent, hint: localBackgroundHint,
+      disabledReason: !hasBackground ? '当前配置通过 transparent_output 设置透明背景' : context.agent ? 'Agent 模式不提供背景选项' : undefined,
+      options: (['auto', 'transparent', 'opaque'] as const).filter((value) => showTransparent || value !== 'transparent').map((value) => ({ label: value === 'auto' ? '自动' : value === 'transparent' ? '透明' : '不透明', value })),
     },
     watermark: { type: 'boolean', visible: family === 'seedream', disabledReason: family === 'seedream' ? undefined : '当前模型不使用水印参数' },
     google_search: { type: 'boolean', visible: family === 'gemini', disabledReason: search.googleSearch },
@@ -87,8 +94,8 @@ export function getImageParameterControls(settings: AppSettings, profile: ApiPro
       type: 'enum', visible: family === 'gemini', disabledReason: family !== 'gemini' ? '当前模型不提供思考等级选项' : thinking.reason,
       options: ['auto', 'minimal', 'low', 'medium', 'high'].map((value) => ({ label: value, value, disabledReason: value === 'auto' || thinking.levels.includes(value) ? undefined : '当前模型不支持此思考等级' })),
     },
-    frame_count: { type: 'integer', visible: !family && params.output_format === 'gif', ...GIF_FRAME_COUNT_RANGE, disabledReason: params.output_format !== 'gif' || family ? '仅 GIF 输出可设置帧数' : disabled.gif },
-    frame_duration_ms: { type: 'integer', visible: !family && params.output_format === 'gif', ...GIF_FRAME_DURATION_RANGE, disabledReason: params.output_format !== 'gif' || family ? '仅 GIF 输出可设置每帧时长' : disabled.gif },
+    frame_count: { type: 'integer', visible: !family && output.format === 'gif', ...GIF_FRAME_COUNT_RANGE, disabledReason: output.format !== 'gif' || family ? '仅 GIF 输出可设置帧数' : disabled.gif },
+    frame_duration_ms: { type: 'integer', visible: !family && output.format === 'gif', ...GIF_FRAME_DURATION_RANGE, disabledReason: output.format !== 'gif' || family ? '仅 GIF 输出可设置每帧时长' : disabled.gif },
   }
-  return { sizeMode, imageSize, disabledReasons: disabled, parameters }
+  return { output, sizeMode, imageSize, disabledReasons: disabled, parameters }
 }

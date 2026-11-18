@@ -10,7 +10,7 @@ import { getImageSearchSupport, getImageThinkingSupport } from '../lib/imageSear
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { toReferenceImage } from '../lib/inputImages'
 import { splitBatchPrompts } from '../lib/batchPrompts'
-import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, getMaskDisabledReason, normalizeParamsForSettings, supportsTransparentOutput } from '../lib/paramCompatibility'
+import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getMaskDisabledReason, normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { getAtImageQuery, getImageComments, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { normalizeCodexCliImageSize, normalizeImageSize } from '../lib/size'
 import { getSeedreamSize, getSeedreamSizeParams } from '../lib/imageModelParams'
@@ -484,7 +484,8 @@ export default function InputBar() {
   const hasSubmitApiConfig = Boolean(activeProfile.apiKey)
   // 批量进行中暂停画廊和 Agent 的提交，需等待完成或停止后再提交
   const batchRunning = Boolean(batchProgress)
-  const maskDisabledReason = maskDraft ? getMaskDisabledReason(activeProfile, params.output_format) : undefined
+  const parameterControls = getImageParameterControls(effectiveSettings, activeProfile, params, { hasInputImages: inputImages.length > 0, agent: appMode === 'agent' })
+  const maskDisabledReason = maskDraft ? getMaskDisabledReason(activeProfile, parameterControls.output.format) : undefined
   const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !activeAgentIsRunning && !batchRunning && !maskDisabledReason)
   const batchEnabled = appMode === 'gallery' && settings.showBatchPrompt && settings.batchPromptEnabled
   // 批量进行中始终在画廊显示入口，以便查看进度和停止
@@ -529,21 +530,19 @@ export default function InputBar() {
   const activeProvider = activeProfile.provider
   const isFalProvider = activeProvider === 'fal'
   const agentAutoImageCount = appMode === 'agent'
-  const parameterControls = getImageParameterControls(effectiveSettings, activeProfile, params, { hasInputImages: inputImages.length > 0, agent: appMode === 'agent' })
   const moderationDisabled = Boolean(parameterControls.parameters.moderation.disabledReason)
   const transparentOutputAvailable = appMode === 'gallery'
-  const showTransparentOutputControl = transparentOutputAvailable && supportsTransparentOutput(effectiveSettings, activeProfile, params.output_format)
-  const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
+  const showTransparentOutputControl = transparentOutputAvailable && !parameterControls.output.transparentReason
   const compressionDisabled = Boolean(parameterControls.parameters.output_compression.disabledReason)
   // 不可用的参数和格式仍然显示，置灰并说明原因
   const disabledReasons = parameterControls.disabledReasons
-  const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings, params.output_format)
+  const outputImageLimit = parameterControls.output.limit
   const nDraftValue = Number(nInput)
   const effectiveNValue = Number.isNaN(nDraftValue) ? params.n : nDraftValue
   const streamConcurrentByN = activeProfile.provider === 'openai' && !getImageModelFamily(activeProfile) && activeProfile.streamImages === true && !agentAutoImageCount && effectiveNValue > 1
   const nLimitHintText = agentAutoImageCount
     ? 'Agent 模式下数量由模型根据提示词自动决定'
-    : isFalProvider && params.output_format === 'svg'
+    : isFalProvider && parameterControls.output.format === 'svg'
       ? 'SVG 格式最多生成 1 张图片'
       : `最大请求数量为 ${outputImageLimit}`
   const imageSize = parameterControls.imageSize
@@ -1722,7 +1721,6 @@ export default function InputBar() {
       selectClass={selectClass}
       transparentOutputAvailable={transparentOutputAvailable}
       showTransparentOutputControl={showTransparentOutputControl}
-      transparentOutputEnabled={transparentOutputEnabled}
       transparentOutputHint={transparentOutputHint}
       onTransparentOutputMenuOpenChange={handleTransparentOutputMenuOpenChange}
       compressionHint={compressionHint}
