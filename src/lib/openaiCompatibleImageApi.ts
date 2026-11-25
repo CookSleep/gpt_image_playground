@@ -766,6 +766,10 @@ function createCustomProviderContext(opts: CallApiOptions, profile: ApiProfile, 
   // 2.6 参数与原生接口同样处理：不适用的字段为 undefined，模板中自动省略
   const gptImage26Params: Record<string, unknown> = {}
   applyGptImage26Params(gptImage26Params, opts.params, profile)
+  // sub2api 的编辑表单从单个 svg 字段读取 JSON。
+  if (profile.provider === 'sb2api-async' && opts.inputImageDataUrls.length && gptImage26Params.svg) {
+    gptImage26Params.svg = JSON.stringify(gptImage26Params.svg)
+  }
   const params = {
     ...opts.params,
     background: getImageModelFamily(profile) ? undefined : getRequestBackground(opts.params, opts.nativeTransparentBackground),

@@ -83,6 +83,14 @@ const DEFAULT_EDIT_FILES: CustomProviderFileMapping[] = [
   { field: 'mask', source: 'mask' },
 ]
 
+const SUB2API_BODY = {
+  ...DEFAULT_GENERATE_BODY,
+  complexity: '$params.complexity',
+  frame_count: '$params.frame_count',
+  frame_duration_ms: '$params.frame_duration_ms',
+  svg: '$params.svg',
+}
+
 const SUB2API_PROVIDER: CustomProviderDefinition = {
   id: 'sb2api-async',
   name: 'sub2api（异步）',
@@ -91,14 +99,14 @@ const SUB2API_PROVIDER: CustomProviderDefinition = {
     path: 'images/generations/async',
     method: 'POST',
     contentType: 'json',
-    body: DEFAULT_GENERATE_BODY,
+    body: SUB2API_BODY,
     taskIdPath: 'task_id',
   },
   editSubmit: {
     path: 'images/edits/async',
     method: 'POST',
     contentType: 'multipart',
-    body: DEFAULT_EDIT_BODY,
+    body: SUB2API_BODY,
     files: DEFAULT_EDIT_FILES,
     taskIdPath: 'task_id',
   },
