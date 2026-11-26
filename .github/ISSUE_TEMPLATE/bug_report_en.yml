@@ -1,0 +1,146 @@
+name: Bug report
+description: Report a reproducible bug in GPT Image Playground
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Warning:** Issues submitted with the following content removed will be closed.
+
+        If the **web app** reports a CORS error, check which request failed:
+
+        - **API request:** Use the Windows client, or configure the API proxy for a Docker or local development deployment. See the [deployment guide](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#docker-deployment).
+        - **Image download:** If the API returned an image URL but the image host blocks cross-origin downloads, use the Windows client or request Base64 image data if your provider supports it.
+
+        If the task reports an unrecognized response format, open the task details and select **View raw response**. For a nonstandard API, check the result paths in your [custom provider configuration](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#custom-provider-config) against the provider’s documentation.
+
+        To use the Codex API, we recommend [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI).
+
+        For web errors, check the browser console and the Network panel. In the Windows client, you can attach logs from **Settings → Preferences → Diagnostics**.
+
+        > **Response times:** The maintainer has limited time. Fixes and improvements may take longer than you expect. Thank you for understanding.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have checked whether the issue originates with my API provider, reverse proxy, or relay.
+          required: true
+        - label: I have searched existing issues and found no duplicate report.
+          required: true
+        - label: I have tried to reproduce the issue using an API that follows the official format.
+          required: false
+        - label: I understand that the maintainer has limited time and that a fix may take time.
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug description
+      description: Briefly describe the problem you encountered.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the steps that consistently reproduce the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened? If you saw an error, include the full error message.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: version
+    attributes:
+      label: Deployment method
+      description: Select the deployment you used.
+      options:
+        - Windows client
+        - Vercel
+        - GitHub Pages
+        - Cloudflare Workers
+        - Docker
+        - Local deployment
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: deployment_detail
+    attributes:
+      label: Other deployment method
+      description: If you selected “Other,” describe your deployment.
+    validations:
+      required: false
+
+  - type: input
+    id: app_version
+    attributes:
+      label: App version
+      description: Find the version next to the Settings heading or under **Settings → About**.
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Runtime environment
+      description: Specify your browser or Windows client and your operating system.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: api
+    attributes:
+      label: API source
+      description: Select the type of API you used.
+      options:
+        - Official OpenAI API
+        - Compatible API from a third-party provider
+        - Reverse proxy or relay
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: api_detail
+    attributes:
+      label: API provider or project
+      description: If you selected anything other than the official OpenAI API, name the provider or proxy project. Omit API keys.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error messages or screenshots
+      description: If you have traced the issue to this project, include relevant console errors, screenshots, or a screen recording. Omit API keys.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional information
+      description: Include anything else that could help identify the cause.
+    validations:
+      required: false

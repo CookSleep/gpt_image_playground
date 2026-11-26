@@ -8,18 +8,16 @@ body:
       value: |
         > **警告：** 删除以下内容会导致 Issue 被直接关闭。
 
-        感谢你的反馈。在提交之前，请先确认问题确实由本项目引起，而非以下已知的上游或第三方问题：
+        如果**网页版**提示跨域错误，请先看失败的是哪个请求：
 
-        ---
+        - **API 请求失败**：可以使用 Windows 客户端，或在 Docker 部署、本地开发环境中配置 API 代理。具体设置见[部署说明](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#docker-deployment)。
+        - **图片下载失败**：如果 API 已返回图片链接，但图床限制跨域下载，可以使用 Windows 客户端。如果服务商支持，也可以配置接口返回 Base64 图片数据。
 
-        **以下情况不属于本项目的支持范围，请向对应项目或服务商反馈：**
+        如果任务提示无法识别响应格式，可在任务详情中点击「查看原始响应」。使用非标准 API 时，请对照服务商文档核对[自定义供应商配置](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#custom-provider-config)中的结果提取路径。
 
-        1. [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) 的 Image API 存在跨域限制问题，请直接向该项目反馈。如果仍需在本项目中使用，可以使用 Windows 客户端，也可以参考 README，部署 Docker 版并配置代理，或使用本地版配置代理来绕过跨域限制。
-        2. 如果你使用的是 [basketikun/chatgpt2api](https://github.com/basketikun/chatgpt2api) 等反代或中转项目，遇到响应格式不兼容等问题，请向原始项目反馈并要求其遵循官方 API 格式。你也可以参考对应项目的 API 文档，尝试生成自定义服务商配置，具体操作方式见 README。本项目没有义务为各种非标准格式做无尽的兼容兜底。
-        3. 如果你希望使用 Codex 的 API，建议使用 [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)。
-        4. 如果你使用某些服务商的 API，遇到返回的图片是图床 URL 且限制跨域（Windows 客户端不受此限制）、或无法返回 Base64 URL 等问题，这属于服务商自身的限制，本项目无法解决，请向该服务商反馈。
+        如果你希望使用 Codex 的 API，建议使用 [CLIProxyAPI（CPA）](https://github.com/router-for-me/CLIProxyAPI)。
 
-        > **提示：** 如果页面长时间无响应，可以按 F12 打开浏览器控制台查看报错信息，并切换到「网络（Network）」面板查看请求的响应体。本项目已做了一定程度的跨域限制提示和 URL 捕获处理，但没有精力也没有义务覆盖所有第三方异常场景的报错显示。Windows 客户端同样可以按 F12 打开开发者工具，也可以在 **「设置 → 习惯配置 → 诊断」** 中打开日志目录，附上其中的日志文件。
+        网页报错时，可以查看浏览器控制台和「网络」面板。Windows 客户端可在<b>「设置 → 习惯配置 → 诊断」</b>中打开日志目录，附上相关日志。
 
         > **关于响应时间：** 项目维护者精力有限，不能保证始终按预期效率修复问题或完成优化，敬请理解。
 
@@ -28,7 +26,7 @@ body:
     attributes:
       label: 提交前确认
       options:
-        - label: 我已确认该问题不属于上述上游项目、反代或中转项目、服务商 API 的已知限制。
+        - label: 我已检查该问题是否来自服务商、反代或中转项目。
           required: true
         - label: 我已搜索现有 Issue，确认没有重复反馈。
           required: true

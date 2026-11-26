@@ -1,0 +1,63 @@
+name: Feature request
+description: Suggest a new feature, an improvement, or a change to the user experience
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Warning:** Issues submitted with the following content removed will be closed.
+
+        Thanks for your suggestion. Describe when you would use the feature, what you want it to do, and any alternatives you have considered. This helps the maintainer decide whether it fits the project.
+
+        > **API compatibility:** For a nonstandard API, first check whether a [custom provider configuration](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#custom-provider-config) can describe its requests and responses. If a configuration option is missing, explain what you need to express.
+
+        > **Subscription access:** This project will not support connecting subscription accounts directly. Use another project to expose your subscription through a compatible API, then add that API to GPT Image Playground. For Codex subscriptions, we recommend [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI).
+
+        > **Response times:** The maintainer has limited time. Fixes and improvements may take longer than you expect. Thank you for understanding.
+
+        > **Third-party providers:** Providers can generate a custom configuration URL and share it in the New API chat interface or their documentation so users can import it in one click. You can also change the default configuration in your own deployment or fork the project under the MIT license.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have searched existing issues and found no duplicate request.
+          required: true
+        - label: This request is within the scope of the project and does not ask for support for a nonstandard response from an unofficial API.
+          required: true
+        - label: I understand that the maintainer has limited time and that improvements may take time.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Use case
+      description: What problem would this feature solve? Describe a situation where you would use it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like the feature to work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else have you tried, and why does it fall short?
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional information
+      description: Include any relevant screenshots, links, related projects, or other details.
+    validations:
+      required: false
