@@ -6,20 +6,17 @@ body:
   - type: markdown
     attributes:
       value: |
-        > **Warning:** Issues submitted with the following content removed will be closed.
+        **Warning:** Issues submitted with the following content removed will be closed.
 
-        If the **web app** reports a CORS error, check which request failed:
+        <details>
+        <summary>Troubleshooting API and image requests</summary>
 
-        - **API request:** Use the Windows client, or configure the API proxy for a Docker or local development deployment. See the [deployment guide](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#docker-deployment).
+        - **Web API request blocked by CORS:** Use the Windows client, or configure the API proxy for a Docker or local development deployment. See the [deployment guide](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#docker-deployment).
         - **Image download:** If the API returned an image URL but the image host blocks cross-origin downloads, use the Windows client or request Base64 image data if your provider supports it.
+        - **Unrecognized response format:** Open the task details and select **View raw response**. For a nonstandard API, check the result paths in your [custom provider configuration](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#custom-provider-config) against the provider’s documentation.
+        - **Codex API:** We recommend [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI).
 
-        If the task reports an unrecognized response format, open the task details and select **View raw response**. For a nonstandard API, check the result paths in your [custom provider configuration](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#custom-provider-config) against the provider’s documentation.
-
-        To use the Codex API, we recommend [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI).
-
-        For web errors, check the browser console and the Network panel. In the Windows client, you can attach logs from **Settings → Preferences → Diagnostics**.
-
-        > **Response times:** The maintainer has limited time. Fixes and improvements may take longer than you expect. Thank you for understanding.
+        </details>
 
   - type: checkboxes
     id: checklist
@@ -34,6 +31,10 @@ body:
           required: false
         - label: I understand that the maintainer has limited time and that a fix may take time.
           required: true
+
+  - type: markdown
+    attributes:
+      value: "### Bug details"
 
   - type: textarea
     id: description
@@ -66,6 +67,10 @@ body:
       description: What happened? If you saw an error, include the full error message.
     validations:
       required: true
+
+  - type: markdown
+    attributes:
+      value: "### Environment"
 
   - type: dropdown
     id: version
@@ -128,12 +133,18 @@ body:
     validations:
       required: false
 
+  - type: markdown
+    attributes:
+      value: "### Supporting material"
+
   - type: textarea
     id: logs
     attributes:
       label: Error messages or screenshots
-      description: If you have traced the issue to this project, include relevant console errors, screenshots, or a screen recording. Omit API keys.
-      render: shell
+      description: |-
+        Attach relevant console errors, screenshots, or a recording. Omit API keys.
+
+        For web errors, check the browser console and the Network panel. In the Windows client, you can attach logs from **Settings → Preferences → Diagnostics**.
     validations:
       required: false
 

@@ -6,20 +6,17 @@ body:
   - type: markdown
     attributes:
       value: |
-        > **警告：** 删除以下内容会导致 Issue 被直接关闭。
+        **警告：** 删除以下内容会导致 Issue 被直接关闭。
 
-        如果**网页版**提示跨域错误，请先看失败的是哪个请求：
+        <details>
+        <summary>API 请求与图片下载排查</summary>
 
-        - **API 请求失败**：可以使用 Windows 客户端，或在 Docker 部署、本地开发环境中配置 API 代理。具体设置见[部署说明](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#docker-deployment)。
+        - **网页版 API 请求被跨域策略拦截**：可以使用 Windows 客户端，或在 Docker 部署、本地开发环境中配置 API 代理。具体设置见[部署说明](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#docker-deployment)。
         - **图片下载失败**：如果 API 已返回图片链接，但图床限制跨域下载，可以使用 Windows 客户端。如果服务商支持，也可以配置接口返回 Base64 图片数据。
+        - **响应格式无法识别**：可在任务详情中点击「查看原始响应」。使用非标准 API 时，请对照服务商文档核对[自定义供应商配置](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#custom-provider-config)中的结果提取路径。
+        - **Codex API**：推荐使用 [CLIProxyAPI（CPA）](https://github.com/router-for-me/CLIProxyAPI)。
 
-        如果任务提示无法识别响应格式，可在任务详情中点击「查看原始响应」。使用非标准 API 时，请对照服务商文档核对[自定义供应商配置](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#custom-provider-config)中的结果提取路径。
-
-        如果你希望使用 Codex 的 API，建议使用 [CLIProxyAPI（CPA）](https://github.com/router-for-me/CLIProxyAPI)。
-
-        网页报错时，可以查看浏览器控制台和「网络」面板。Windows 客户端可在<b>「设置 → 习惯配置 → 诊断」</b>中打开日志目录，附上相关日志。
-
-        > **关于响应时间：** 项目维护者精力有限，不能保证始终按预期效率修复问题或完成优化，敬请理解。
+        </details>
 
   - type: checkboxes
     id: checklist
@@ -34,6 +31,10 @@ body:
           required: false
         - label: 我理解项目维护者精力有限，不能保证始终按预期效率修复问题。
           required: true
+
+  - type: markdown
+    attributes:
+      value: "### 问题详情"
 
   - type: textarea
     id: description
@@ -66,6 +67,10 @@ body:
       description: 实际发生了什么？如有报错请粘贴完整错误信息。
     validations:
       required: true
+
+  - type: markdown
+    attributes:
+      value: "### 使用环境"
 
   - type: dropdown
     id: version
@@ -128,12 +133,18 @@ body:
     validations:
       required: false
 
+  - type: markdown
+    attributes:
+      value: "### 补充材料"
+
   - type: textarea
     id: logs
     attributes:
       label: 错误信息 / 截图
-      description: 如果已确认问题属于本项目，请提供与本项目相关的控制台错误、页面截图或复现录屏。请勿粘贴密钥。
-      render: shell
+      description: |-
+        可附上控制台报错、截图或录屏。请勿粘贴密钥。
+
+        网页报错时，可以查看浏览器控制台和「网络」面板。Windows 客户端可在<b>「设置 → 习惯配置 → 诊断」</b>中打开日志目录，附上相关日志。
     validations:
       required: false
 

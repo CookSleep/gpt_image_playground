@@ -6,17 +6,18 @@ body:
   - type: markdown
     attributes:
       value: |
-        > **Warning:** Issues submitted with the following content removed will be closed.
-
         Thanks for your suggestion. Describe when you would use the feature, what you want it to do, and any alternatives you have considered. This helps the maintainer decide whether it fits the project.
 
-        > **API compatibility:** For a nonstandard API, first check whether a [custom provider configuration](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#custom-provider-config) can describe its requests and responses. If a configuration option is missing, explain what you need to express.
+        **Warning:** Issues submitted with the following content removed will be closed.
 
-        > **Subscription access:** This project will not support connecting subscription accounts directly. Use another project to expose your subscription through a compatible API, then add that API to GPT Image Playground. For Codex subscriptions, we recommend [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI).
+        <details>
+        <summary>API compatibility, subscriptions, and provider configurations</summary>
 
-        > **Response times:** The maintainer has limited time. Fixes and improvements may take longer than you expect. Thank you for understanding.
+        - **API compatibility:** For a nonstandard API, first check whether a [custom provider configuration](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#custom-provider-config) can describe its requests and responses. If a configuration option is missing, explain what you need to express.
+        - **Subscription access:** This project will not support connecting subscription accounts directly. Use another project to expose your subscription through a compatible API, then add that API to GPT Image Playground. For Codex subscriptions, we recommend [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI).
+        - **Third-party providers:** Providers can generate a custom configuration URL and share it in the New API chat interface or their documentation so users can import it in one click. You can also change the default configuration in your own deployment or fork the project under the MIT license.
 
-        > **Third-party providers:** Providers can generate a custom configuration URL and share it in the New API chat interface or their documentation so users can import it in one click. You can also change the default configuration in your own deployment or fork the project under the MIT license.
+        </details>
 
   - type: checkboxes
     id: checklist

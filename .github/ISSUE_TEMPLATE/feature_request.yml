@@ -6,17 +6,18 @@ body:
   - type: markdown
     attributes:
       value: |
-        > **警告：** 删除以下内容会导致 Issue 被直接关闭。
-
         感谢你的建议。请尽量描述使用场景、预期效果和可能的替代方案，以便评估是否适合纳入本项目。
 
-        > **接口兼容性：** 如果建议涉及非标准 API，请先查看[自定义供应商配置](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#custom-provider-config)是否能描述其请求和响应。如果缺少配置能力，请说明需要支持什么。
+        **警告：** 删除以下内容会导致 Issue 被直接关闭。
 
-        > **订阅接入：** 本项目不会提供订阅账号直接接入功能。请先通过其他项目将订阅转换为兼容 API，再将该 API 添加到本项目。使用 Codex 订阅时，推荐 [CLIProxyAPI（CPA）](https://github.com/router-for-me/CLIProxyAPI)。
+        <details>
+        <summary>接口兼容、订阅接入与服务商配置</summary>
 
-        > **关于响应时间：** 项目维护者精力有限，不能保证始终按预期效率修复问题或完成优化，敬请理解。
+        - **接口兼容性：** 如果建议涉及非标准 API，请先查看[自定义供应商配置](https://github.com/CookSleep/gpt_image_playground/blob/main/README.md#custom-provider-config)是否能描述其请求和响应。如果缺少配置能力，请说明需要支持什么。
+        - **订阅接入：** 本项目不会提供订阅账号直接接入功能。请先通过其他项目将订阅转换为兼容 API，再将该 API 添加到本项目。使用 Codex 订阅时，推荐 [CLIProxyAPI（CPA）](https://github.com/router-for-me/CLIProxyAPI)。
+        - **关于第三方服务商配置：** 建议第三方服务商自行生成自定义服务商配置 URL，并放在 New API 聊天系统、文档等处供用户一键导入。你也可以自行部署并修改默认配置，或 Fork 本项目进行修改，请遵循 MIT 协议。
 
-        > **关于第三方服务商配置：** 建议第三方服务商自行生成自定义服务商配置 URL，并放在 New API 聊天系统、文档等处供用户一键导入。你也可以自行部署并修改默认配置，或 Fork 本项目进行修改，请遵循 MIT 协议。
+        </details>
 
   - type: checkboxes
     id: checklist
