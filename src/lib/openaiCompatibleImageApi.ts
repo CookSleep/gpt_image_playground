@@ -31,7 +31,7 @@ import {
 } from './imageApiShared'
 import { getImageGenerationModel, getImageModelFamily, isVectorOrAnimatedFormat, usesGrokSizeParams } from './imageModels'
 import { getImageModelParams, getSeedreamSize } from './imageModelParams'
-import { OPENAI_IMAGE_TASK_PROVIDER, resolveCustomProviderModel } from './imageProviderMappings'
+import { getByPath, OPENAI_IMAGE_TASK_PROVIDER, resolveCustomProviderModel } from './imageProviderMappings'
 import { getImageRequestExecution } from './imageRequestExecution'
 import { apiFetch, FetchConnectError } from './platform'
 import { isEventStreamResponse, readJsonServerSentEvents } from './serverSentEvents'
@@ -54,16 +54,6 @@ function createOpenAICompatiblePaths() {
     generationPath: 'images/generations',
     editPath: 'images/edits',
   }
-}
-
-function getByPath(source: unknown, path: string | undefined): unknown {
-  if (!path) return source
-  return path.split('.').filter(Boolean).reduce<unknown>((current, key) => {
-    if (current == null) return undefined
-    if (/^\d+$/.test(key) && Array.isArray(current)) return current[Number(key)]
-    if (typeof current === 'object') return (current as Record<string, unknown>)[key]
-    return undefined
-  }, source)
 }
 
 function getAllByPath(source: unknown, path: string | undefined): unknown[] {
@@ -1047,9 +1037,6 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
     const proxyConfig = readClientDevProxyConfig()
     const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
     const submitMapping = isEdit && customProvider.editSubmit ? customProvider.editSubmit : customProvider.submit
-    if (useApiProxy && (submitMapping.method ?? 'POST') !== 'POST') {
-      throw new Error('API 代理暂不支持使用 GET 提交的自定义服务商。请关闭 API 代理，或改用 POST 提交的自定义服务商配置。')
-    }
     if (useApiProxy && (submitMapping.taskIdPath || customProvider.poll)) {
       throw new Error('API 代理暂不支持使用异步任务的自定义服务商。请关闭 API 代理，或改用同步返回图片的自定义服务商配置。')
     }

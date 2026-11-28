@@ -989,7 +989,7 @@ describe('callImageApi', () => {
     )
   })
 
-  it('uses the same-origin API proxy path for sync custom providers', async () => {
+  it.each(['POST', 'GET'] as const)('uses the same-origin API proxy path for sync custom providers using %s', async (method) => {
     vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       data: [{ b64_json: 'aW1hZ2U=' }],
@@ -1010,7 +1010,8 @@ describe('callImageApi', () => {
           template: 'http-image',
           submit: {
             path: 'custom/images',
-            method: 'POST',
+            method,
+            query: method === 'GET' ? { prompt: '$prompt' } : undefined,
             contentType: 'json',
             body: { model: '$profile.model', prompt: '$prompt', background: '$params.background' },
             result: { b64JsonPaths: ['data.*.b64_json'] },
@@ -1034,11 +1035,12 @@ describe('callImageApi', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api-proxy/custom/images',
-      expect.objectContaining({ method: 'POST' }),
+      method === 'GET' ? '/api-proxy/custom/images?prompt=prompt' : '/api-proxy/custom/images',
+      expect.objectContaining({ method }),
     )
-    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
-    expect(body.background).toBe('transparent')
+    const body = fetchMock.mock.calls[0][1]?.body
+    if (method === 'GET') expect(body).toBeUndefined()
+    else expect(JSON.parse(String(body)).background).toBe('transparent')
   })
 
   it('splits Codex CLI sync custom provider output count into concurrent n=1 requests', async () => {

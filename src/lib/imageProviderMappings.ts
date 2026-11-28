@@ -1,5 +1,15 @@
 import type { CustomProviderDefinition } from '../types'
 
+export function getByPath(source: unknown, path: string | undefined): unknown {
+  if (!path) return source
+  return path.split('.').filter(Boolean).reduce<unknown>((current, key) => {
+    if (current == null) return undefined
+    if (/^\d+$/.test(key) && Array.isArray(current)) return current[Number(key)]
+    if (typeof current === 'object') return (current as Record<string, unknown>)[key]
+    return undefined
+  }, source)
+}
+
 /** Images 兼容接口的任务 ID 与 /tasks/{task_id} 查询协议 */
 export const OPENAI_IMAGE_TASK_PROVIDER: CustomProviderDefinition = {
   id: 'openai',

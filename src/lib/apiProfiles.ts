@@ -56,7 +56,7 @@ export const NATIVE_IMAGE_PROVIDERS = {
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
 export const DEFAULT_API_TIMEOUT = 600
 
-const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'google', 'xai', 'bytedance', 'sb2api-async', 'fal'])
+export const BUILT_IN_PROVIDER_IDS: ReadonlySet<ApiProvider> = new Set<ApiProvider>(['openai', 'google', 'xai', 'bytedance', 'sb2api-async', 'fal'])
 const DEFAULT_CUSTOM_PROVIDER_PATHS = {
   generationPath: 'images/generations',
   editPath: 'images/edits',
@@ -305,6 +305,7 @@ function legacyCustomProviderToManifest(record: Record<string, unknown>): Record
   return {
     id: record.id,
     name: record.name,
+    modelList: record.modelList,
     template: 'http-image',
     submit: {
       path: record.generationPath ?? DEFAULT_CUSTOM_PROVIDER_PATHS.generationPath,
@@ -366,6 +367,8 @@ export function normalizeCustomProviderDefinition(input: unknown, usedIds = new 
     : createCustomProviderId(rawName, usedIds)
   usedIds.add(id)
 
+  const modelList = isRecord(record.modelList) ? record.modelList : undefined
+  const path = normalizeProviderPath(modelList?.path, '')
   const imageSize = isRecord(record.imageSize) ? record.imageSize : undefined
   const ratios = normalizeStringArray(imageSize?.ratios, []).filter((value) => value === 'auto' || /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(value) && value.split(':').every((part) => Number(part) > 0))
   const resolutions = normalizeStringArray(imageSize?.resolutions, []).map((value) => value.toUpperCase())
@@ -374,6 +377,13 @@ export function normalizeCustomProviderDefinition(input: unknown, usedIds = new 
     id,
     name: rawName,
     template,
+    modelList: path ? {
+      path,
+      listPath: typeof modelList?.listPath === 'string' ? modelList.listPath.trim() : undefined,
+      nextCursorPath: typeof modelList?.nextCursorPath === 'string' ? modelList.nextCursorPath.trim() : undefined,
+      cursorParam: typeof modelList?.cursorParam === 'string' ? modelList.cursorParam.trim() : undefined,
+      idPath: typeof modelList?.idPath === 'string' ? modelList.idPath.trim() : undefined,
+    } : undefined,
     imageSize: imageSize?.mode === 'pixels' ? { mode: 'pixels' }
       : imageSize?.mode === 'aspect-ratio' && ratios.length && resolutions.length
         ? { mode: 'aspect-ratio', ratios: [...new Set(ratios)], resolutions: [...new Set(resolutions)] }

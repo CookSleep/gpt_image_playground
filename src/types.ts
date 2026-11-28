@@ -71,6 +71,13 @@ export type CustomProviderImageSize = { mode: 'pixels' } | {
 export interface CustomProviderDefinition {
   id: string
   name: string
+  modelList?: {
+    path: string
+    listPath?: string
+    idPath?: string
+    nextCursorPath?: string
+    cursorParam?: string
+  }
   template?: CustomProviderTemplate
   imageSize?: CustomProviderImageSize
   submit: CustomProviderSubmitMapping
