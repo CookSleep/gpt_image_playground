@@ -23,6 +23,8 @@ import { getImageModelOptions } from './imageModelParams'
 import { resolveCustomProviderModel } from './imageProviderMappings'
 import { getTaskOutputSlots } from './taskState'
 import { getActualRatioAndResolution, normalizeSeedreamImageSize, SEEDREAM_RESOLUTIONS } from './size'
+import { shouldUseApiProxy } from './devProxy'
+import { fetchProviderModels } from './providerModels'
 import { getProxySetting, setProxySetting } from './networkProxy'
 import { getPresetProfileIds, isPresetConfigOnlyEnabled, isPresetProfileLocked, isPresetProvider, isPresetProviderLocked } from './presetConfig'
 import {
@@ -446,6 +448,39 @@ async function updateSettings(args: Record<string, unknown>) {
   })
 }
 
+async function fetchProfileModels(args: Record<string, unknown>) {
+  const settings = getSettings()
+  const id = args.id ?? settings.activeProfileId
+  const profile = settings.profiles.find((item) => item.id === id)
+  if (!profile) throw new Error(`找不到 API 配置：${id}`)
+  const append = args.append === true
+  if (append && isPresetProfileLocked(profile.id)) throw new Error('这个预置的 API 配置已锁定，无法追加模型')
+
+  const mapping = getCustomProviderDefinition(settings, profile.provider)?.modelList
+  let catalog: string[]
+  try {
+    catalog = await fetchProviderModels(profile, shouldUseApiProxy(profile.apiProxy), AbortSignal.timeout(profile.timeout * 1000), mapping)
+  } catch (err) {
+    console.warn('获取模型列表失败', err)
+    throw err
+  }
+  let models = catalog
+  if (append) {
+    const latest = getSettings()
+    const currentMapping = getCustomProviderDefinition(latest, profile.provider)?.modelList
+    const current = latest.profiles.find((item) => item.id === id)
+    if (!current || JSON.stringify(currentMapping) !== JSON.stringify(mapping) || current.provider !== profile.provider || current.apiMode !== profile.apiMode || current.baseUrl !== profile.baseUrl || current.apiKey !== profile.apiKey || current.apiProxy !== profile.apiProxy) {
+      throw new Error('API 配置已更改，请重新获取模型列表')
+    }
+    const selected = args.models ?? catalog
+    const available = new Set(catalog)
+    if (!Array.isArray(selected) || selected.some((model) => !available.has(model))) throw new Error('指定的模型不在供应商返回的列表中')
+    models = splitModelList([current.model, ...selected].join(','))
+    saveApiProfile({ id, profile: { model: models.join(', ') } })
+  }
+  return { text: models.join('\n'), data: { profile_id: id, models } }
+}
+
 function saveApiProfile(args: Record<string, unknown>) {
   if (!isObject(args.profile)) throw new Error('profile 必须是对象')
   const fields = args.profile
@@ -539,6 +574,8 @@ async function runTool(request: CliRequest): Promise<CliReply> {
       return json(describeParameters(args))
     case 'update_settings':
       return updateSettings(args)
+    case 'fetch_profile_models':
+      return fetchProfileModels(args)
     case 'save_api_profile':
       return saveApiProfile(args)
     case 'delete_api_profile':

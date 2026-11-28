@@ -57,6 +57,19 @@ fn parameters_queries_profiles_without_changing_them() {
 }
 
 #[test]
+fn profile_fetch_models_lists_or_appends_selected_models() {
+    let cmd = run_parse(&["profile", "fetch-models"]).unwrap();
+    assert_eq!(cmd.tool, "fetch_profile_models");
+    assert!(cmd.arguments.is_empty());
+    let cmd = run_parse(&["profile", "fetch-models", "--id", "custom", "--append", "a", "b", "--json"]).unwrap();
+    assert!(cmd.json);
+    assert_eq!(Value::Object(cmd.arguments), json!({ "id": "custom", "append": true, "models": ["a", "b"] }));
+    assert_eq!(run_parse(&["profile", "fetch-models", "--append"]).unwrap().arguments["append"], true);
+    assert!(run_parse(&["profile", "fetch-models", "extra"]).is_err());
+    assert!(run_parse(&["provider", "fetch-models"]).is_err());
+}
+
+#[test]
 fn result_delete_requires_task_and_positive_index() {
     let cmd = run_parse(&["result", "delete", "task-1", "2", "--json"]).unwrap();
     assert_eq!(cmd.tool, "delete_task_result");

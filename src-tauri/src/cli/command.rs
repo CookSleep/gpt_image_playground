@@ -26,6 +26,7 @@ const USAGE: &str = "用法：
   gpt-image-playground parameters [--profile <配置 ID>] [--model <模型 ID>] [--all]
                                   [--format <格式>] [--with-images] [--json]
   gpt-image-playground settings set <键> <值> [--json]
+  gpt-image-playground profile fetch-models [--id <配置 ID>] [--append [模型 ID...]] [--json]
   gpt-image-playground profile use <配置 ID> [--json]      切换启用的 API 配置
   gpt-image-playground profile save <JSON> [--id <配置 ID>] [--activate | --no-activate] [--json]
   gpt-image-playground profile delete <配置 ID> [--json]
@@ -105,7 +106,7 @@ pub fn parse(
     let mut words = Vec::new();
     let mut opts: Vec<(String, Option<OsString>)> = Vec::new();
     let mut json = false;
-    const FLAGS: [&str; 5] = ["--transparent", "--activate", "--no-activate", "--all", "--with-images"];
+    const FLAGS: [&str; 6] = ["--append", "--transparent", "--activate", "--no-activate", "--all", "--with-images"];
     while let Some(arg) = args.next() {
         let flag = arg.to_string_lossy().into_owned();
         if flag == "--json" {
@@ -140,6 +141,7 @@ pub fn parse(
         ("history", _) => &["--limit", "--offset"],
         ("parameters", _) => &["--profile", "--model", "--all", "--format", "--with-images"],
         ("image", _) => &["--output"],
+        ("profile", Some("fetch-models")) => &["--id", "--append"],
         ("profile", Some("save")) => &["--id", "--activate", "--no-activate"],
         ("provider", Some("save")) => &["--id"],
         _ => &[],
@@ -163,6 +165,7 @@ pub fn parse(
             match flag.as_str() {
                 "--transparent" => a.insert("transparent_output".into(), true.into()),
                 "--activate" => a.insert("activate".into(), true.into()),
+                "--append" => a.insert("append".into(), true.into()),
                 "--all" => a.insert("all".into(), true.into()),
                 "--with-images" => a.insert("has_input_images".into(), true.into()),
                 _ => a.insert("activate".into(), false.into()),
@@ -264,6 +267,15 @@ pub fn parse(
         "profile" | "provider" => {
             let action = need(&mut words, "操作（save、delete 等）")?;
             match (cmd.as_str(), action.as_str()) {
+                ("profile", "fetch-models") => {
+                    if words.len() > 0 {
+                        if !a.contains_key("append") {
+                            return Err("指定要追加的模型时需要 --append".into());
+                        }
+                        a.insert("models".into(), words.by_ref().collect::<Vec<_>>().into());
+                    }
+                    "fetch_profile_models"
+                }
                 ("profile", "use") => {
                     a.insert("active_profile_id".into(), need(&mut words, "配置 ID")?.into());
                     "update_settings"

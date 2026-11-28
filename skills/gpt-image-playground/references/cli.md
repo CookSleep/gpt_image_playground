@@ -162,9 +162,14 @@ gpt-image-playground settings set <键> <值> [--json]
 
 ```
 gpt-image-playground profile use <配置 ID> [--json]
+gpt-image-playground profile fetch-models [--id <配置 ID>] [--append [模型 ID...]] [--json]
 gpt-image-playground profile save <JSON> [--id <配置 ID>] [--activate | --no-activate] [--json]
 gpt-image-playground profile delete <配置 ID> [--json]
 ```
+
+`profile fetch-models` 从当前启用配置的供应商拉取完整模型列表，每行输出一个模型 ID。自定义供应商需先配置模型列表映射；使用游标分页的接口还需填写下一页游标路径和请求参数名，见[自定义服务商](custom-provider.md)。用 `--id` 指定其他配置，用 `--json` 获取含 `profile_id` 和 `models` 的对象。
+
+`--append` 将全部拉取结果去重后追加到原列表末尾，也可以指定要追加的模型，如 `profile fetch-models --append example-a example-b`。追加时输出保存后的完整列表。
 
 - `use` 切换启用的 API 配置，并使用该配置已选中的模型。
 - `save` 不带 `--id` 时新建，新配置默认启用（`--no-activate` 不启用）；带 `--id` 时只改给出的字段，`--activate` 同时启用它。字段见 [settings.md](settings.md)，另可写 `apiKey`。

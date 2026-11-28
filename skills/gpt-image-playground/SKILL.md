@@ -51,6 +51,7 @@ gpt-image-playground generate 一片海滩 --aspect-ratio 16:9 --resolution 2K
 |---|---|
 | 改偏好设置、生图参数、网络代理 | `settings set <键> <值>` |
 | 切换启用的 API 配置 | `profile use <配置 ID>` |
+| 从当前启用配置的供应商拉取完整模型列表，按需追加到配置 | `profile fetch-models`（追加时加 `--append`） |
 | 新建 API 配置、修改配置或换模型、填写 API Key | `profile save <JSON>`（修改时加 `--id <配置 ID>`） |
 | 删除 API 配置 | `profile delete <配置 ID>` |
 | 接入第三方图像 API | 先 `provider save <JSON>`，再新建一个使用它的 API 配置，见 [references/custom-provider.md](references/custom-provider.md) |

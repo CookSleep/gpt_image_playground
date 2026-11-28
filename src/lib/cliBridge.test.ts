@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS, type AppSettings, type TaskParams, type TaskRecord } from '../types'
 import { createDefaultOpenAIProfile, normalizeSettings } from './apiProfiles'
 import { normalizeParamsForSettings } from './paramCompatibility'
+import { fetchProviderModels } from './providerModels'
 import { installCliBridge } from './cliBridge'
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), submitTask: vi.fn(), dimensions: vi.fn(), removeTaskOutput: vi.fn() }))
@@ -16,6 +17,7 @@ let state: {
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke, isTauri: () => false }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }))
+vi.mock('./providerModels', () => ({ fetchProviderModels: vi.fn() }))
 vi.mock('./networkProxy', () => ({ getProxySetting: async () => ({ mode: 'system', url: '' }), setProxySetting: vi.fn() }))
 vi.mock('./imageCache', () => ({ ensureImageCached: vi.fn(), ensureImageDimensionsCached: mocks.dimensions }))
 vi.mock('../store', () => ({
@@ -56,6 +58,55 @@ async function send(tool: string, args: Record<string, unknown>) {
   await vi.waitFor(() => expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'cli_respond')).toBe(true))
   return mocks.invoke.mock.calls.find(([cmd]) => cmd === 'cli_respond')![1]
 }
+
+describe('CLI 供应商模型列表', () => {
+  it('默认只查看当前配置的模型', async () => {
+    const original = structuredClone(state.settings)
+    vi.mocked(fetchProviderModels).mockResolvedValueOnce(['example-a', 'example-b'])
+    const reply = await send('fetch_profile_models', {})
+    expect(reply.result).toEqual({ text: 'example-a\nexample-b', data: { profile_id: 'seedream', models: ['example-a', 'example-b'] } })
+    expect(state.settings).toEqual(original)
+  })
+
+  it.each([
+    { models: undefined, expected: ['example-a', 'example-b'] },
+    { models: ['example-b', 'example-b'], expected: ['example-b'] },
+  ])('追加到指定配置，并保留请求期间新增的模型：$models', async ({ models, expected }) => {
+    vi.mocked(fetchProviderModels).mockImplementationOnce(async () => {
+      state.settings.profiles[0].model += ', example-local'
+      return ['example-a', 'gpt-image-2', 'example-b']
+    })
+    const reply = await send('fetch_profile_models', { id: 'gpt', append: true, models })
+    expect(reply.result.data.models).toEqual(['gpt-image-2', 'example-local', ...expected])
+    expect(state.settings.profiles[0].model).toBe(reply.result.data.models.join(', '))
+    expect(state.settings.activeProfileId).toBe('seedream')
+  })
+
+  it('部署代理不可用时直连供应商，即使导入的配置启用了代理', async () => {
+    state.settings.profiles[0].apiProxy = true
+    vi.mocked(fetchProviderModels).mockResolvedValueOnce([])
+    await send('fetch_profile_models', { id: 'gpt' })
+    expect(fetchProviderModels).toHaveBeenCalledWith(expect.objectContaining({ apiProxy: true }), false, expect.any(AbortSignal), undefined)
+  })
+
+  it('等待期间切换接口模式时保留新的文本模型列表', async () => {
+    vi.mocked(fetchProviderModels).mockImplementationOnce(async () => {
+      Object.assign(state.settings.profiles[0], { apiMode: 'responses', model: 'example-text' })
+      return ['example-image']
+    })
+    const reply = await send('fetch_profile_models', { id: 'gpt', append: true })
+    expect(reply.error).toContain('重新获取')
+    expect(state.settings.profiles[0].model).toBe('example-text')
+  })
+
+  it('指定列表外的模型时保留原配置', async () => {
+    const original = structuredClone(state.settings)
+    vi.mocked(fetchProviderModels).mockResolvedValueOnce(['example-a'])
+    const reply = await send('fetch_profile_models', { append: true, models: ['example-b'] })
+    expect(reply.error).toContain('不在供应商返回的列表中')
+    expect(state.settings).toEqual(original)
+  })
+})
 
 describe('CLI Seedream dimensions', () => {
   it('uses explicit generation dimensions even after choosing a preset ratio', async () => {

@@ -15,7 +15,7 @@
 
 每个元素的顶层字段：id、name、modelList、imageSize、submit、editSubmit、poll、modelOverrides。
 id 是服务商的唯一标识，用于 profiles 中的 provider 字段引用，建议使用 custom-{英文短名} 格式。
-modelList 是可选的模型列表映射。供应商文档提供模型列表 GET 接口时填写，例如 {"path":"models","listPath":"data","idPath":"id"}。path 相对于 API Base URL，规则与 submit.path 相同。listPath 指向响应中的模型数组，idPath 指向每项中的模型 ID，两者均支持点分路径。响应本身是数组时省略 listPath，数组元素是 ID 字符串时省略 idPath。配置后，设置页显示「获取模型列表」。
+modelList 是可选的模型列表映射。供应商文档提供模型列表 GET 接口时填写，例如 {"path":"models","listPath":"data","idPath":"id"}。path 相对于 API Base URL，规则与 submit.path 相同。listPath 指向响应中的模型数组，idPath 指向每项中的模型 ID，两者均支持点分路径。响应本身是数组时省略 listPath，数组元素是 ID 字符串时省略 idPath。配置后，设置页显示「获取模型列表」，CLI 可用 profile fetch-models 拉取。
 游标分页接口同时填写 nextCursorPath 和 cursorParam，例如 {"path":"models","listPath":"data","idPath":"id","nextCursorPath":"meta.next","cursorParam":"after"}。应用读取响应中 meta.next 的值，作为下一次请求的 after 参数，直到游标缺失、为空字符串或为 null。
 submit 是文生图提交配置，必填。
 editSubmit 是带参考图或遮罩时使用的提交配置。省略时仍使用 submit，因此共用一个接口时，应在 submit 中同时映射参考图或遮罩参数。
