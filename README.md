@@ -151,7 +151,7 @@ Windows 用户可以直接安装桌面客户端；网页版可以部署到 Verce
 <details>
 <summary><strong>🖥️ 方式一：Windows 桌面客户端</strong></summary>
 
-客户端的数据保存在本机，不受浏览器存储配额和跨域限制影响，可直连任意中转 API。
+客户端的数据保存在本机，不受浏览器存储配额限制。桌面端和 CLI 由客户端向配置的 API 地址发送请求，不受浏览器跨域限制。
 
 **安装**
 
@@ -305,11 +305,20 @@ docker run -d -p 8080:80 \
 | `LOCK_API_PROXY=true` | 强制开启代理，用户无法关闭；需同时设置 `ENABLE_API_PROXY=true` |
 | `HOST` / `PORT` | Nginx 监听地址和端口，默认 `0.0.0.0:80` |
 
-> 开启 API 代理后，任何人都能将你的服务器作为代理来请求目标 API。建议仅在有访问控制（如 IP 白名单）或本地网络中开启。
-
 > 旧版 `API_URL` 已拆分为 `DEFAULT_API_URL` 和 `API_PROXY_URL`，容器启动时自动兼容，无需立即修改。
 
-**隐藏真实 API 地址**
+**Docker 部署跨域代理（可选）**
+
+Docker 部署的网页版遇到浏览器 CORS 限制时，可开启 Nginx 代理。
+
+- 设置 `ENABLE_API_PROXY=true`，将 `API_PROXY_URL` 设为完整的 API 基础地址。OpenAI 兼容接口通常要写到版本前缀，如 `https://api.example.com/v1`。
+- 使用新配置重建容器，在 **「设置 → API 配置」** 中开启“API 代理”，请求会按 `http://localhost:8080/api-proxy/... -> API_PROXY_URL/...` 转发。
+
+同步自定义服务商的 GET 和 POST 请求按映射路径转发，包括自定义模型列表路径。异步自定义服务商仍需直连上游。
+
+> 开启 API 代理后，任何人都能将你的服务器作为代理来请求目标 API。建议仅在有访问控制（如 IP 白名单）或本地网络中开启。
+
+**隐藏上游 API 地址（可选）**
 
 同时开启 `ENABLE_API_PROXY` 和 `LOCK_API_PROXY`，真实地址只写在 `API_PROXY_URL` 中：
 
@@ -482,7 +491,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 | `svgReasoningEffort` | 否 | SVG 编写模型的推理强度：`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。省略时使用编写模型自身默认值，fal.ai 不适用。 |
 | `isDefault` | 否 | 有多个配置时为默认项设置 `true`（只能有一个），首次使用时自动选中；只有一个配置时不填。 |
 | `timeout` | 否 | 请求超时秒数，默认 600。 |
-| `apiProxy` | 否 | 是否走部署端 API 代理，默认 `false`。 |
+| `apiProxy` | 否 | 网页版是否使用部署端 API 代理，默认 `false`。桌面端和 CLI 忽略此开关。 |
 | `responseFormatB64Json` | 否 | 是否要求返回 Base64 图片数据。省略时，仅网页版对 `x.ai`、`volces.com`、`bytepluses.com` 及其子域名默认开启；客户端及网页其他域名默认关闭。显式设置 `true` 或 `false` 后不随地址变化。 |
 | `transparentBackgroundMethod` | 否 | 透明背景实现方式：`"api"`（API 原生）或 `"local"`（本地后处理），默认值见表下说明。 |
 
