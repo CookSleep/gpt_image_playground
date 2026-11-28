@@ -126,7 +126,7 @@ export default function CustomProviderModal({
                 value={json}
                 onChange={(e) => onJsonChange(e.target.value)}
                 spellCheck={false}
-                className="flex-1 min-h-[150px] w-full resize-none rounded-xl border border-transparent bg-black/[0.04] px-3 py-2 font-mono text-xs leading-relaxed text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50 custom-scrollbar"
+                className="flex-1 min-h-[150px] w-full resize-none rounded-xl border border-transparent bg-black/[0.04] px-3 py-2 font-mono text-xs leading-relaxed text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50 custom-scrollbar ios-rounded-scroll-fix"
               />
             </label>
           </div>

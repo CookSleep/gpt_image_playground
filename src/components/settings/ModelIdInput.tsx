@@ -24,7 +24,7 @@ export default function ModelIdInput(props: Props) {
         <textarea
           {...inputProps}
           rows={5}
-          className={`${className} min-h-[80px] max-h-[60vh] resize-y custom-scrollbar`}
+          className={`${className} min-h-[80px] max-h-[60vh] resize-y custom-scrollbar ios-rounded-scroll-fix`}
           onChange={(e) => props.onChange(e.target.value.replace(/[\r\n]+/g, ' '))}
           onBlur={(e) => props.onBlur(e.target.value)}
           onKeyDown={(e) => {

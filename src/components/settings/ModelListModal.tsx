@@ -86,7 +86,7 @@ export default function ModelListModal({ profile, mapping, onClose, onSave }: Pr
             </div>
             {textMode ? (
               <textarea aria-label="模型列表" placeholder="每行一个模型 ID" spellCheck={false} value={draft} onChange={(e) => setDraft(e.target.value)}
-                className="custom-scrollbar h-[22rem] min-h-0 resize-none overflow-y-auto rounded-xl border border-gray-200 bg-transparent px-3.5 py-3 font-mono text-sm leading-6 focus:border-blue-400 focus:outline-none dark:border-white/10 dark:focus:border-blue-400" />
+                className="custom-scrollbar ios-rounded-scroll-fix [scrollbar-gutter:stable] h-[22rem] min-h-0 resize-none overflow-y-auto rounded-xl border border-gray-200 bg-transparent px-3.5 py-3 font-mono text-sm leading-6 focus:border-blue-400 focus:outline-none dark:border-white/10 dark:focus:border-blue-400" />
             ) : (
               <div className="flex h-[22rem] min-h-0 flex-col gap-2.5">
                 <div className="flex shrink-0 items-center gap-2">
@@ -100,7 +100,7 @@ export default function ModelListModal({ profile, mapping, onClose, onSave }: Pr
                     <button className={bulkButton} onClick={() => changeSelection(visible, false)}>清除</button>
                   </div>
                 </div>
-                <div className="custom-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto">
+                <div className="custom-scrollbar [scrollbar-gutter:stable] min-h-0 flex-1 space-y-2 overflow-y-auto">
                   {visible.map((model) => <Checkbox key={model} checked={selected.has(model)} onChange={(checked) => changeSelection([model], checked)}
                     className="min-h-11 break-all rounded-2xl bg-black/[0.04] px-3.5 py-2 transition-colors hover:bg-black/[0.07] has-[:checked]:bg-blue-50 dark:bg-white/[0.06] dark:hover:bg-white/[0.08] dark:has-[:checked]:bg-blue-500/[0.1]" label={model} />)}
                   {!visible.length && <p className="px-3 py-6 text-center text-sm text-gray-500">{query ? '没有匹配的模型' : '供应商未返回模型'}</p>}

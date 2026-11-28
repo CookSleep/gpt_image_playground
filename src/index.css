@@ -527,3 +527,8 @@ input[type="number"] {
   isolation: isolate;
   -webkit-mask-image: -webkit-radial-gradient(white, black);
 }
+
+/* 文本框自身承载原生滚动条，沿边框圆角裁切。 */
+textarea.ios-rounded-scroll-fix {
+  clip-path: border-box;
+}
