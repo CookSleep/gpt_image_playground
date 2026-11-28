@@ -7,6 +7,7 @@ import { getActiveAgentRounds } from '../lib/agentConversationState'
 import { createSettingsForApiProfile, getCustomProviderDefinition, getActiveApiProfile, getAgentImageApiProfile, getApiProfileModelGroups } from '../lib/apiProfiles'
 import { getImageModelFamily } from '../lib/imageModels'
 import { getImageSearchSupport, getImageThinkingSupport } from '../lib/imageSearch'
+import { getTopDialog } from '../lib/dialogLayers'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { toReferenceImage } from '../lib/inputImages'
 import { splitBatchPrompts } from '../lib/batchPrompts'
@@ -941,7 +942,6 @@ export default function InputBar() {
   const handlePromptPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
     const text = e.clipboardData.getData('text/plain')
     if (!text) return
-    if (Array.from(e.clipboardData.items).some((item) => item.type.startsWith('image/'))) return
 
     e.preventDefault()
     insertPromptTextAtSelection(text.replace(/\r\n?/g, '\n'))
@@ -966,6 +966,7 @@ export default function InputBar() {
   // 粘贴图片
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
+      if (getTopDialog()) return
       const items = e.clipboardData?.items
       if (!items) return
       const imageFiles: File[] = []

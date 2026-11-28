@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { getAppLayer } from '../../lib/dialogLayers'
 import { getInputImageLimit, getInputImageProfile } from '../../lib/inputImageLimits'
 import { addImageFromUrl, useStore } from '../../store'
 import { isTauri } from '../../lib/platform'
@@ -190,6 +191,6 @@ export default function AddImageUrlsModal({ onClose }: { onClose: () => void }) 
         </div>
       </div>
     </div>,
-    document.body,
+    getAppLayer(),
   )
 }

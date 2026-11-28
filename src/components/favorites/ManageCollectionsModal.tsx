@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { getAppLayer } from '../../lib/dialogLayers'
 import type { FavoriteCollection } from '../../types'
 import {
   createFavoriteCollection,
@@ -413,6 +414,6 @@ export function ManageCollectionsModal() {
         </div>
       </div>
     </div>,
-    document.body,
+    getAppLayer(),
   )
 }

@@ -6,6 +6,7 @@ import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { suppressGlobalClicks } from '../lib/clickSuppression'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
+import { getTopDialog } from '../lib/dialogLayers'
 import { getImageComments } from '../lib/promptImageMentions'
 import { getInputImageProfile } from '../lib/inputImageLimits'
 import { getMaskDisabledReason } from '../lib/paramCompatibility'
@@ -265,6 +266,7 @@ export default function Lightbox() {
   useEffect(() => {
     if (!lightboxImageId || !showNav) return
     const onKey = (e: KeyboardEvent) => {
+      if (getTopDialog()) return
       if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev() }
       if (e.key === 'ArrowRight') { e.preventDefault(); goNext() }
     }

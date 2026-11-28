@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useDialogLayer } from '../../hooks/useDialogLayer'
 import ViewportTooltip from '../ViewportTooltip'
 import { CloseIcon, LinkIcon } from '../icons'
 
@@ -8,7 +9,6 @@ interface CustomProviderModalProps {
   json: string
   error: string | null
   isImportingJson: boolean
-  scrollBoundaryRef: RefObject<HTMLDivElement | null>
   onClose: () => void
   onCopyLlmPrompt: () => void
   onImportJson: () => void
@@ -21,7 +21,6 @@ export default function CustomProviderModal({
   json,
   error,
   isImportingJson,
-  scrollBoundaryRef,
   onClose,
   onCopyLlmPrompt,
   onImportJson,
@@ -39,8 +38,9 @@ export default function CustomProviderModal({
 
   useEffect(() => () => clearLlmPromptTooltipTimer(), [])
 
+  const layer = useDialogLayer(onClose)
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <div className="fixed inset-0 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm animate-overlay-in" onClick={onClose} />
       <div className="relative z-10 w-full max-w-md rounded-3xl border border-white/50 bg-white/95 p-5 shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10 flex flex-col h-[85vh] sm:h-[680px] max-h-[90vh] overflow-hidden">
         <div className="mb-5 flex items-center justify-between gap-4 shrink-0">
@@ -59,7 +59,7 @@ export default function CustomProviderModal({
           </div>
         </div>
 
-        <div ref={scrollBoundaryRef} className="flex-1 flex flex-col min-h-0 px-1 -mx-1 pb-2">
+        <div className="flex-1 flex flex-col min-h-0 px-1 -mx-1 pb-2">
           <div className="mb-6 shrink-0 rounded-2xl bg-black/[0.04] p-4 border border-transparent dark:bg-white/[0.06]">
             <div className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-gray-800 dark:text-gray-200">
               <svg className="h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -155,6 +155,6 @@ export default function CustomProviderModal({
         </div>
       </div>
     </div>,
-    document.body,
+    layer,
   )
 }

@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom'
+import { useDialogLayer } from '../../hooks/useDialogLayer'
 import type { ApiProfile } from '../../types'
 import { Checkbox } from '../Checkbox'
 import { CloseIcon, CopyIcon } from '../icons'
@@ -24,10 +25,11 @@ export default function ProfileImportUrlModal({
   onCopy,
   onClose,
 }: ProfileImportUrlModalProps) {
+  const layer = useDialogLayer(onClose)
   return createPortal(
     <div
       data-no-drag-select
-      className="fixed inset-0 z-[110] flex items-center justify-center p-4"
+      className="fixed inset-0 flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div className="absolute inset-0 bg-black/20 dark:bg-black/40 backdrop-blur-md animate-overlay-in" />
@@ -89,6 +91,6 @@ export default function ProfileImportUrlModal({
         </div>
       </div>
     </div>,
-    document.body,
+    layer,
   )
 }

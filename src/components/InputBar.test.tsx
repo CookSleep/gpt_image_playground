@@ -228,6 +228,35 @@ describe('参考图超限提示', () => {
     expect(container.querySelector('[data-tooltip]')).toBeNull()
   })
 
+  it('在首页提示词中粘贴图文时同时插入文字和参考图', async () => {
+    const editor = container.querySelector<HTMLElement>('[contenteditable="true"]')!
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    const file = new File(['image'], 'mixed.png', { type: 'image/png' })
+    Object.defineProperty(paste, 'clipboardData', { value: {
+      getData: (type: string) => type === 'text/plain' ? '第一行\r\n第二行' : '',
+      items: [{ type: 'text/plain' }, { type: file.type, getAsFile: () => file }],
+    } })
+    await act(async () => { editor.dispatchEvent(paste) })
+    expect(useStore.getState().prompt).toBe('第一行\n第二行')
+    expect(useStore.getState().inputImages.map((image) => image.id)).toEqual([...images.map((image) => image.id), file.name])
+  })
+
+  it('弹窗中粘贴图文时保留默认粘贴行为', async () => {
+    const dialogs = document.createElement('div')
+    dialogs.id = 'app-dialogs'
+    const textarea = document.createElement('textarea')
+    dialogs.append(textarea)
+    container.append(dialogs)
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    const file = new File(['image'], 'image.png', { type: 'image/png' })
+    Object.defineProperty(paste, 'clipboardData', { value: { items: [
+      { type: 'text/plain' }, { type: file.type, getAsFile: () => file },
+    ] } })
+    await act(async () => { textarea.dispatchEvent(paste) })
+    expect(paste.defaultPrevented).toBe(false)
+    expect(useStore.getState().inputImages).toEqual(images)
+  })
+
   it.each(['paste', 'change', 'drop'])('%s 添加超限文件时全部保留并置灰', async (type) => {
     const files = Array.from({ length: 20 }, (_, idx) => new File(['image'], `file-${idx}.png`, { type: 'image/png' }))
     const event = new Event(type, { bubbles: true, cancelable: true })

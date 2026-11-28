@@ -1,5 +1,5 @@
-import type { RefObject } from 'react'
 import { createPortal } from 'react-dom'
+import { useDialogLayer } from '../../hooks/useDialogLayer'
 import type { ZipDownloadRoute } from '../../types'
 import { Checkbox } from '../Checkbox'
 import { CloseIcon } from '../icons'
@@ -15,21 +15,20 @@ export const ZIP_DOWNLOAD_ROUTE_OPTIONS: Array<{ route: ZipDownloadRoute; label:
 
 interface ZipDownloadRouteModalProps {
   routes: ZipDownloadRoute[]
-  scrollBoundaryRef: RefObject<HTMLDivElement | null>
   onSetEnabled: (route: ZipDownloadRoute, enabled: boolean) => void
   onClose: () => void
 }
 
 export default function ZipDownloadRouteModal({
   routes,
-  scrollBoundaryRef,
   onSetEnabled,
   onClose,
 }: ZipDownloadRouteModalProps) {
+  const layer = useDialogLayer(onClose)
   return createPortal(
     <div
       data-no-drag-select
-      className="fixed inset-0 z-[110] flex items-center justify-center p-4"
+      className="fixed inset-0 flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div className="absolute inset-0 bg-black/20 dark:bg-black/40 backdrop-blur-md animate-overlay-in" />
@@ -55,7 +54,7 @@ export default function ZipDownloadRouteModal({
           </div>
         </div>
 
-        <div ref={scrollBoundaryRef} className="flex-1 overflow-y-auto px-6 space-y-3 custom-scrollbar min-h-0 py-2">
+        <div className="flex-1 overflow-y-auto px-6 space-y-3 custom-scrollbar min-h-0 py-2">
           {ZIP_DOWNLOAD_ROUTE_OPTIONS.map((option) => {
             const isChecked = routes.includes(option.route)
             return (
@@ -98,6 +97,6 @@ export default function ZipDownloadRouteModal({
         </div>
       </div>
     </div>,
-    document.body,
+    layer,
   )
 }

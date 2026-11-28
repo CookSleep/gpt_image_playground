@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import type { SkillInfo } from './types'
@@ -272,12 +273,14 @@ export default function App() {
       <AnnouncementModal ready={startupImportDone} />
       <FavoriteCollectionPickerModal />
       <ManageCollectionsModal />
-      <Toast />
-      <DbBlockedNotice />
       <MaskEditorModal key={`mask-${privacyModeEpoch}`} />
       <SketchBoardModal key={`sketch-${privacyModeEpoch}`} />
       <ImageContextMenu key={`menu-${privacyModeEpoch}`} />
-      {TITLEBAR_HEIGHT > 0 && <TitleBar />}
+      {createPortal(<>
+        <Toast />
+        <DbBlockedNotice />
+        {TITLEBAR_HEIGHT > 0 && <TitleBar />}
+      </>, document.body)}
     </>
   )
 }

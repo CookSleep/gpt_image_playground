@@ -1,4 +1,4 @@
-import { createRef, useEffect } from 'react'
+import { useEffect } from 'react'
 import { create } from 'zustand'
 import type { ReleaseCache, ReleaseInfo } from '../lib/releaseUpdates'
 import { getReleasesApiUrl, isReleaseCacheFresh, RELEASE_CACHE_TTL_MS, mergeReleasePage, parseReleaseCache, parseReleasePage } from '../lib/releaseUpdates'
@@ -26,9 +26,6 @@ export const useReleaseUpdates = create<ReleaseUpdatesState>(() => ({
   modalOpen: false,
   checkError: '',
 }))
-
-/** 更新弹窗的滚动区域；设置弹窗打开时需要放行它的滚动 */
-export const updateModalScrollRef = createRef<HTMLDivElement>()
 
 async function fetchReleasePage(page: number) {
   // 客户端由 Rust 侧发出，不依赖 CSP 的 connect-src 和 GitHub 的 CORS；网页版即原生 fetch

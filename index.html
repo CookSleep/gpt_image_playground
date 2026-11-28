@@ -14,7 +14,9 @@
     <script src="./color-mode.js"></script>
   </head>
   <body class="bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100 min-h-screen">
-    <div id="root"></div>
+    <div id="app-layer" class="isolate"><div id="root"></div></div>
+    <div id="app-dialogs" class="relative z-[110]"></div>
+    <div id="confirm-dialogs" class="relative z-[115]"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

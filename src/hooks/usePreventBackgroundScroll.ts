@@ -1,5 +1,7 @@
 import { useEffect, type RefObject } from 'react'
 
+import { getTopDialog } from '../lib/dialogLayers'
+
 type ScrollBoundaryRef = RefObject<HTMLElement | null>
 type ScrollDelta = { x: number; y: number }
 
@@ -9,7 +11,10 @@ let previousBodyOverscrollBehavior = ''
 let previousDocumentOverscrollBehavior = ''
 
 function getAllowedRoot(target: EventTarget | null, allowRefs?: ScrollBoundaryRef | ScrollBoundaryRef[]) {
-  if (!(target instanceof Node) || !allowRefs) return null
+  if (!(target instanceof Node)) return null
+  const top = getTopDialog()
+  if (top instanceof HTMLElement) return top.contains(target) ? top : null
+  if (!allowRefs) return null
 
   const refs = Array.isArray(allowRefs) ? allowRefs : [allowRefs]
   for (const ref of refs) {

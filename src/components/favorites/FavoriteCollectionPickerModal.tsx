@@ -9,8 +9,7 @@ import {
   useStore,
 } from '../../store'
 import { getTaskFavoriteCollectionIds } from '../../lib/favoriteState'
-import { useCloseOnEscape } from '../../hooks/useCloseOnEscape'
-import { usePreventBackgroundScroll } from '../../hooks/usePreventBackgroundScroll'
+import { useDialogLayer } from '../../hooks/useDialogLayer'
 import { Checkbox } from '../Checkbox'
 import { TooltipButton as FavoriteActionButton } from '../TooltipButton'
 import { CloseIcon, DragHandleIcon, EditIcon, FavoriteIcon, TrashIcon } from '../icons'
@@ -29,7 +28,6 @@ export function FavoriteCollectionPickerModal() {
   const [draft, setDraft] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
-  const modalRef = useRef<HTMLDivElement>(null)
   const open = Boolean(taskIds?.length)
 
   const [draggedId, setDraggedId] = useState<string | null>(null)
@@ -58,8 +56,7 @@ export function FavoriteCollectionPickerModal() {
     setEditingName('')
   }, [defaultFavoriteCollectionId, open, selectedTasks])
 
-  useCloseOnEscape(open, closePicker)
-  usePreventBackgroundScroll(open, modalRef)
+  const layer = useDialogLayer(closePicker, 'app-dialogs', open)
 
   useEffect(() => {
     if (!touchDragPreview) return
@@ -260,6 +257,7 @@ export function FavoriteCollectionPickerModal() {
   }
 
   const handleRenameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return
     if (e.key === 'Enter') {
       e.preventDefault()
       confirmRename()
@@ -311,9 +309,9 @@ export function FavoriteCollectionPickerModal() {
   }
 
   return createPortal(
-    <div data-no-drag-select className="fixed inset-0 z-[105] flex items-center justify-center p-4 sm:p-0" onClick={closePicker}>
+    <div data-no-drag-select className="fixed inset-0 flex items-center justify-center p-4 sm:p-0" onClick={closePicker}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-overlay-in" />
-      <div ref={modalRef} className="relative z-10 flex max-h-[85vh] w-full max-w-[400px] flex-col overflow-hidden rounded-3xl bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl border border-white/50 dark:border-white/[0.08] shadow-[0_8px_40px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] ring-1 ring-black/5 dark:ring-white/10 animate-modal-in" onClick={(e) => e.stopPropagation()}>
+      <div className="relative z-10 flex max-h-[85vh] w-full max-w-[400px] flex-col overflow-hidden rounded-3xl bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl border border-white/50 dark:border-white/[0.08] shadow-[0_8px_40px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] ring-1 ring-black/5 dark:ring-white/10 animate-modal-in" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 pt-6 pb-4 shrink-0 relative border-b border-gray-100 dark:border-[#333]">
           <FavoriteActionButton tooltip="关闭" onClick={closePicker} wrapperClassName="absolute right-5 top-5 inline-flex" className="shrink-0 rounded-full p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-white/[0.06] dark:hover:text-gray-200">
             <CloseIcon className="h-5 w-5" />
@@ -453,6 +451,6 @@ export function FavoriteCollectionPickerModal() {
         </div>
       </div>
     </div>,
-    document.body,
+    layer,
   )
 }

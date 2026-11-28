@@ -1,4 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
+import { getAppLayer, getTopDialog } from '../lib/dialogLayers'
 import { useStore, addImageFromUrl } from '../store'
 import { canCopyImageToClipboard, copyImageSourceToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getDownloadErrorMessage, getImageZipEntries, withSaveLocation } from '../lib/downloadImages'
@@ -7,7 +9,7 @@ import { ensureImageCached } from '../lib/imageCache'
 import { CopyIcon, DownloadIcon, EditIcon } from './icons'
 
 export default function ImageContextMenu() {
-  const [menuInfo, setMenuInfo] = useState<{ src: string; imageId?: string; outputImageIds: string[]; canCopyImage: boolean; x: number; y: number } | null>(null)
+  const [menuInfo, setMenuInfo] = useState<{ layer: Element; src: string; imageId?: string; outputImageIds: string[]; canCopyImage: boolean; x: number; y: number } | null>(null)
   const showToast = useStore((s) => s.showToast)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
@@ -35,6 +37,7 @@ export default function ImageContextMenu() {
 
         e.preventDefault()
         setMenuInfo({
+          layer: getTopDialog() ?? getAppLayer(),
           src: imgTarget.src,
           imageId: imgTarget.dataset.imageId,
           outputImageIds: imgTarget.dataset.outputImageIds?.split(',').filter(Boolean) ?? [],
@@ -57,6 +60,10 @@ export default function ImageContextMenu() {
     if (!menuInfo) return
     const close = (e: Event) => {
       if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) {
+        return
+      }
+      if (menuInfo.layer !== (getTopDialog() ?? getAppLayer())) {
+        setMenuInfo(null)
         return
       }
       if (e.target instanceof Element && e.target.closest('[data-lightbox-root]')) {
@@ -202,7 +209,7 @@ export default function ImageContextMenu() {
     top -= MENU_HEIGHT
   }
 
-  return (
+  return createPortal(
     <div
       ref={menuRef}
       className="fixed z-[9999] bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 py-1 w-[120px] overflow-hidden animate-fade-in"
@@ -241,7 +248,8 @@ export default function ImageContextMenu() {
         <EditIcon className="w-4 h-4 flex-shrink-0" />
         编辑
       </button>
-    </div>
+    </div>,
+    menuInfo.layer,
   )
 }
 

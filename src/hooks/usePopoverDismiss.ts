@@ -1,4 +1,5 @@
 import { useEffect, useRef, type RefObject } from 'react'
+import { getTopDialog } from '../lib/dialogLayers'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 
 /**
@@ -27,7 +28,7 @@ export function usePopoverDismiss(
       close()
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
+      if (event.key === 'Escape' && !event.isComposing && !event.defaultPrevented && !getTopDialog()) close()
     }
 
     document.addEventListener('pointerdown', handlePointerDown)

@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useDialogLayer } from '../hooks/useDialogLayer'
 import { refreshClientUpdate, requestClientUpdateInstall, startClientUpdateDownload, useClientUpdate } from '../hooks/useClientUpdate'
-import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
-import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { PULL_THRESHOLD, usePullUpToLoad } from '../hooks/usePullUpToLoad'
-import { checkForUpdates, ignoreReleaseVersion, loadOlderReleases, setUpdateModalOpen, updateModalScrollRef, useReleaseUpdates } from '../hooks/useReleaseUpdates'
+import { checkForUpdates, ignoreReleaseVersion, loadOlderReleases, setUpdateModalOpen, useReleaseUpdates } from '../hooks/useReleaseUpdates'
 import { formatUpdateProgress } from '../lib/clientUpdate'
 import { isTauri, openExternal } from '../lib/platform'
 import { compareVersions, MANUAL_CHECK_MIN_INTERVAL_MS, RELEASES_PAGE_URL, shouldShowUpdate, stripReleaseHeading } from '../lib/releaseUpdates'
@@ -63,8 +62,8 @@ function UpdateModalContent() {
   // 加载新一页后要滚动到的条目序号，-1 表示不滚动
   const scrollToRef = useRef(-1)
   const close = () => setUpdateModalOpen(false)
-  useCloseOnEscape(true, close)
-  usePreventBackgroundScroll(true, updateModalScrollRef)
+  const layer = useDialogLayer(close)
+  const updateModalScrollRef = useRef<HTMLDivElement>(null)
 
   const latest = releases[0]
 
@@ -127,7 +126,7 @@ function UpdateModalContent() {
   return createPortal(
     <div
       data-no-drag-select
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      className="fixed inset-0 flex items-center justify-center p-4"
       onClick={close}
     >
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm animate-overlay-in" />
@@ -280,7 +279,7 @@ function UpdateModalContent() {
         </div>
       </div>
     </div>,
-    document.body,
+    layer,
   )
 }
 

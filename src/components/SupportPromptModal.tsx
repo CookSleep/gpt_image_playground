@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom'
+import { getAppLayer } from '../lib/dialogLayers'
 import { useStore } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
@@ -94,6 +95,6 @@ export default function SupportPromptModal() {
         </div>
       </div>
     </div>,
-    document.body,
+    getAppLayer(),
   )
 }

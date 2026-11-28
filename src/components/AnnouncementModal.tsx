@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { getAppLayer } from '../lib/dialogLayers'
 import { useStore } from '../store'
 import { useAnnouncements } from '../hooks/useAnnouncements'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
@@ -107,6 +108,6 @@ export default function AnnouncementModal({ ready }: { ready: boolean }) {
         </div>
       </div>
     </div>,
-    document.body,
+    getAppLayer(),
   )
 }

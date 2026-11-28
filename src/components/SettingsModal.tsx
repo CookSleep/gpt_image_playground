@@ -56,7 +56,6 @@ import {
 } from '../lib/settingsCustomProvider'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
-import { updateModalScrollRef, useReleaseUpdates } from '../hooks/useReleaseUpdates'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, DROPDOWN_PANEL_CLASS, DROPDOWN_SCROLL_CLASS, getDropdownMaxHeight } from '../lib/dropdown'
 import {
   buildCustomProvider,
@@ -190,9 +189,6 @@ export default function SettingsModal() {
   const profileImportUrlTooltipTimerRef = useRef<number | null>(null)
   const duplicateProfileTooltipTimerRef = useRef<number | null>(null)
   const settingsScrollBoundaryRef = useRef<HTMLDivElement>(null)
-  const customProviderScrollBoundaryRef = useRef<HTMLDivElement>(null)
-  const zipDownloadRouteScrollBoundaryRef = useRef<HTMLDivElement>(null)
-  const fontLicensesScrollBoundaryRef = useRef<HTMLDivElement>(null)
   const tabScrollRef = useRef<HTMLDivElement>(null)
   // 各选项卡共用一个滚动容器，按选项卡记录滚动位置，切换时各自恢复
   const tabScrollTopsRef = useRef<Partial<Record<SettingsTab, number>>>({})
@@ -528,14 +524,6 @@ export default function SettingsModal() {
       showDataTransferBusyToast()
       return
     }
-    if (showZipDownloadRouteManager) {
-      setShowZipDownloadRouteManager(false)
-      return
-    }
-    if (showFontLicenses) {
-      setShowFontLicenses(false)
-      return
-    }
     const nextTimeout = Number(timeoutInput)
     const normalizedTimeout =
       timeoutInput.trim() === '' || Number.isNaN(nextTimeout)
@@ -614,6 +602,7 @@ export default function SettingsModal() {
     if (!dataTransferMode) return
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     const preventKeyDown = (e: KeyboardEvent) => {
+      if (useStore.getState().confirmDialog) return
       e.preventDefault()
       e.stopImmediatePropagation()
       showDataTransferBusyToast()
@@ -636,9 +625,7 @@ export default function SettingsModal() {
   }
 
   useCloseOnEscape(showSettings && !dataTransferMode, handleClose)
-  // 从“关于”打开的更新弹窗叠在设置之上，需要放行它的滚动
-  const updateModalOpen = useReleaseUpdates((s) => s.modalOpen)
-  usePreventBackgroundScroll(showSettings, updateModalOpen ? updateModalScrollRef : showZipDownloadRouteManager ? zipDownloadRouteScrollBoundaryRef : showFontLicenses ? fontLicensesScrollBoundaryRef : showCustomProviderImport ? customProviderScrollBoundaryRef : settingsScrollBoundaryRef)
+  usePreventBackgroundScroll(showSettings, settingsScrollBoundaryRef)
 
   if (!showSettings) return null
 
@@ -1987,7 +1974,6 @@ export default function SettingsModal() {
         {showZipDownloadRouteManager && (
           <ZipDownloadRouteModal
             routes={draft.zipDownloadRoutes}
-            scrollBoundaryRef={zipDownloadRouteScrollBoundaryRef}
             onSetEnabled={setZipDownloadRouteEnabled}
             onClose={() => setShowZipDownloadRouteManager(false)}
           />
@@ -1995,7 +1981,6 @@ export default function SettingsModal() {
 
         {showFontLicenses && (
           <FontLicensesModal
-            scrollBoundaryRef={fontLicensesScrollBoundaryRef}
             onClose={() => setShowFontLicenses(false)}
           />
         )}
@@ -2006,7 +1991,6 @@ export default function SettingsModal() {
             json={customProviderJson}
             error={customProviderImportError}
             isImportingJson={isImportingJson}
-            scrollBoundaryRef={customProviderScrollBoundaryRef}
             onClose={closeCustomProviderModal}
             onCopyLlmPrompt={copyCustomProviderLlmPrompt}
             onImportJson={handleCustomProviderJsonPaste}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { getAppLayer } from '../lib/dialogLayers'
 import type { AppMode } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
@@ -203,6 +204,6 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
         </div>
       </div>
     </div>,
-    document.body
+    getAppLayer()
   )
 }

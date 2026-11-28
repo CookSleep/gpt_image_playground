@@ -1,13 +1,13 @@
-import { useEffect, useState, type RefObject } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useDialogLayer } from '../../hooks/useDialogLayer'
 import { CloseIcon } from '../icons'
 
 interface FontLicensesModalProps {
-  scrollBoundaryRef: RefObject<HTMLDivElement | null>
   onClose: () => void
 }
 
-export default function FontLicensesModal({ scrollBoundaryRef, onClose }: FontLicensesModalProps) {
+export default function FontLicensesModal({ onClose }: FontLicensesModalProps) {
   const [text, setText] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
 
@@ -21,10 +21,11 @@ export default function FontLicensesModal({ scrollBoundaryRef, onClose }: FontLi
       })
   }, [])
 
+  const layer = useDialogLayer(onClose)
   return createPortal(
     <div
       data-no-drag-select
-      className="fixed inset-0 z-[110] flex items-center justify-center p-4"
+      className="fixed inset-0 flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div className="absolute inset-0 bg-black/20 dark:bg-black/40 backdrop-blur-md animate-overlay-in" />
@@ -46,7 +47,7 @@ export default function FontLicensesModal({ scrollBoundaryRef, onClose }: FontLi
           </div>
         </div>
 
-        <div ref={scrollBoundaryRef} className="flex-1 overflow-y-auto px-6 pb-6 pt-2 custom-scrollbar min-h-0">
+        <div className="flex-1 overflow-y-auto px-6 pb-6 pt-2 custom-scrollbar min-h-0">
           {text === null ? (
             <div className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">{failed ? '许可清单加载失败，请刷新页面后重试' : '正在加载…'}</div>
           ) : (
@@ -60,6 +61,6 @@ export default function FontLicensesModal({ scrollBoundaryRef, onClose }: FontLi
         </div>
       </div>
     </div>,
-    document.body,
+    layer,
   )
 }
