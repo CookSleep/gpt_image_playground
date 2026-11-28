@@ -25,7 +25,7 @@
     "@tauri-apps/plugin-opener": "^2.7.0",
     "core-js": "^3.49.0",
     "fflate": "^0.8.3",
-    "katex": "^0.16.47",
+    "katex": "^0.18.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
@@ -35,7 +35,8 @@
   },
   "overrides": {
     "mdast-util-gfm-autolink-literal": "2.0.0",
-    "dompurify": "^3.4.7"
+    "dompurify": "^3.4.7",
+    "katex": "$katex"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.1",
@@ -53,9 +54,8 @@
   },
   "allowScripts": {
     "esbuild@0.25.12": true,
-    "esbuild@0.27.3": true,
-    "sharp@0.34.5": true,
-    "workerd@1.20260529.1": true,
-    "core-js@3.49.0": false
+    "esbuild@0.28.2": true,
+    "workerd@1.20261127.1": true,
+    "core-js@3.51.0": false
   }
 }

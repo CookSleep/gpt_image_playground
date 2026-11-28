@@ -1,4 +1,4 @@
-来源：@tauri-apps/plugin-log 2.10.0，许可原文取自同版本 Rust crate 的 LICENSE_MIT 与 LICENSE_APACHE-2.0（https://crates.io/crates/tauri-plugin-log/2.10.0，上游 https://github.com/tauri-apps/plugins-workspace）
+来源：@tauri-apps/plugin-log 2.10.2，许可原文取自同版本 Rust crate 的 LICENSE_MIT 与 LICENSE_APACHE-2.0（https://crates.io/crates/tauri-plugin-log/2.10.2，上游 https://github.com/tauri-apps/plugins-workspace）
 
 MIT License
 
@@ -23,6 +23,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------------------
+
 
                                  Apache License
                            Version 2.0, January 2004
