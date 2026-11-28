@@ -308,6 +308,8 @@ export function FavoriteCollectionPickerModal() {
     })
   }
 
+  const bulkButton = 'rounded-md px-2 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-200/70 dark:text-gray-300 dark:hover:bg-white/10'
+
   return createPortal(
     <div data-no-drag-select className="fixed inset-0 flex items-center justify-center p-4 sm:p-0" onClick={closePicker}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-overlay-in" />
@@ -327,9 +329,9 @@ export function FavoriteCollectionPickerModal() {
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden pt-3 pb-1">
           <div className="flex items-center justify-between mb-1.5 px-6 shrink-0">
             <span className="text-[13px] font-medium text-gray-500 dark:text-gray-400">选择要保存的收藏夹</span>
-            <div className="flex gap-4">
-              <button type="button" onClick={() => setCheckedIds(selectableCollections.map((collection) => collection.id))} className="text-[13px] font-medium text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors">全选</button>
-              <button type="button" onClick={() => setCheckedIds([])} className="text-[13px] font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 transition-colors">取消</button>
+            <div className="flex gap-0.5">
+              <button type="button" onClick={() => setCheckedIds(selectableCollections.map((collection) => collection.id))} className={bulkButton}>全选</button>
+              <button type="button" onClick={() => setCheckedIds([])} className={bulkButton}>清除</button>
             </div>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar relative">
