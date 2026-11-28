@@ -7234,7 +7234,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 --------------------------------------------------------------------------------
-@tauri-apps/api 2.13.0（Apache-2.0 OR MIT）
+@tauri-apps/api 2.12.5（Apache-2.0 OR MIT）
 --------------------------------------------------------------------------------
 
 Apache License
