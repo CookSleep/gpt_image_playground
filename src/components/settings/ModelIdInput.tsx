@@ -2,7 +2,7 @@ import { useState, type InputHTMLAttributes } from 'react'
 import { CollapseIcon, ExpandIcon } from '../icons'
 import { TooltipButton } from '../TooltipButton'
 
-type Props = Pick<InputHTMLAttributes<HTMLInputElement>, 'value' | 'disabled' | 'placeholder' | 'aria-label'> & {
+type Props = Pick<InputHTMLAttributes<HTMLInputElement>, 'id' | 'value' | 'disabled' | 'placeholder' | 'aria-label'> & {
   onChange: (value: string) => void
   onBlur: (value: string) => void
 }
@@ -11,6 +11,7 @@ export default function ModelIdInput(props: Props) {
   const [expanded, setExpanded] = useState(false)
   const className = 'block w-full rounded-xl border border-transparent bg-black/[0.04] pl-3 pr-10 py-2.5 text-sm text-gray-700 outline-none transition-[border-color] focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50'
   const inputProps = {
+    id: props.id,
     value: props.value,
     disabled: props.disabled,
     placeholder: props.placeholder,
